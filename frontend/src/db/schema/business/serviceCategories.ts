@@ -11,11 +11,11 @@ export interface ServiceCategory {
   syncId: string
   accountPhone: string
   categoryName: string
-  subcategories: Subcategory[]
+  subcategoriesJson: Subcategory[]
   isActive: boolean
   rowVersion: number
   createdAt: string
   updatedAt: string
 }
 
-export const serviceCategoriesSchema = 'syncId, accountPhone'
+export const serviceCategoriesSchema = 'syncId'

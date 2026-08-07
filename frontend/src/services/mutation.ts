@@ -1,4 +1,5 @@
 import type { Table } from 'dexie'
+import { newId } from '../utils/id'
 import type { AcsDatabase } from '../db/schema'
 import type { Operation } from '../db/schema/operations/operations'
 import type { OutboxEntry } from '../db/schema/operations/outbox'
@@ -9,7 +10,6 @@ import type { OutboxEntry } from '../db/schema/operations/outbox'
 // 事务全部成功才算"已保存到本机"，中途失败全部回滚。
 
 export interface MutationInput {
-  accountPhone: string
   operationType: string
   entitySyncIds: string[]
   apply: (tx: MutationTx) => unknown
@@ -79,9 +79,4 @@ export class MutationService {
       await tx.table('outbox').add(outbox)
     })
   }
-}
-
-function newId(prefix: string): string {
-  const rand = crypto.randomUUID().replace(/-/g, '')
-  return `${prefix}-${rand.slice(0, 12)}`
 }

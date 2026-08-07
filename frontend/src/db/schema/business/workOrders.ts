@@ -20,4 +20,4 @@ export interface WorkOrder {
   deletedAt: string | null
 }
 
-export const workOrdersSchema = 'syncId, accountPhone'
+export const workOrdersSchema = 'syncId'

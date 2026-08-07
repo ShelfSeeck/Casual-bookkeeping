@@ -14,4 +14,4 @@ export interface CustomerCodeMapping {
   updatedAt: string
 }
 
-export const customerCodeMappingsSchema = 'syncId, accountPhone'
+export const customerCodeMappingsSchema = 'syncId'

@@ -21,3 +21,23 @@ Factory bookkeeping is repetitive and easy to get wrong. This project makes dail
 - `docs/` — data model, auth, and AI chat storage design
 - `backend/` — FastAPI + SQLite backend
 - `frontend/` — Vue 3 + Vite + Dexie PWA (local-first data layer)
+
+## Git conventions
+
+Commit messages follow the Conventional Commits style, in English:
+
+```
+<type>(<scope>): <summary>
+```
+
+- `type`: `feat` / `fix` / `docs` / `chore` / `test` / `refactor`
+- `scope` (optional): the affected module, e.g. `frontend`, `auth`, `ai`, `cli`
+- `summary`: short English phrase capturing the core change, no trailing period
+
+Examples:
+
+```
+feat(frontend): PWA frontend database foundation
+fix(auth): rate limiter singleton, persistent refresh cookie, config defaults
+docs(ai): add AI chat storage design for sessions and turns
+```

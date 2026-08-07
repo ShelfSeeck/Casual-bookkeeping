@@ -1,19 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createBusinessDb } from '../db/db'
 import type { AcsDatabase } from '../db/schema'
+import type { WorkOrder } from '../db/schema/business/workOrders'
 import { WorkOrdersRepository } from './workOrders'
 
 // 被测缝：WorkOrdersRepository 公共读写接口
-// 验证：按账户增/改/查、账户隔离（跨账户不可见）、不存在返回 undefined。
-// 为什么测这里：Repository 是页面读写业务数据的唯一入口，账户过滤是业务隔离的落地处。
+// 验证：put 后 get、list 返回全部、不存在返回 undefined、put 覆盖更新。
+// 为什么测这里：Repository 是页面读写业务数据的唯一入口；
+// 前端每账户独立库，直接操作当前库，不按账户过滤。
 
-const PHONE_A = '13800000000'
-const PHONE_B = '13900000000'
-
-function makeOrder(phone: string, syncId: string, quantity = 5): import('../db/schema/business/workOrders').WorkOrder {
+function makeOrder(syncId: string, quantity = 5): WorkOrder {
   return {
     syncId,
-    accountPhone: phone,
+    accountPhone: '13800000000',
     workOrderDate: '2026-08-08',
     customerId: 1,
     customerCode: '001',
@@ -35,7 +34,7 @@ let db: AcsDatabase
 let repo: WorkOrdersRepository
 
 beforeEach(async () => {
-  db = createBusinessDb(PHONE_A)
+  db = createBusinessDb('13800000000')
   await db.delete()
   await db.open()
   repo = new WorkOrdersRepository(db)
@@ -43,31 +42,26 @@ beforeEach(async () => {
 
 describe('WorkOrdersRepository', () => {
   it('put 后可 get 到该工单', async () => {
-    await repo.put(makeOrder(PHONE_A, 'sync-a'))
-    const found = await repo.get(PHONE_A, 'sync-a')
+    await repo.put(makeOrder('sync-a'))
+    const found = await repo.get('sync-a')
     expect(found?.quantity).toBe(5)
   })
 
   it('get 不存在返回 undefined', async () => {
-    expect(await repo.get(PHONE_A, 'sync-nope')).toBeUndefined()
+    expect(await repo.get('sync-nope')).toBeUndefined()
   })
 
-  it('账户隔离：B 账户查不到 A 账户的工单', async () => {
-    await repo.put(makeOrder(PHONE_A, 'sync-a'))
-    expect(await repo.get(PHONE_B, 'sync-a')).toBeUndefined()
-  })
-
-  it('listByAccount 只返回该账户的工单', async () => {
-    await repo.put(makeOrder(PHONE_A, 'sync-a'))
-    await repo.put(makeOrder(PHONE_B, 'sync-b'))
-    const list = await repo.listByAccount(PHONE_A)
-    expect(list.map((o) => o.syncId)).toEqual(['sync-a'])
+  it('list 返回当前库全部工单', async () => {
+    await repo.put(makeOrder('sync-a'))
+    await repo.put(makeOrder('sync-b'))
+    const list = await repo.list()
+    expect(list.map((o) => o.syncId)).toEqual(['sync-a', 'sync-b'])
   })
 
   it('put 已存在的 syncId 覆盖更新', async () => {
-    await repo.put(makeOrder(PHONE_A, 'sync-a', 5))
-    await repo.put({ ...makeOrder(PHONE_A, 'sync-a', 9), rowVersion: 1 })
-    const found = await repo.get(PHONE_A, 'sync-a')
+    await repo.put(makeOrder('sync-a', 5))
+    await repo.put({ ...makeOrder('sync-a', 9), rowVersion: 1 })
+    const found = await repo.get('sync-a')
     expect(found?.quantity).toBe(9)
     expect(found?.rowVersion).toBe(1)
   })

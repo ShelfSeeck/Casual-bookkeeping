@@ -11,4 +11,4 @@ export interface Customer {
   updatedAt: string
 }
 
-export const customersSchema = 'syncId, accountPhone'
+export const customersSchema = 'syncId'

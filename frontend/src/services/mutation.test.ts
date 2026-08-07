@@ -46,7 +46,6 @@ describe('MutationService.commit', () => {
   it('一次提交同时写入 workOrders、operations、outbox', async () => {
     const order = makeOrder('sync-a')
     const input: MutationInput = {
-      accountPhone: PHONE_A,
       operationType: 'create_work_order',
       entitySyncIds: ['sync-a'],
       apply: (tx) => tx.workOrders.put(order),
@@ -70,7 +69,6 @@ describe('MutationService.commit', () => {
 
   it('operationId 生成格式 op- + 12 位十六进制', async () => {
     const input: MutationInput = {
-      accountPhone: PHONE_A,
       operationType: 'create_work_order',
       entitySyncIds: ['sync-a'],
       apply: (tx) => tx.workOrders.put(makeOrder('sync-a')),
@@ -83,7 +81,6 @@ describe('MutationService.commit', () => {
 
   it('apply 抛错时三表全部回滚，无部分写入', async () => {
     const input: MutationInput = {
-      accountPhone: PHONE_A,
       operationType: 'create_work_order',
       entitySyncIds: ['sync-a'],
       apply: () => {
