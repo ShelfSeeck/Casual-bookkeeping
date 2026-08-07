@@ -8,11 +8,15 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "argon2-cffi>=25.1.0",
     "fastapi>=0.141.1",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[project.scripts]
+acs-manage = "backend.scripts.manage:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
