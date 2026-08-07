@@ -356,7 +356,7 @@ CREATE TABLE work_orders (
 | `operation_id` | 唯一索引 | 识别跨网络重试的同一次业务动作 |
 | `request_hash` | 普通字段 | 防止相同 `operation_id` 被复用于不同请求 |
 | `result_json` | 普通字段 | 保存首次成功响应，供幂等重试直接返回 |
-| `owner_phone` | 索引 | 隔离账户数据并执行鉴权 |
+| `account_phone` | 索引 | 隔离账户数据并执行鉴权 |
 | `device_id` | 索引，可空 | 记录用户操作来自哪个 PWA 安装实例 |
 | `actor_type` | 索引 | 区分用户、AI 和系统 |
 | `source_turn_id` | 索引，可空 | 将 AI 操作关联到对话回合 |

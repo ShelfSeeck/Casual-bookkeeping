@@ -11,6 +11,8 @@ dist/
 
 # Local data and environment
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 .env
 .env.*

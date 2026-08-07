@@ -98,7 +98,7 @@
 **认证层 2 张表**：`accounts` + `account_devices`。
 
 受影响但属已有层（不加新表）：
-- `database_operations`、`chat_sessions`：`owner_user_id` 统一改为 `owner_phone`，存账户手机号。
+- `database_operations`、`chat_sessions`：鉴权列统一为 `account_phone`，存账户手机号。
 - 四张业务表：各加 `account_phone` 列（B 方案隔离）。
 - `sync_state`（前端）：`account_phone` 主键。
 
@@ -118,7 +118,7 @@
 
 **同步模块**（bootstrap / Push / Pull）：声明鉴权依赖，以注入的 `account_phone` 过滤数据，只返回当前账户的业务数据。
 
-**AI 模块**：AI 从不直接写数据库，只生成操作草案；写入由用户确认后前端 Push 完成，Push 携带 access JWT，服务端以注入的 `account_phone` 记录 `owner_phone`。AI 读数据也发生在已认证的对话请求内，账户同样来自该请求的 access。因此**前端与 AI 均不额外传账户，身份唯一来源是鉴权依赖注入**。AI 不跨账户读取或修改。
+**AI 模块**：AI 从不直接写数据库，只生成操作草案；写入由用户确认后前端 Push 完成，Push 携带 access JWT，服务端以注入的 `account_phone` 记录所属账户。AI 读数据也发生在已认证的对话请求内，账户同样来自该请求的 access。因此**前端与 AI 均不额外传账户，身份唯一来源是鉴权依赖注入**。AI 不跨账户读取或修改。
 
 **管理脚本**：仅在后端本机使用，直接操作 SQLite，不走 API 认证；后期可开发管理界面替代。
 
@@ -222,6 +222,6 @@
 - `accounts.phone`（主键）
 - 四张业务表隔离列
 - `sync_state` 主键（前端）
-- `database_operations`、`chat_sessions` 鉴权列（原 `owner_user_id` → `owner_phone`）
+- `database_operations`、`chat_sessions` 鉴权列统一为 `account_phone`
 
 **JWT claims 例外**： 数据库字段 `account_phone` 是同一值的两个名字。鉴权依赖解析 access 后，将 claim `phone` 映射为业务层的 `account_phone`，下游模块只见 `account_phone`。
