@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from backend.repositories._base import BaseRepository
 from backend.repositories.accounts import AccountsRepository, normalize_Phone
 
-# device_id：dev- 前缀 + 至少 4 位小写字母数字短 ID（docs/auth-structure.md §2.7）
-_DEVICE_ID = re.compile(r"^dev-[a-z0-9]{4,}$")
+# device_id：dev- + 12 位十六进制（docs/auth-structure.md §2.7 统一格式 uuid4().hex[:12]）
+_DEVICE_ID = re.compile(r"^dev-[0-9a-f]{12}$")
 
 
 def validate_DeviceId(device_id: str) -> str:
@@ -97,3 +97,18 @@ class AccountDevicesRepository(BaseRepository):
             " WHERE account_phone = ? AND device_id = ?",
             (account_phone, device_id),
         )
+
+    def get_ActiveSession(self, account_phone: str, device_id: str) -> bool:
+        # 一次 JOIN 往返完成两步校验（docs §2.14 第 5 步）：设备组合仍受信任
+        # （status == active）且账户未停用（status == active）。鉴权守卫与
+        # refresh 请求验签后都查本方法；不缓存结果，踢出/停用实时生效。
+        account_phone = normalize_Phone(account_phone)
+        validate_DeviceId(device_id)
+        row = self.connection.execute(
+            "SELECT 1 FROM account_devices d"
+            " JOIN accounts a ON a.phone = d.account_phone"
+            " WHERE d.account_phone = ? AND d.device_id = ?"
+            " AND d.status = 'active' AND a.status = 'active'",
+            (account_phone, device_id),
+        ).fetchone()
+        return row is not None

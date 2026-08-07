@@ -53,8 +53,10 @@
 ### 2.7 标识生成
 
 - `device_id`：前端首次启动生成，本地持久化（IndexedDB），重新安装 PWA 才变；后端首次登录自动登记进设备表。
-- `session_id`：后端生成。
-- 生成格式：**业务前缀 + 短 UUID**，如 `dev-3k9x...`、`sess-7ab2...`。
+- `sync_id`：创建记录的一方生成（前端离线新增由客户端生成，AI/后端新增由服务端生成）。
+- `operation_id`：发起业务动作的一方生成。
+- `turn_id`：AI 回合发起时生成，同时作为请求幂等 ID。
+- 统一格式：**业务前缀 + `uuid4().hex[:12]`**（12 位十六进制）。前缀对应：`dev-`（device_id）、`sync-`（sync_id）、`op-`（operation_id）、`turn-`（turn_id）。
 
 ### 2.8 登录、刷新、登出 API
 
@@ -80,17 +82,17 @@
 
 ### 2.11 登录防刷
 
-- **失败次数限速**：同一手机号/IP 登录失败 5 次后锁定 15 分钟。
+- **失败次数限速**：同一手机号登录失败 5 次后锁定 15 分钟（仅手机号维度，不做 IP 计数，避免内网 NAT 共享出口 IP 误伤）。
 - 计数放**内存**，不建表（进程重启即重置，可接受）。
 - MVP 不做图形/短信验证码（等以后加短信验证码登录时一并考虑）。
 
 ### 2.12 后台管理脚本
 
-- 形态：单个 CLI（`acs-manage`，argparse 子命令），仅后端本机使用，不走 API 认证。当前已有 `add-account`、`add-device` 两个子命令；改密码、重置密码、列出账户、停用/启用、列出/踢出设备、清理过期会话等后续按同一模式补充。
+- 形态：单个 CLI（`acs-manage`，argparse 子命令），仅后端本机使用，不走 API 认证。已实现子命令：`add-account`、`add-device`、`set-password`、`set-account-status`、`list-devices`、`revoke-device`。
 - 职责 **A + B**：
-  - 账户：创建、改密码、重置密码、列出账户、停用/启用。
-  - 会话/设备：列出某账户的设备、强制踢出某设备、清理过期会话。
-- 密码处理：`add-account` 接收明文密码，用 Argon2id 哈希后入库（复用 `AccountsRepository`，不存明文）。
+  - 账户：创建、改密码、停用/启用（重置密码与列出账户未做，MVP 不急需）。
+  - 会话/设备：列出某账户的设备、强制踢出某设备（清理过期会话未做）。
+- 密码处理：`add-account` / `set-password` 接收明文密码，用 Argon2id 哈希后入库（复用 `AccountsRepository` + `PasswordService`，不存明文）。
 - MVP 不做登录审计日志。
 - **删除账户 = 停用**：`accounts` 加 `status` 字段（如 `active` / `disabled`），停用后无法登录、已登录会话立即失效（踢掉），数据全部保留，可逆。不做物理删除。
 
@@ -128,45 +130,74 @@
 - 403：账户被停用（`status == disabled`）、设备被踢（组合非 `active`）。
 - 登录失败（密码错）与防刷锁定返回 401（不泄露账户是否存在）。
 
+### 2.15 实现结构（依赖注入）
+
+认证逻辑已按"仓库层纯净、服务层组合、deps 唯一接线"落地：
+
+| 文件 | 职责 |
+| --- | --- |
+| `repositories/accounts.py`、`account_devices.py` | 账户/设备表的受控读写；`get_ActiveSession` 一次 JOIN 完成"设备组合 + 账户"双校验（§2.14 第 5 步） |
+| `services/password.py` | Argon2id 哈希/校验 |
+| `services/token.py` | JWT 签发/验签（access/refresh），时钟可注入 |
+| `services/rate_limiter.py` | 登录防刷内存计数（§2.11），时钟可注入 |
+| `services/auth.py` | `AuthService` 门面：login / refresh / logout |
+| `deps.py` | 唯一 FastAPI 接线层：`get_AuthService`、`get_CurrentAccount`（全局守卫）、`AUTH_WHITELIST` |
+| `routers/auth.py` | `POST /auth/login` / `refresh` / `logout`，refresh 写 HttpOnly cookie |
+| `errors.py` | 统一错误 schema + 全局异常处理器（§3.2） |
+
+注入约定：服务构造器全部注入依赖（仓库、密钥、TTL、时钟、限流参数），测试通过
+`dependency_overrides` 替换 DB 与时钟，业务逻辑零 mock 走真实链路。
+
 ## 3. 测试计划
 
 ### 3.1 分层与范围
-| 层 | 内容 | MVP 范围 |
-| --- | --- | --- |
-| A 单元测试 | 手机号规范化、密码哈希校验、access/refresh 签发验签、过期判断、防刷计数 | 必做 |
-| B 接口测试 | 登录/刷新/登出全链路、踢出失效、停用即踢、鉴权白名单、防刷锁定 | 必做 |
-| C 管理脚本测试 | 创建账户、停用、踢设备 CLI 行为 | 值得做 |
-| D 前端测试 | token 存取、切换账户库、登出保留数据 | 缓做 |
+| 层 | 内容 | MVP 范围 | 状态 |
+| --- | --- | --- | --- |
+| A 单元测试 | 手机号规范化、密码哈希校验、access/refresh 签发验签、过期判断、防刷计数 | 必做 | 已完成（缝 6） |
+| B 接口测试 | 登录/刷新/登出全链路、踢出失效、停用即踢、鉴权白名单、防刷锁定 | 必做 | 已完成（缝 7） |
+| C 管理脚本测试 | 创建账户、改密码、停用/启用、列出/踢出设备 CLI 行为 | 值得做 | 已完成（缝 5） |
+| D 前端测试 | token 存取、切换账户库、登出保留数据 | 缓做 | 缓做 |
 
 工具：pytest + FastAPI TestClient + 临时 SQLite。
 
 ### 3.2 错误响应约定
 
-- 认证错误返回格式**可复用**，设计为统一错误响应 schema（如 `error_code` + `message` + 可选 `details`），认证层先落地，后期其他模块复用。
-- 约定待细化（错误码清单、HTTP 状态码映射）见"未定事项"。
+- 认证错误返回格式**已落地**：统一 `AppError`（`error_code` + `message` + 可选 `details`），
+  FastAPI 全局异常处理器转 JSON，实现在 `backend/errors.py`；认证层先落地，后期其他模块复用。
+- 错误码清单与 HTTP 状态码映射（401 vs 403 语义见 §2.14）：
+
+| error_code | HTTP | 含义 |
+| --- | --- | --- |
+| `invalid_credentials` | 401 | 登录失败（手机号或密码错），不泄露账户是否存在 |
+| `login_blocked` | 401 | 防刷锁定（同一手机号失败 5 次 / 15 分钟） |
+| `invalid_token` | 401 | token 缺失、无效、过期、类型不符、验签失败 |
+| `session_revoked` | 403 | 设备被踢或组合失效，需重新登录 |
+| `account_disabled` | 403 | 账户停用，无法登录 / 已登录会话立即失效 |
+| `invalid_request` | 400 | 登录请求格式不合法（手机号 / device_id） |
 
 ### 3.3 单元测试用例清单（A 层）
 
-1. 手机号规范化：`138 0000 0000` / `+8613800000000` → `13800000000`
-2. 密码哈希：Argon2id 校验通过/失败、同一密码两次哈希不同
-3. access JWT：签发含 `phone` + `device_id` + `exp`；验签通过/伪造签名拒绝
-4. refresh JWT：同样含 `phone` + `device_id` + `exp`；验签通过/伪造拒绝
-5. 过期判断：`exp` 已过期 / 未过期边界
+1. 手机号规范化：`138 0000 0000` / `+8613800000000` → `13800000000` ✅
+2. 密码哈希：Argon2id 校验通过/失败、同一密码两次哈希不同 ✅
+3. access JWT：签发含 `phone` + `device_id` + `exp`；验签通过/伪造签名拒绝 ✅
+4. refresh JWT：同样含 `phone` + `device_id` + `exp`；验签通过/伪造拒绝 ✅
+5. 过期判断：`exp` 已过期 / 未过期边界 ✅
+6. 防刷计数：失败计数、锁定阈值、锁定到期自动解锁、按 key 隔离 ✅
 
 ### 3.4 接口测试用例清单（B 层）
 
-1. 登录成功 → 返回 access + 设置 refresh cookie
-2. 登录失败（密码错）→ 401，且记一次失败
-3. 防刷：连续失败 5 次 → 第 6 次即使密码对也锁定
-4. 刷新：有效 refresh → 新 access + 新 refresh（滚动）
-5. 刷新：被踢出设备的 refresh → 拒绝
-6. 刷新：过期 refresh → 拒绝
-7. 登出 → 会话删除，refresh 不能再刷新
-8. 未认证请求业务端点 → 401
-9. access 过期 → 401
-10. 停用账户 → 已登录会话立即失效
-11. 手机号未规范化输入（带空格/`+86`）→ 登录仍成功（应用层规范化）
-12. 两台设备同账户 → 两个独立会话、各自登录不受影响
+1. 登录成功 → 返回 access + 设置 refresh cookie ✅
+2. 登录失败（密码错）→ 401，且记一次失败 ✅
+3. 防刷：连续失败 5 次 → 第 6 次即使密码对也锁定 ✅
+4. 刷新：有效 refresh → 新 access + 新 refresh（滚动）✅
+5. 刷新：被踢出设备的 refresh → 拒绝 ✅
+6. 刷新：过期 refresh → 拒绝 ✅
+7. 登出 → 会话删除，refresh 不能再刷新 ✅
+8. 未认证请求业务端点 → 401 ✅
+9. access 过期 → 401 ✅
+10. 停用账户 → 已登录会话立即失效 ✅
+11. 手机号未规范化输入（带空格/`+86`）→ 登录仍成功（应用层规范化）✅
+12. 两台设备同账户 → 两个独立会话、各自登录不受影响 ✅
 
 ## 4. 术语表
 
@@ -212,7 +243,6 @@
 ## 6. 未定事项
 
 - iOS PWA 独立窗口模式对 HttpOnly cookie 的实际影响（需真机验证）。
-- `operation_id`、`turn_id` 等其他标识是否沿用"业务前缀 + 短 UUID"格式。
 - 登录 / 踢出 / 换账户与 `sync_state` 的具体联动流程。
 - 后续可加能力：短信验证码登录、设备审批流程。
 

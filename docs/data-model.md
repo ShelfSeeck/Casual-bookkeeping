@@ -285,6 +285,8 @@ CREATE TABLE work_orders (
 
 创建记录的一方负责生成 `sync_id`：前端离线新增时由客户端生成，AI 或后端新增时由服务端生成。后续新增、修改、删除、冲突检测和操作历史都通过它定位目标记录。
 
+> 标识统一生成格式：业务前缀 + `uuid4().hex[:12]`，前缀对应 `sync-`（sync_id）、`op-`（operation_id）等，详见 `docs/auth-structure.md` §2.7。
+
 ### 5.2 前端 Dexie 表
 
 | 表 | 主键 | 作用 |

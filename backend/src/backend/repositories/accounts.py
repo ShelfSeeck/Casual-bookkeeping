@@ -84,3 +84,14 @@ class AccountsRepository(BaseRepository):
             "phone",
             phone,
         )
+
+    def set_Password(self, phone: str, password_hash: str) -> None:
+        # 改密码：只更新哈希与 updated_at，不存明文（docs §2.12）
+        phone = normalize_Phone(phone)
+        now = datetime.now(timezone.utc).isoformat()
+        self._update(
+            "accounts",
+            {"password_hash": password_hash, "updated_at": now},
+            "phone",
+            phone,
+        )

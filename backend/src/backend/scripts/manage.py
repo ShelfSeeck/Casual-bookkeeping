@@ -11,13 +11,12 @@ argparse 只负责参数解析，main() 负责开连接、提交、打印结果�
 import argparse
 from datetime import datetime, timedelta, timezone
 
-from argon2 import PasswordHasher
-
 from backend.config import Settings
 from backend.data.db import Database
 from backend.data.schema import apply_schema
 from backend.repositories.account_devices import AccountDevicesRepository
 from backend.repositories.accounts import AccountsRepository
+from backend.services.password import PasswordService
 
 # refresh token 有效期：180 天（docs/auth-structure.md §2.5）
 REFRESH_VALIDITY_DAYS = 180
@@ -26,9 +25,9 @@ REFRESH_VALIDITY_DAYS = 180
 def add_Account(connection, phone: str, password: str, status: str = "active") -> None:
     """创建账户：密码用 Argon2id 哈希后入库，绝不允许存明文。
 
-    argon2.PasswordHasher 默认即 Argon2id（与认证文档定案一致）。
+    PasswordService 默认即 Argon2id（与认证文档定案一致）。
     """
-    password_hash = PasswordHasher().hash(password)
+    password_hash = PasswordService().hash(password)
     AccountsRepository(connection).create_Account(phone, password_hash, status)
 
 
@@ -48,6 +47,27 @@ def add_Device(
             datetime.now(timezone.utc) + timedelta(days=REFRESH_VALIDITY_DAYS)
         ).isoformat()
     AccountDevicesRepository(connection).upsert_Device(phone, device_id, expires_at)
+
+
+def set_AccountPassword(connection, phone: str, password: str) -> None:
+    """改密码：用 Argon2id 重新哈希后入库（复用 AccountsRepository.set_Password）。"""
+    password_hash = PasswordService().hash(password)
+    AccountsRepository(connection).set_Password(phone, password_hash)
+
+
+def set_AccountStatus(connection, phone: str, status: str) -> None:
+    """停用/启用账户：停用后无法登录、已登录会话立即失效（docs §2.12）。"""
+    AccountsRepository(connection).set_AccountStatus(phone, status)
+
+
+def list_Devices(connection, phone: str) -> list:
+    """列出某账户登记过的全部设备（供查看信任清单）。"""
+    return AccountDevicesRepository(connection).list_Devices(phone)
+
+
+def revoke_Device(connection, phone: str, device_id: str) -> None:
+    """踢出设备：该设备已签发 token 立即失效（复用 revoke_Device）。"""
+    AccountDevicesRepository(connection).revoke_Device(phone, device_id)
 
 
 def _connection():
@@ -72,9 +92,32 @@ def main(argv: list[str] | None = None) -> None:
     # add-device：登记设备会话
     p_device = sub.add_parser("add-device", help="登记设备会话")
     p_device.add_argument("phone", help="所属账户手机号")
-    p_device.add_argument("device_id", help="设备标识（如 dev-xxx）")
+    p_device.add_argument("device_id", help="设备标识（dev- + 12 位十六进制）")
     p_device.add_argument("--expires-at", help="refresh 过期时间 ISO 8601，缺省 180 天后")
     p_device.set_defaults(func=add_Device)
+
+    # set-password：改密码
+    p_password = sub.add_parser("set-password", help="修改账户密码")
+    p_password.add_argument("phone", help="11 位手机号")
+    p_password.add_argument("--password", required=True, help="新密码，将用 Argon2id 哈希入库")
+    p_password.set_defaults(func=set_AccountPassword)
+
+    # set-account-status：停用/启用账户
+    p_status = sub.add_parser("set-account-status", help="停用/启用账户")
+    p_status.add_argument("phone", help="11 位手机号")
+    p_status.add_argument("--status", required=True, choices=["active", "disabled"])
+    p_status.set_defaults(func=set_AccountStatus)
+
+    # list-devices：列出账户设备
+    p_devices = sub.add_parser("list-devices", help="列出账户登记的设备")
+    p_devices.add_argument("phone", help="11 位手机号")
+    p_devices.set_defaults(func=list_Devices)
+
+    # revoke-device：踢出设备
+    p_revoke = sub.add_parser("revoke-device", help="踢出设备（会话立即失效）")
+    p_revoke.add_argument("phone", help="11 位手机号")
+    p_revoke.add_argument("device_id", help="设备标识（dev- + 12 位十六进制）")
+    p_revoke.set_defaults(func=revoke_Device)
 
     args = parser.parse_args(argv)
 
@@ -86,6 +129,19 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "add-device":
             args.func(connection, args.phone, args.device_id, args.expires_at)
             print(f"设备已登记: {args.phone} / {args.device_id}")
+        elif args.command == "set-password":
+            args.func(connection, args.phone, args.password)
+            print(f"密码已修改: {args.phone}")
+        elif args.command == "set-account-status":
+            args.func(connection, args.phone, args.status)
+            print(f"账户状态已更新: {args.phone} → {args.status}")
+        elif args.command == "list-devices":
+            for device in args.func(connection, args.phone):
+                print(f"  {device.device_id}  status={device.status}"
+                      f"  expires={device.refresh_expires_at}")
+        elif args.command == "revoke-device":
+            args.func(connection, args.phone, args.device_id)
+            print(f"设备已踢出: {args.phone} / {args.device_id}")
         connection.commit()
     except ValueError as exc:
         connection.rollback()

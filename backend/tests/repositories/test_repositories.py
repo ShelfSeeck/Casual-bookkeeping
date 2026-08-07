@@ -104,11 +104,11 @@ def test_upsert_Device_inserts_when_missing(connection):
         "13800000000", "hash-value", "active"
     )
     repo = AccountDevicesRepository(connection)
-    repo.upsert_Device("13800000000", "dev-abcd", "2027-01-01T00:00:00+00:00")
+    repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "2027-01-01T00:00:00+00:00")
 
     devices = repo.list_Devices("13800000000")
     assert len(devices) == 1
-    assert devices[0].device_id == "dev-abcd"
+    assert devices[0].device_id == "dev-a1b2c3d4e5f6"
     assert devices[0].status == "active"
 
 
@@ -116,7 +116,7 @@ def test_upsert_Device_rejects_missing_account(connection):
     # 账户不存在时：upsert_Device 必须拒绝，且不留下任何设备行
     repo = AccountDevicesRepository(connection)
     with pytest.raises(ValueError, match="账户不存在"):
-        repo.upsert_Device("13800000000", "dev-abcd", "2027-01-01T00:00:00+00:00")
+        repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "2027-01-01T00:00:00+00:00")
 
     assert repo.list_Devices("13800000000") == []
 
@@ -138,7 +138,7 @@ def test_upsert_Device_rejects_bad_expires_at(connection):
     )
     repo = AccountDevicesRepository(connection)
     with pytest.raises(ValueError, match="非法过期时间"):
-        repo.upsert_Device("13800000000", "dev-abcd", "not-a-time")
+        repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "not-a-time")
 
 
 def test_upsert_Device_updates_when_exists(connection):
@@ -147,8 +147,8 @@ def test_upsert_Device_updates_when_exists(connection):
         "13800000000", "hash-value", "active"
     )
     repo = AccountDevicesRepository(connection)
-    repo.upsert_Device("13800000000", "dev-abcd", "2027-01-01T00:00:00+00:00")
-    repo.upsert_Device("13800000000", "dev-abcd", "2028-01-01T00:00:00+00:00")
+    repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "2027-01-01T00:00:00+00:00")
+    repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "2028-01-01T00:00:00+00:00")
 
     devices = repo.list_Devices("13800000000")
     assert len(devices) == 1
@@ -161,23 +161,71 @@ def test_revoke_Device_sets_status_revoked(connection):
         "13800000000", "hash-value", "active"
     )
     repo = AccountDevicesRepository(connection)
-    repo.upsert_Device("13800000000", "dev-abcd", "2027-01-01T00:00:00+00:00")
+    repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "2027-01-01T00:00:00+00:00")
 
-    repo.revoke_Device("13800000000", "dev-abcd")
+    repo.revoke_Device("13800000000", "dev-a1b2c3d4e5f6")
 
     devices = repo.list_Devices("13800000000")
     assert len(devices) == 1
     assert devices[0].status == "revoked"
 
 
-def test_validate_DeviceId_accepts_dev_prefix_short_id():
-    # 文档示例格式：dev- + 短 ID（如 dev-3k9x）
-    assert validate_DeviceId("dev-3k9x") == "dev-3k9x"
+def test_validate_DeviceId_accepts_dev_prefix_hex12():
+    # 文档 §2.7 统一格式：dev- + 12 位十六进制（uuid4().hex[:12]）
+    assert validate_DeviceId("dev-3a9f1c2e4b5d") == "dev-3a9f1c2e4b5d"
 
 
 def test_validate_DeviceId_rejects_bad_format():
-    # 缺前缀 / 缺后缀都是非法
+    # 缺前缀 / 缺后缀 / 长度不符 / 含非十六进制字符都是非法
     with pytest.raises(ValueError, match="非法 device_id"):
         validate_DeviceId("abc")
     with pytest.raises(ValueError, match="非法 device_id"):
         validate_DeviceId("dev-")
+    with pytest.raises(ValueError, match="非法 device_id"):
+        validate_DeviceId("dev-3a9f1c2e4b5d00")  # 13 位
+    with pytest.raises(ValueError, match="非法 device_id"):
+        validate_DeviceId("dev-3a9f1c2e4b5x")  # 含非 hex 字符
+
+
+def test_get_ActiveSession_true_when_device_and_account_active(connection):
+    # 设备组合 + 账户都 active → 会话有效（docs §2.14 第 5 步，一次 JOIN 往返）
+    AccountsRepository(connection).create_Account(
+        "13800000000", "hash-value", "active"
+    )
+    repo = AccountDevicesRepository(connection)
+    repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "2027-01-01T00:00:00+00:00")
+
+    assert repo.get_ActiveSession("13800000000", "dev-a1b2c3d4e5f6") is True
+
+
+def test_get_ActiveSession_false_when_device_revoked(connection):
+    # 设备被踢（revoked）→ 会话失效
+    AccountsRepository(connection).create_Account(
+        "13800000000", "hash-value", "active"
+    )
+    repo = AccountDevicesRepository(connection)
+    repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "2027-01-01T00:00:00+00:00")
+    repo.revoke_Device("13800000000", "dev-a1b2c3d4e5f6")
+
+    assert repo.get_ActiveSession("13800000000", "dev-a1b2c3d4e5f6") is False
+
+
+def test_get_ActiveSession_false_when_account_disabled(connection):
+    # 账户停用（disabled）→ 已登录会话立即失效（docs 用例 B10）
+    AccountsRepository(connection).create_Account(
+        "13800000000", "hash-value", "active"
+    )
+    repo = AccountDevicesRepository(connection)
+    repo.upsert_Device("13800000000", "dev-a1b2c3d4e5f6", "2027-01-01T00:00:00+00:00")
+    AccountsRepository(connection).set_AccountStatus("13800000000", "disabled")
+
+    assert repo.get_ActiveSession("13800000000", "dev-a1b2c3d4e5f6") is False
+
+
+def test_get_ActiveSession_false_for_unknown_device(connection):
+    # 设备从未登记 → 会话无效
+    AccountsRepository(connection).create_Account(
+        "13800000000", "hash-value", "active"
+    )
+    repo = AccountDevicesRepository(connection)
+    assert repo.get_ActiveSession("13800000000", "dev-000000000000") is False
