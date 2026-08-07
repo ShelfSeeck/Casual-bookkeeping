@@ -20,3 +20,4 @@ Factory bookkeeping is repetitive and easy to get wrong. This project makes dail
 
 - `docs/` — data model, auth, and AI chat storage design
 - `backend/` — FastAPI + SQLite backend
+- `frontend/` — Vue 3 + Vite + Dexie PWA (local-first data layer)

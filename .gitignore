@@ -21,6 +21,9 @@ dist/
 # 具体配置不入库：仓库内只保留 config.example.toml 示例
 config.toml
 
+# 本地说明不入库
+AGENTS.md
+
 # Editors / OS
 .DS_Store
 .idea/
