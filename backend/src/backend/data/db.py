@@ -12,8 +12,9 @@ from pathlib import Path
 class Database:
     """SQLite 连接工厂，负责按路径打开连接并设置统一 PRAGMA。"""
 
-    def __init__(self, database_path: str) -> None:
+    def __init__(self, database_path: str, busy_timeout_ms: int = 5000) -> None:
         self.database_path = Path(database_path)
+        self.busy_timeout_ms = busy_timeout_ms
 
     def connect(self) -> sqlite3.Connection:
         # 目录不存在时先创建（首次运行时 data/ 目录尚未存在）
@@ -27,6 +28,7 @@ class Database:
         # 设计约定：业务表之间不声明外键，完整性校验在应用层
         # （docs/data-model.md 原则 13），故显式关闭外键强制
         connection.execute("PRAGMA foreign_keys = OFF")
-        # 写锁冲突时排队等待 5 秒，而不是立刻报 "database is locked"
-        connection.execute("PRAGMA busy_timeout = 5000")
+        # 写锁冲突时排队等待（毫秒，来自 config busy_timeout_ms），
+        # 而不是立刻报 "database is locked"
+        connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
         return connection

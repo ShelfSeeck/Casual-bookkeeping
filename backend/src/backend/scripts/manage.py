@@ -18,9 +18,6 @@ from backend.repositories.account_devices import AccountDevicesRepository
 from backend.repositories.accounts import AccountsRepository
 from backend.services.password import PasswordService
 
-# refresh token 有效期：180 天（docs/auth-structure.md §2.5）
-REFRESH_VALIDITY_DAYS = 180
-
 
 def add_Account(connection, phone: str, password: str, status: str = "active") -> None:
     """创建账户：密码用 Argon2id 哈希后入库，绝不允许存明文。
@@ -39,12 +36,14 @@ def add_Device(
 ) -> None:
     """登记设备会话：无则插入、有则更新（复用 upsert_Device）。
 
-    refresh 过期时间缺省为"当前时间 + 180 天"（ISO 8601 UTC）。
+    refresh 过期时间缺省为"当前时间 + 配置的 refresh_token_ttl_seconds"（ISO 8601 UTC），
+    与认证层签发 refresh 的有效期保持一致（config.toml [auth]）。
     账户存在性校验由仓库层 upsert_Device 保证（应用层校验），这里不重复。
     """
     if expires_at is None:
+        ttl_seconds = Settings().refresh_token_ttl_seconds
         expires_at = (
-            datetime.now(timezone.utc) + timedelta(days=REFRESH_VALIDITY_DAYS)
+            datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         ).isoformat()
     AccountDevicesRepository(connection).upsert_Device(phone, device_id, expires_at)
 

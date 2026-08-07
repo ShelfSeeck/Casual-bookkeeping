@@ -6,6 +6,8 @@
 
 [database]
 path = "data/app.db"
+# SQLite 写锁排队毫秒数：多连接并发写时排队等待而非立即报 "database is locked"
+busy_timeout_ms = 5000
 
 [auth]
 jwt_secret = "acs-local-dev-secret-please-override-with-env"
@@ -18,3 +20,4 @@ login_lock_seconds = 900
 # refresh cookie（docs §2.6）：HttpOnly + Secure（Secure 用配置开关，本机 http 开发关闭）
 refresh_cookie_name = "refresh_token"
 secure_cookie = false
+cookie_samesite = "lax"

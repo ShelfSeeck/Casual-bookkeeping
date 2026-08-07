@@ -60,6 +60,8 @@ def test_login_success_sets_cookie_and_returns_access(client, seed_account):
     set_cookie = resp.headers.get("set-cookie", "").lower()
     assert "refresh_token" in set_cookie
     assert "httponly" in set_cookie
+    # refresh cookie 必须带 max-age（持久 180 天），否则浏览器会话一关就丢
+    assert "max-age=" in set_cookie
 
 
 def test_login_with_unnormalized_phone(client, seed_account):

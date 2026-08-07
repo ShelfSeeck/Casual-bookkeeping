@@ -124,3 +124,19 @@ def test_get_Connection_closes_connection(database):
 
     with pytest.raises(sqlite3.ProgrammingError):
         connection.execute("SELECT 1")
+
+
+def test_get_RateLimiter_returns_shared_instance():
+    # 防刷必须进程内共享一个实例（docs §2.11）：若每请求新建，失败计数/锁定状态
+    # 会被丢弃，5 次失败锁定永不生效。两次调用应为同一对象。
+    from backend.deps import get_RateLimiter
+
+    assert get_RateLimiter() is get_RateLimiter()
+
+
+def test_get_Settings_returns_shared_instance():
+    # 配置应只解析一次（进程内共享），避免每请求重读 config.toml。
+    # 惰性单例：改 config.toml 后需重启进程生效。
+    from backend.deps import get_Settings
+
+    assert get_Settings() is get_Settings()

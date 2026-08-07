@@ -88,7 +88,7 @@ def client(test_database, clock):
         return limiter
 
     def _override_cookie():
-        return RefreshCookieConfig(name="refresh_token", secure=False)
+        return RefreshCookieConfig(name="refresh_token", secure=False, max_age=REFRESH_TTL)
 
     def _override_auth(
         accounts: AccountsRepository = Depends(get_AccountsRepository),

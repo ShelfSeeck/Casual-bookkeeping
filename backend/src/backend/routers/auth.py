@@ -18,9 +18,6 @@ from backend.services.token import TokenPair
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# refresh cookie 的 SameSite：同域部署取 lax（docs §2.6）
-_SAMESITE = "lax"
-
 
 class LoginRequest(BaseModel):
     phone: str
@@ -39,9 +36,23 @@ def _set_refresh_cookie(
     response.set_cookie(
         key=cookie.name,
         value=token,
+        max_age=cookie.max_age,  # 持久 cookie：180 天（与 JWT 有效期一致，关浏览器不丢）
         httponly=True,
         secure=cookie.secure,
-        samesite=_SAMESITE,
+        samesite=cookie.samesite,
+        path="/",
+    )
+
+
+def _clear_refresh_cookie(
+    response: Response, cookie: RefreshCookieConfig
+) -> None:
+    # 删除 cookie 需镜像设置时的属性，确保 Secure cookie 也能被可靠清除
+    response.delete_cookie(
+        key=cookie.name,
+        httponly=True,
+        secure=cookie.secure,
+        samesite=cookie.samesite,
         path="/",
     )
 
@@ -83,4 +94,4 @@ def logout(
     token = request.cookies.get(cookie.name)
     if token:
         auth.logout(token)
-    response.delete_cookie(cookie.name, path="/")
+    _clear_refresh_cookie(response, cookie)

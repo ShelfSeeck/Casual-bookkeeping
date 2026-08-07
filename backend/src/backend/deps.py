@@ -30,10 +30,14 @@ from backend.services.password import PasswordService
 from backend.services.rate_limiter import RateLimiter
 from backend.services.token import TokenError, TokenService
 
-# 模块级惰性单例：Database 无状态（只含路径+连接工厂），进程内共享一个即可。
-# 首次 get_Database() 才读 config.toml 并创建，避免每个请求重复解析配置
-# （参照 Learnova 的 db_dep.py 单例模式，但改为惰性，测试不依赖 config.toml 存在）。
+# 模块级惰性单例：进程内各共享一个。
+# - _settings：配置快照，只解析一次 config.toml，避免每请求重读磁盘
+# - _database：Database 无状态（只含路径+连接工厂）
+# - _rate_limiter：RateLimiter 有状态（防刷计数/锁定），必须共享（docs §2.11）
+# 首次 get_Settings() 才读 config.toml 并创建；修改 config.toml 后需重启进程生效。
+_settings: Settings | None = None
 _database: Database | None = None
+_rate_limiter: RateLimiter | None = None
 
 # 白名单制（docs §2.10）：默认所有端点要求有效 access token，仅这三个端点放行。
 AUTH_WHITELIST = {
@@ -53,18 +57,28 @@ class CurrentAccount:
 
 @dataclass(frozen=True)
 class RefreshCookieConfig:
-    """refresh cookie 参数（名称与 Secure 开关），供路由设置/删除 cookie。"""
+    """refresh cookie 参数（名称、Secure、SameSite、存活秒数），供路由设置/删除 cookie。"""
 
     name: str
     secure: bool
+    max_age: int
+    samesite: str = "lax"
+
+
+def get_Settings() -> Settings:
+    """惰性单例：配置只解析一次 config.toml，进程内共享（改配置需重启进程）。"""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
 
 
 def get_Database() -> Database:
     """惰性单例：Database 无状态（只含路径+连接工厂），进程内共享一个。"""
     global _database
     if _database is None:
-        settings = Settings()
-        _database = Database(settings.database_path)
+        settings = get_Settings()
+        _database = Database(settings.database_path, settings.busy_timeout_ms)
     return _database
 
 
@@ -104,8 +118,8 @@ def get_PasswordService() -> PasswordService:
 
 
 def get_TokenService() -> TokenService:
-    # 密钥从 Settings 读（config.toml / ACS_JWT_SECRET 环境变量）
-    settings = Settings()
+    # 密钥从 Settings 读（config.toml / ACS_JWT_SECRET 环境变量）；TokenService 无状态
+    settings = get_Settings()
     return TokenService(
         secret=settings.jwt_secret,
         access_ttl=settings.access_token_ttl_seconds,
@@ -114,13 +128,23 @@ def get_TokenService() -> TokenService:
 
 
 def get_RateLimiter() -> RateLimiter:
-    settings = Settings()
-    return RateLimiter(settings.max_login_failures, settings.login_lock_seconds)
+    # 惰性单例：RateLimiter 有状态（失败计数/锁定），必须进程内共享一个实例，
+    # 否则每请求新建会让计数与锁定状态全部丢弃，防刷形同虚设（同 _database 模式）。
+    global _rate_limiter
+    if _rate_limiter is None:
+        settings = get_Settings()
+        _rate_limiter = RateLimiter(settings.max_login_failures, settings.login_lock_seconds)
+    return _rate_limiter
 
 
 def get_RefreshCookieConfig() -> RefreshCookieConfig:
-    settings = Settings()
-    return RefreshCookieConfig(settings.refresh_cookie_name, settings.secure_cookie)
+    settings = get_Settings()
+    return RefreshCookieConfig(
+        settings.refresh_cookie_name,
+        settings.secure_cookie,
+        settings.refresh_token_ttl_seconds,
+        settings.cookie_samesite,
+    )
 
 
 def get_AuthService(
