@@ -17,7 +17,7 @@
 | 列名 | 类型 | 含义 |
 | --- | --- | --- |
 | `session_id` | TEXT | 主键 |
-| `owner_user_id` | TEXT | 所属账户，仅供后端鉴权 |
+| `account_phone` | TEXT | 所属账户手机号，仅供后端鉴权 |
 | `title` | TEXT | 会话标题 |
 | `created_at` | TEXT | 创建时间 |
 | `updated_at` | TEXT | 最后活动时间 |

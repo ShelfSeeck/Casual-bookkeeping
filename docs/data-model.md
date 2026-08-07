@@ -1,6 +1,6 @@
 # AcS 前后端数据结构
 
-> 本文整合自 `~/文档/Obsidian/Tasks/_vibecoding/记账软件/存储系统的搭建.md`，是开发时的数据结构参考。只收录已定内容；未定内容登记在 `AGENTS.md` 的“未定事项”中。
+> 本文是开发时的数据结构参考，只收录已定内容；未定内容登记在 `AGENTS.md` 的“未定事项”中。
 
 ## 1. 文档目的与使用范围
 
@@ -65,6 +65,8 @@
 
 每条可同步业务记录使用前后端共用的 `sync_id` 定位同一条数据。后端另有内部整数主键，不进入同步协议；前端 Dexie 业务表以 `sync_id` 为主键。
 
+四张业务表均带账户隔离列 `account_phone`（值存账户手机号）：所有账户共用同一套表结构，写入时强制带 `account_phone`，查询时强制按当前账户过滤，账户之间数据互不可见。详见 `docs/auth-structure.md`。
+
 前端 Dexie 对应业务记录保存服务端确认的 `row_version`，用于生成提交时的 `base_version`。
 
 业务存储有意不追求完整规范化：工单保存录入时的文本与数字，日常展示和统计不依赖联表查询。服务名称改名后，新旧文本会被统计为不同项目；因此所有正常工单必须从维护好的选项中选择，不允许直接绕过配置自由输入。
@@ -78,7 +80,8 @@
 | 列名 | SQLite 类型 | 约束/含义 |
 | --- | --- | --- |
 | `service_category_id` | INTEGER | 内部主键，自增 |
-| `category_name` | TEXT | 大类名称，例如“洗水”“刷毛”“车缝扣子”；不可重复 |
+| `account_phone` | TEXT | 所属账户（手机号），账户间数据隔离 |
+| `category_name` | TEXT | 大类名称，例如“洗水”“刷毛”“车缝扣子”；同账户内不可重复 |
 | `subcategories_json` | TEXT | 小类 JSON 数组，由应用校验格式 |
 | `is_active` | INTEGER | 大类是否可用于新工单：`0/1` |
 | `created_at` | TEXT | 创建时间，ISO 8601 |
@@ -122,13 +125,17 @@
 ```sql
 CREATE TABLE service_categories (
     service_category_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category_name TEXT NOT NULL UNIQUE,
+    account_phone TEXT NOT NULL,
+    category_name TEXT NOT NULL,
     subcategories_json TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    UNIQUE (account_phone, category_name)
 );
 ```
+
+> 列 `account_phone`：所属账户（手机号），账户间数据隔离。`category_name` 的不可重复仅在**同一账户内**成立，故唯一约束改为 `(account_phone, category_name)` 复合唯一。
 
 ### 4.3 真实客户表 `customers`
 
@@ -139,6 +146,7 @@ CREATE TABLE service_categories (
 | 列名 | SQLite 类型 | 约束/含义 |
 | --- | --- | --- |
 | `customer_id` | INTEGER | 内部主键，自增，长期稳定 |
+| `account_phone` | TEXT | 所属账户（手机号），账户间数据隔离 |
 | `canonical_name` | TEXT | 厂家的内部正式名称或稳定称呼 |
 | `created_at` | TEXT | 创建时间 |
 | `updated_at` | TEXT | 最后修改时间 |
@@ -147,6 +155,7 @@ CREATE TABLE service_categories (
 ```sql
 CREATE TABLE customers (
     customer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_phone TEXT NOT NULL,
     canonical_name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -161,6 +170,7 @@ CREATE TABLE customers (
 | 列名 | SQLite 类型 | 约束/含义 |
 | --- | --- | --- |
 | `mapping_id` | INTEGER | 内部主键，自增 |
+| `account_phone` | TEXT | 所属账户（手机号），账户间数据隔离 |
 | `customer_id` | INTEGER | 对应真实客户 ID；作为普通整数保存，不声明外键 |
 | `customer_code` | TEXT | 客户编号；必须使用文本，以保留 `001` 等前导零 |
 | `customer_name` | TEXT | 显示名称，可填完整人名或缩写 |
@@ -172,6 +182,7 @@ CREATE TABLE customers (
 ```sql
 CREATE TABLE customer_code_mappings (
     mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_phone TEXT NOT NULL,
     customer_id INTEGER NOT NULL,
     customer_code TEXT NOT NULL,
     customer_name TEXT NOT NULL,
@@ -197,6 +208,7 @@ CREATE TABLE customer_code_mappings (
 | 列名 | SQLite 类型 | 约束/含义 |
 | --- | --- | --- |
 | `work_order_id` | INTEGER | 内部主键，自增 |
+| `account_phone` | TEXT | 所属账户（手机号），账户间数据隔离 |
 | `work_order_date` | TEXT | 业务日期，`YYYY-MM-DD`，允许使用者修改 |
 | `created_at` | TEXT | 系统实际创建时间，不供普通编辑 |
 | `updated_at` | TEXT | 最后修改时间 |
@@ -214,6 +226,7 @@ CREATE TABLE customer_code_mappings (
 ```sql
 CREATE TABLE work_orders (
     work_order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_phone TEXT NOT NULL,
     work_order_date TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -279,7 +292,7 @@ CREATE TABLE work_orders (
 | 四张业务表 | `sync_id` | 界面读取和离线修改的业务副本 |
 | `operations` | `operation_id` | 保存近期历史、来源和同步状态；仅供查看，不进行业务处理 |
 | `outbox` | 自增 `queue_id`；`operation_id` 唯一 | 保存待同步命令；冲突时同时保存 Base / Ours / Theirs 临时材料 |
-| `sync_state` | `account_id` | 保存设备标识、已应用服务端序号和最近同步时间 |
+| `sync_state` | `account_phone` | 保存设备标识、已应用服务端序号和最近同步时间 |
 
 #### `operations`
 
@@ -318,7 +331,7 @@ CREATE TABLE work_orders (
 
 | 字段 | 作用 |
 | --- | --- |
-| `account_id` | 主键；每个账户独立维护同步进度 |
+| `account_phone` | 主键；每个账户独立维护同步进度 |
 | `device_id` | 当前 PWA 安装实例标识 |
 | `applied_server_seq` | 已完整应用到本地业务表的最后一条服务端操作 |
 | `last_sync_at` | 最近同步时间 |
@@ -343,7 +356,7 @@ CREATE TABLE work_orders (
 | `operation_id` | 唯一索引 | 识别跨网络重试的同一次业务动作 |
 | `request_hash` | 普通字段 | 防止相同 `operation_id` 被复用于不同请求 |
 | `result_json` | 普通字段 | 保存首次成功响应，供幂等重试直接返回 |
-| `owner_user_id` | 索引 | 隔离账户数据并执行鉴权 |
+| `owner_phone` | 索引 | 隔离账户数据并执行鉴权 |
 | `device_id` | 索引，可空 | 记录用户操作来自哪个 PWA 安装实例 |
 | `actor_type` | 索引 | 区分用户、AI 和系统 |
 | `source_turn_id` | 索引，可空 | 将 AI 操作关联到对话回合 |
