@@ -2,5 +2,5 @@
 </script>
 
 <template>
-  <main>AcS 记账</main>
+  <main>Casual-bookkeeping 记账</main>
 </template>

@@ -1,4 +1,4 @@
-import type { AcsDatabase } from '../db/schema'
+import type { CbDatabase } from '../db/schema'
 import type { CustomerCodeMapping } from '../db/schema/business/customerCodeMappings'
 
 // CustomerCodeMappingsRepository：客户编号映射的受控读写（docs/data-model.md §4.4）。
@@ -6,9 +6,9 @@ import type { CustomerCodeMapping } from '../db/schema/business/customerCodeMapp
 // 映射按工单业务日期判断有效期（区间含 valid_from，含/不含 valid_to 由调用语义统一）。
 
 export class CustomerCodeMappingsRepository {
-  private db: AcsDatabase
+  private db: CbDatabase
 
-  constructor(db: AcsDatabase) {
+  constructor(db: CbDatabase) {
     this.db = db
   }
 

@@ -1,4 +1,4 @@
-# AcS 后端 API
+# Casual-bookkeeping 后端 API
 
 > 面向开发的端点参考（供 AI 与前后端联调使用），内容与实现保持一致；
 > 改动端点时请同步更新本文。认证设计见 `docs/auth-structure.md`。

@@ -1,4 +1,4 @@
-# AcS AI 对话存储
+# Casual-bookkeeping AI 对话存储
 
 > 自 `docs/data-model.md` 原“AI 对话存储”一章拆出，独立描述 AI 会话与回合的存储结构，供后端 Agent 会话持久化使用。
 

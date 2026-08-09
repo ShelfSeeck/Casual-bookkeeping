@@ -1,4 +1,4 @@
-# AcS 认证与设备管理设计
+# Casual-bookkeeping 认证与设备管理设计
 
 > 本文是认证系统（账户、设备、会话、token）的设计文档，本会话逐项确认后落地。未定内容登记在 `AGENTS.md` 的"未定事项"或本文"未定事项"。
 
@@ -74,6 +74,7 @@
 - **每账户独立的 IndexedDB 数据库**（如 `db_<phone>`）：切换账户 = 打开另一个数据库，物理隔离，互不可见。
 - **登出保留本地库**：登出只断开会话，数据留在本地；重新登录同一账户直接恢复，无需重新 bootstrap。
 - 配合 `sync_state` 按 `account_phone` 主键，每账户维护独立同步进度。
+- **meta 库存活跃账户身份 `account_phone`**（设备级，决定离线打开哪个业务库）：一台设备同一时刻只有一个活跃账户；失效（401/403）是会话态不持久化，离线仍可打开本地库记账；主动登出才清活跃账户 + access + cookie（本地库保留）。access token 仍存 localStorage（§2.6），身份与钥匙分离。
 
 ### 2.10 鉴权执行边界
 
@@ -88,7 +89,7 @@
 
 ### 2.12 后台管理脚本
 
-- 形态：单个 CLI（`acs-manage`，argparse 子命令），仅后端本机使用，不走 API 认证。已实现子命令：`add-account`、`add-device`、`set-password`、`set-account-status`、`list-devices`、`revoke-device`。
+- 形态：单个 CLI（`cb-manage`，argparse 子命令），仅后端本机使用，不走 API 认证。已实现子命令：`add-account`、`add-device`、`set-password`、`set-account-status`、`list-devices`、`revoke-device`。
 - 职责 **A + B**：
   - 账户：创建、改密码、停用/启用（重置密码与列出账户未做，MVP 不急需）。
   - 会话/设备：列出某账户的设备、强制踢出某设备（清理过期会话未做）。

@@ -10,8 +10,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
-        name: 'AcS 记账',
-        short_name: 'AcS',
+        name: 'Casual-bookkeeping 记账',
+        short_name: 'Cb',
         description: '衣物处理厂移动端离线记账',
         theme_color: '#1989fa',
         background_color: '#ffffff',

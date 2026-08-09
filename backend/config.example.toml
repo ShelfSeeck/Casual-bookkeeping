@@ -1,8 +1,8 @@
-# AcS 后端配置示例
+# Casual-bookkeeping 后端配置示例
 # 本文件入库，供参考与兜底。具体配置请复制为 backend/config.toml（不入 git）后按需修改：
 #     cp config.example.toml config.toml
-# 缺失 config.toml 时 Settings 自动读取本示例；生产环境务必用环境变量 ACS_JWT_SECRET
-# 覆盖 jwt_secret（示例值仅作本地开发默认，不要写入真实密钥）。
+# 缺失 config.toml 时 Settings 自动读取本示例；jwt_secret 无默认值，
+# 必须设置环境变量 CB_JWT_SECRET 或在 [auth] 配置 jwt_secret，否则启动直接报错。
 
 [database]
 path = "data/app.db"
@@ -10,8 +10,7 @@ path = "data/app.db"
 busy_timeout_ms = 5000
 
 [auth]
-jwt_secret = "acs-local-dev-secret-please-override-with-env"
-# 业务前缀 + 短 UUID 之外的 JWT 参数（docs/auth-structure.md §2.5）
+# jwt_secret 不提供默认值：优先环境变量 CB_JWT_SECRET，其次本字段（勿入库真实密钥）
 access_token_ttl_seconds = 86400          # access 24 小时
 refresh_token_ttl_seconds = 15552000       # refresh 180 天
 # 登录防刷（docs §2.11）

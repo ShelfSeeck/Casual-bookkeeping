@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createBusinessDb } from '../db/db'
-import type { AcsDatabase } from '../db/schema'
+import type { CbDatabase } from '../db/schema'
 import type { ServiceCategory } from '../db/schema/business/serviceCategories'
 import { ServiceCategoriesRepository } from './serviceCategories'
 
@@ -21,7 +21,7 @@ function makeCategory(syncId: string): ServiceCategory {
   }
 }
 
-let db: AcsDatabase
+let db: CbDatabase
 let repo: ServiceCategoriesRepository
 
 beforeEach(async () => {

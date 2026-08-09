@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createBusinessDb } from '../db/db'
-import type { AcsDatabase } from '../db/schema'
+import type { CbDatabase } from '../db/schema'
 import type { WorkOrder } from '../db/schema/business/workOrders'
 import { WorkOrdersRepository } from './workOrders'
 
@@ -30,7 +30,7 @@ function makeOrder(syncId: string, quantity = 5): WorkOrder {
   }
 }
 
-let db: AcsDatabase
+let db: CbDatabase
 let repo: WorkOrdersRepository
 
 beforeEach(async () => {

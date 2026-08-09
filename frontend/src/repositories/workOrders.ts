@@ -1,4 +1,4 @@
-import type { AcsDatabase } from '../db/schema'
+import type { CbDatabase } from '../db/schema'
 import type { WorkOrder } from '../db/schema/business/workOrders'
 
 // WorkOrdersRepository：工单表的受控读写（docs/data-model.md §5.2）。
@@ -6,9 +6,9 @@ import type { WorkOrder } from '../db/schema/business/workOrders'
 // 因此不需要按 accountPhone 过滤，直接操作当前库。
 
 export class WorkOrdersRepository {
-  private db: AcsDatabase
+  private db: CbDatabase
 
-  constructor(db: AcsDatabase) {
+  constructor(db: CbDatabase) {
     this.db = db
   }
 

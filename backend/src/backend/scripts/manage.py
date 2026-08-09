@@ -5,7 +5,7 @@ argparse 只负责参数解析，main() 负责开连接、提交、打印结果�
 
 用法（两种等价）：
     uv run python -m backend.scripts.manage add-account 13800000000 --password xxx
-    uv run acs-manage add-account 13800000000 --password xxx
+    uv run cb-manage add-account 13800000000 --password xxx
 """
 
 import argparse
@@ -78,7 +78,7 @@ def _connection():
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="AcS 后台管理 CLI（本机使用）")
+    parser = argparse.ArgumentParser(description="Casual-bookkeeping 后台管理 CLI（本机使用）")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # add-account：创建账户

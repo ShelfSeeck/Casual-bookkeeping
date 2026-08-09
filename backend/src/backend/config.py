@@ -6,7 +6,8 @@ config.toml 放在 backend/ 目录下（本文件 src/backend/config.py 向上�
 Settings 自动回退到示例文件读取，保证开箱即用。
 路径字段按该目录解析，方便迁移部署。
 
-所有配置项都带默认值：config.toml 里没写的字段用默认，缺字段不会报错。
+除 jwt_secret 外，其余配置项都带默认值：config.toml 里没写的字段用默认，缺字段不会报错。
+jwt_secret 是唯一例外：不提供默认密钥，环境变量 CB_JWT_SECRET 与 config.toml 都缺失时直接报错。
 用标准库 tomllib 解析 TOML（Python 3.11+ 内置，零依赖）。
 """
 
@@ -26,8 +27,6 @@ _DEFAULTS: dict[str, dict[str, object]] = {
         "busy_timeout_ms": 5000,
     },
     "auth": {
-        # jwt_secret 优先环境变量 ACS_JWT_SECRET，其次 config，默认值仅作本地开发
-        "jwt_secret": "acs-local-dev-secret-please-override-with-env",
         "access_token_ttl_seconds": 86400,     # access 24 小时
         "refresh_token_ttl_seconds": 15552000,  # refresh 180 天
         "max_login_failures": 5,
@@ -79,9 +78,14 @@ class Settings:
 
     @property
     def jwt_secret(self) -> str:
-        # 生产密钥从环境变量读（ACS_JWT_SECRET），config.toml 只作本地开发默认值，
-        # 避免把真实密钥写进仓库
-        return os.environ.get("ACS_JWT_SECRET") or str(self._auth("jwt_secret"))
+        # 生产密钥从环境变量读（CB_JWT_SECRET），config.toml 只作开发用。
+        # 不提供默认密钥：两处都没有时直接报错，防止弱密钥静默启用。
+        secret = os.environ.get("CB_JWT_SECRET") or self._config.get("auth", {}).get("jwt_secret")
+        if not secret:
+            raise RuntimeError(
+                "未配置 JWT 密钥：请设置环境变量 CB_JWT_SECRET 或在 config.toml [auth] 配置 jwt_secret"
+            )
+        return str(secret)
 
     @property
     def access_token_ttl_seconds(self) -> int:

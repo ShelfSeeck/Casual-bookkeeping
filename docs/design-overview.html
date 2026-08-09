@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Casual-bookkeeping 数据架构与同步总览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f6f7f9; color: #1f2328; line-height: 1.6; padding: 32px 20px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 24px; margin-bottom: 4px; }
+  .sub { color: #6b7280; font-size: 14px; margin-bottom: 28px; }
+
+  section { margin-bottom: 32px; }
+  .sec-title {
+    font-size: 18px; font-weight: 600; margin-bottom: 14px;
+    padding-left: 10px; border-left: 4px solid #3b82f6;
+  }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .card h3 { font-size: 15px; margin-bottom: 10px; }
+  .tag { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-right: 6px; }
+  .tag-front { background: #dbeafe; color: #1d4ed8; }
+  .tag-back { background: #fee2e2; color: #b91c1c; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+  th, td { text-align: left; padding: 7px 10px; border: 1px solid #e5e7eb; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 600; white-space: nowrap; }
+  code { background: #f3f4f6; border-radius: 4px; padding: 1px 5px; font-size: 12px; font-family: "SFMono-Regular", Consolas, monospace; }
+
+  .keys { display: flex; flex-direction: column; gap: 10px; }
+  .key {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+    padding: 12px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .key .pair { font-family: Consolas, monospace; font-size: 13px; font-weight: 600; color: #b45309; white-space: nowrap; }
+  .key .eq { color: #9ca3af; }
+  .key .desc { font-size: 13px; color: #374151; flex: 1; min-width: 200px; }
+
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: flex; gap: 14px; align-items: flex-start;
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+    padding: 12px 16px; position: relative;
+  }
+  .step + .step { margin-top: 10px; }
+  .step-num {
+    width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%;
+    background: #3b82f6; color: #fff; font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step-title { font-weight: 600; font-size: 14px; }
+  .step-desc { font-size: 13px; color: #4b5563; margin-top: 2px; }
+  .arrow {
+    text-align: center; color: #6b7280; font-size: 18px; line-height: 1; padding: 2px 0;
+  }
+  .arrow.alt { color: #f59e0b; }
+
+  .rules { background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 14px 18px; }
+  .rules li { font-size: 13px; margin: 6px 0 6px 18px; color: #374151; }
+  .hl { color: #b45309; font-weight: 600; }
+  .warn { color: #b91c1c; font-weight: 600; }
+
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Casual-bookkeeping 数据架构与同步总览</h1>
+  <div class="sub">本地优先记账 PWA · 前端 Dexie / 后端 FastAPI+SQLite · 详细设计见 docs/</div>
+
+  <!-- ============ 数据库 ============ -->
+  <section>
+    <div class="sec-title">一、数据库：前端两套，后端一个文件</div>
+    <div class="cols">
+
+      <div class="card">
+        <h3><span class="tag tag-front">前端</span>IndexedDB</h3>
+        <table>
+          <tr><th>库</th><th>表</th><th>主键</th><th>内容</th></tr>
+          <tr><td rowspan="1"><code>cb-meta</code><br><span style="font-size:12px;color:#6b7280">设备级，全局一份</span></td>
+              <td><code>device</code></td><td><code>key</code></td>
+              <td><code>device_id</code>（设备标识）<br><code>account_phone</code>（活跃账户身份）</td></tr>
+          <tr><td rowspan="5"><code>db_&lt;phone&gt;</code><br><span style="font-size:12px;color:#6b7280">每账户一个库，切账户换库</span></td>
+              <td><code>workOrders</code></td><td><code>syncId</code></td><td>工单</td></tr>
+          <tr><td><code>customers</code></td><td><code>syncId</code></td><td>客户主数据</td></tr>
+          <tr><td><code>customerCodeMappings</code></td><td><code>syncId</code></td><td>客户编号映射</td></tr>
+          <tr><td><code>serviceCategories</code></td><td><code>syncId</code></td><td>服务大类/小类</td></tr>
+          <tr><td colspan="3" style="font-size:12px;color:#6b7280">
+              业务表都带 <code>rowVersion</code>（服务端版本）+ <code>accountPhone</code>（隔离列）</td></tr>
+          <tr><td rowspan="3"><code>db_&lt;phone&gt;</code><br><span style="font-size:12px;color:#6b7280">同步辅助表</span></td>
+              <td><code>operations</code></td><td><code>operationId</code></td>
+              <td>本地历史镜像（仅展示/撤回入口，<code>syncStatus</code>: pending/synced）</td></tr>
+          <tr><td><code>outbox</code></td><td><code>queueId</code> 自增<br><code>operationId</code> 唯一</td>
+              <td>待推送命令（status: pending/sending/conflict/rejected；含 <code>command</code>、<code>conflictJson</code>）</td></tr>
+          <tr><td><code>syncState</code></td><td><code>accountPhone</code></td>
+              <td><code>appliedServerSeq</code>（已应用到的服务端进度）、<code>lastSyncAt</code></td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3><span class="tag tag-back">后端</span>SQLite（单文件，含 10 表）</h3>
+        <table>
+          <tr><th>表</th><th>主键/唯一</th><th>内容</th></tr>
+          <tr><td><code>accounts</code></td><td><code>phone</code></td><td>账户（密码哈希、status）</td></tr>
+          <tr><td><code>account_devices</code></td><td><code>(account_phone, device_id)</code></td><td>登录会话信任状态（踢出=置 revoked）</td></tr>
+          <tr><td><code>work_orders</code></td><td>内部 id；<code>sync_id</code> 唯一</td><td>工单（<code>row_version</code>、<code>account_phone</code>）</td></tr>
+          <tr><td><code>customers</code></td><td>内部 id；<code>sync_id</code> 唯一</td><td>客户（同上）</td></tr>
+          <tr><td><code>customer_code_mappings</code></td><td>内部 id；<code>sync_id</code> 唯一</td><td>编号映射（同上）</td></tr>
+          <tr><td><code>service_categories</code></td><td>内部 id；<code>sync_id</code> 唯一</td><td>服务选项（同上）</td></tr>
+          <tr><td><code>database_operations</code></td><td><code>server_seq</code> 主键<br><code>operation_id</code> 唯一</td>
+              <td>正式操作历史（幂等记录、Pull 顺序来源）</td></tr>
+          <tr><td><code>operation_changes</code></td><td><code>change_id</code></td><td>操作明细（before/after 快照、撤回依据）</td></tr>
+          <tr><td><code>chat_sessions</code></td><td><code>session_id</code></td><td>AI 会话</td></tr>
+          <tr><td><code>chat_turns</code></td><td><code>turn_id</code></td><td>AI 回合</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 同步钥匙 ============ -->
+  <section>
+    <div class="sec-title">二、同步靠四对键值对</div>
+    <div class="keys">
+      <div class="key"><span class="pair">sync_id ⇔ sync_id</span><span class="eq">＝</span>
+        <span class="desc">定位<b>同一条业务记录</b>（前端主键 = 后端唯一键），前后端共用</span></div>
+      <div class="key"><span class="pair">operation_id ⇔ operation_id</span><span class="eq">＝</span>
+        <span class="desc">一次业务动作的<b>幂等键</b>：断网重试不重复写；也是撤回关联键</span></div>
+      <div class="key"><span class="pair">server_seq ⇔ appliedServerSeq</span><span class="eq">＝</span>
+        <span class="desc">后端操作序号 <code>server_seq</code>（全局递增）⇔ 前端已应用到哪的游标。<b>Pull 起点</b>，允许 gap，只要求严格大于</span></div>
+      <div class="key"><span class="pair">row_version ⇔ base_version</span><span class="eq">＝</span>
+        <span class="desc">冲突检测：Push 时客户端交的 <code>base_version</code> 若 ≠ 服务端当前 <code>row_version</code> → <span class="warn">conflict</span></span></div>
+      <div class="key"><span class="pair">account_phone ⇔ account_phone</span><span class="eq">＝</span>
+        <span class="desc">账户隔离：前后端所有表都带它，Pull/Push 只处理当前账户的数据</span></div>
+    </div>
+  </section>
+
+  <!-- ============ 数据流动 ============ -->
+  <section>
+    <div class="sec-title">三、数据怎么流动</div>
+    <div class="flow">
+
+      <div class="step"><div class="step-num">1</div>
+        <div><div class="step-title">本地写入（离线可用）</div>
+          <div class="step-desc">页面 → 一次 IndexedDB 事务：改业务表 + 写 <code>operations</code>(pending) + 写 <code>outbox</code>(pending)。保存即本地生效，不依赖网络。</div></div>
+      </div>
+      <div class="arrow">▼</div>
+
+      <div class="step"><div class="step-num">2</div>
+        <div><div class="step-title">Push（先推）<code>POST /sync/push</code></div>
+          <div class="step-desc">把 outbox 按 <code>queueId</code> 顺序整批推给后端。后端逐条：查 <code>operation_id</code> 幂等 → 比对 <code>base_version</code> vs <code>row_version</code> → 写业务表 + 递增 <code>row_version</code> + 写正式历史（拿新 <code>server_seq</code>）。返回逐条结果。</div></div>
+      </div>
+      <div class="arrow alt">▼ 逐条结果</div>
+
+      <div class="step"><div class="step-num">3</div>
+        <div><div class="step-title">按结果分类处理</div>
+          <div class="step-desc">
+            <b>accepted</b> → 删 outbox，operations 标 synced<br>
+            <b>conflict</b> → 保留 outbox；Theirs 从响应来，配本地 Base/Ours 三方对比，用户合并后生成<b>新 operation</b> 再推<br>
+            <b>rejected</b> → 保留 outbox，等用户修正命令</div></div>
+      </div>
+      <div class="arrow">▼</div>
+
+      <div class="step"><div class="step-num">4</div>
+        <div><div class="step-title">outbox 全清空后 Pull（后拉）<code>GET /sync/pull?after=appliedServerSeq</code></div>
+          <div class="step-desc">拉 <code>server_seq &gt; after</code> 的自己 + 别人 + AI 的操作。每条带 <code>after_json</code>（结果快照）+ <code>after_version</code>。前端一个事务：把 <code>after_json</code> 写进业务表 + 写 operations 镜像 + <code>appliedServerSeq</code> 推进。事务失败整页回滚，下次重拉。</div></div>
+      </div>
+      <div class="arrow">▼</div>
+
+      <div class="step"><div class="step-num">5</div>
+        <div><div class="step-title">新设备首登 → bootstrap <code>GET /sync/bootstrap</code></div>
+          <div class="step-desc">本地为空时，分页下载四张业务表当前状态 + <code>snapshot_seq</code>。写完快照后 <code>appliedServerSeq = snapshot_seq</code>，再立即 Pull 补上增量。</div></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ 关键规则 ============ -->
+  <section>
+    <div class="sec-title">四、三条关键规则</div>
+    <div class="rules">
+      <ul>
+        <li>每轮同步 <span class="hl">先 Push 后 Pull</span>；outbox 里还有 pending/conflict/rejected 就<span class="hl">只 Push 不 Pull</span>，保证 Pull 不会覆盖未决修改。</li>
+        <li>本地业务表 <span class="hl">只等于服务端确认过的状态</span>；未决修改只存在 outbox，冲突解决后才进业务表。</li>
+        <li>会话失效（token 过期/被踢）<span class="hl">不清本地数据</span>，只停同步去登录页；主动登出才清活跃账户，本地库保留。</li>
+      </ul>
+    </div>
+  </section>
+</div>
+</body>
+</html>

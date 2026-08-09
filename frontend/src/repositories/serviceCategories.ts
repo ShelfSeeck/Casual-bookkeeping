@@ -1,4 +1,4 @@
-import type { AcsDatabase } from '../db/schema'
+import type { CbDatabase } from '../db/schema'
 import type { ServiceCategory } from '../db/schema/business/serviceCategories'
 
 // ServiceCategoriesRepository：服务选项的受控读写（docs/data-model.md §4.2）。
@@ -6,9 +6,9 @@ import type { ServiceCategory } from '../db/schema/business/serviceCategories'
 // 停用大类默认不返回，可显式 includeInactive 包含（历史工单不依赖此项）。
 
 export class ServiceCategoriesRepository {
-  private db: AcsDatabase
+  private db: CbDatabase
 
-  constructor(db: AcsDatabase) {
+  constructor(db: CbDatabase) {
     this.db = db
   }
 

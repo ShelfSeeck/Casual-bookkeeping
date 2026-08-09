@@ -14,7 +14,7 @@ import { outboxSchema } from './schema/operations/outbox'
 import type { SyncState } from './schema/sync/syncState'
 import { syncStateSchema } from './schema/sync/syncState'
 
-export class AcsDatabase extends Dexie {
+export class CbDatabase extends Dexie {
   workOrders!: EntityTable<WorkOrder, 'syncId'>
   customers!: EntityTable<Customer, 'syncId'>
   customerCodeMappings!: EntityTable<CustomerCodeMapping, 'syncId'>

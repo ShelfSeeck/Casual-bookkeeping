@@ -1,6 +1,6 @@
 import type { Table } from 'dexie'
 import { newId } from '../utils/id'
-import type { AcsDatabase } from '../db/schema'
+import type { CbDatabase } from '../db/schema'
 import type { Operation } from '../db/schema/operations/operations'
 import type { OutboxEntry } from '../db/schema/operations/outbox'
 
@@ -25,9 +25,9 @@ export interface MutationTx {
 }
 
 export class MutationService {
-  private db: AcsDatabase
+  private db: CbDatabase
 
-  constructor(db: AcsDatabase) {
+  constructor(db: CbDatabase) {
     this.db = db
   }
 

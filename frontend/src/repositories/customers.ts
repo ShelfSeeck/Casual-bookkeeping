@@ -1,4 +1,4 @@
-import type { AcsDatabase } from '../db/schema'
+import type { CbDatabase } from '../db/schema'
 import type { Customer } from '../db/schema/business/customers'
 
 // CustomersRepository：客户主数据的受控读写（docs/data-model.md §4.3）。
@@ -6,9 +6,9 @@ import type { Customer } from '../db/schema/business/customers'
 // 归档客户默认不返回，可显式 includeArchived 包含。
 
 export class CustomersRepository {
-  private db: AcsDatabase
+  private db: CbDatabase
 
-  constructor(db: AcsDatabase) {
+  constructor(db: CbDatabase) {
     this.db = db
   }
 

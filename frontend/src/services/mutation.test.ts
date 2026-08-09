@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createBusinessDb } from '../db/db'
-import type { AcsDatabase } from '../db/schema'
+import type { CbDatabase } from '../db/schema'
 import type { WorkOrder } from '../db/schema/business/workOrders'
 import { MutationService, type MutationInput } from './mutation'
 
@@ -32,7 +32,7 @@ function makeOrder(syncId: string): WorkOrder {
   }
 }
 
-let db: AcsDatabase
+let db: CbDatabase
 let svc: MutationService
 
 beforeEach(async () => {

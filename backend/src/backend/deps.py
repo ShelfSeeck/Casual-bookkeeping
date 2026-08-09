@@ -118,7 +118,7 @@ def get_PasswordService() -> PasswordService:
 
 
 def get_TokenService() -> TokenService:
-    # 密钥从 Settings 读（config.toml / ACS_JWT_SECRET 环境变量）；TokenService 无状态
+    # 密钥从 Settings 读（config.toml / CB_JWT_SECRET 环境变量）；TokenService 无状态
     settings = get_Settings()
     return TokenService(
         secret=settings.jwt_secret,
