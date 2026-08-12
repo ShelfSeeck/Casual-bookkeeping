@@ -20,3 +20,10 @@ login_lock_seconds = 900
 refresh_cookie_name = "refresh_token"
 secure_cookie = false
 cookie_samesite = "lax"
+
+[model]
+# 记账助手模型（docs/spec/chat-agent.md §8）：每次运行热读，改后无需重启。
+# api_key 请勿填写真实密钥（示例文件会入库），复制为 config.toml 后再填。
+model_name = "deepseek-chat"
+base_url = "https://api.deepseek.com"
+api_key = ""

@@ -10,11 +10,16 @@ requires-python = ">=3.12"
 dependencies = [
     "argon2-cffi>=25.1.0",
     "fastapi>=0.141.1",
+    "pydantic-ai>=2.27.1",
     "pyjwt>=2.13.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["-m", "not live"]
+markers = [
+    "live: 真实模型冒烟测试，打真接口，需显式 -m live 才运行",
+]
 
 [project.scripts]
 cb-manage = "backend.scripts.manage:main"
@@ -27,4 +32,5 @@ build-backend = "uv_build"
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
 ]
