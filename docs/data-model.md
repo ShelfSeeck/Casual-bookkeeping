@@ -315,6 +315,7 @@ CREATE TABLE work_orders (
 - `operation_type`
 - `sync_status`
 - `changes_json`
+- `reverts_operation_id`（可空）：撤回操作指向被撤回的原操作；历史页面据此展示撤回关系并判断"能否撤回"（已被撤回的操作不再提供入口）
 - 时间字段
 
 #### `outbox`
@@ -555,6 +556,12 @@ AI 分析期间不锁定本地数据，用户此时仍可修改：
   ↓
 新撤回操作 op-101，reverts_operation_id = op-100
 ```
+
+前端配套结构：
+
+- `operations.reverts_operation_id`（可空）：撤回操作记录指向原操作，供历史页面展示撤回关系与撤回入口。
+- `outbox.command.reverts_operation_id`：前端发起撤回时随命令提交，服务端写入 `database_operations.reverts_operation_id`。
+- 反向 patch 由服务端根据 `operation_changes.before_json` 生成；前端不自行计算反向值，只提交"撤回哪条操作"的意图。
 
 - 如果目标记录当前版本仍等于原操作的 `after_version`，反向草案可以直接按普通操作提交。
 - 如果目标后来又被修改，撤回进入与普通写入相同的三方对比：Base 为原操作完成后的 `after_json`，Ours 为希望恢复到的 `before_json`，Theirs 为服务端当前业务状态。

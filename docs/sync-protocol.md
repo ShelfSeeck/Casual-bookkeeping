@@ -63,14 +63,17 @@
           "entity_type": "work_order",
           "entity_sync_id": "sync-0001",
           "base_version": 4,
-          "base_snapshot": { "customer_code": "001", "quantity": 12 },
-          "patch": { "unit_price_cents": 1250 }
+          "fields": { "unit_price_cents": 1250 }
         }
       ]
     }
   ]
 }
 ```
+
+> wire 格式统一用 `fields`（一条变更希望改变的字段集合）；`base_snapshot` / `patch` 的概念仍存在于前端 `outbox.command`（冲突合并时 Base / Ours 的来源，结构见 `docs/data-model.md` §6.3），不进 wire。`base_version` 照常随变更提交，服务端据此做版本校验。
+
+批量上限：单次请求最多 500 条操作、请求体不超过 1MB；超出返回 400 `invalid_request`，由客户端拆批重发（见 §5）。
 
 响应体（数组与请求一一对应）：
 
@@ -150,29 +153,31 @@ GET /sync/pull?after=41&limit=200
 GET /sync/bootstrap?cursor=...
 ```
 
-响应体（每页一个字段 `table` 指定是哪张表）：
+**MVP 扁平返回、不分页**：一次返回四张表的当前在用记录 + `snapshot_seq` + `has_more=false`；游标分页留待数据量增大后再做（见 §12）。`cursor` 参数当前被忽略。
+
+响应体：
 
 ```json
 {
-  "table": "work_orders",
-  "records": [ { "...": "含 sync_id、row_version、account_phone 的完整业务记录" } ],
-  "next_cursor": "...",
-  "has_more": true,
-  "snapshot_seq": 100
+  "snapshot_seq": 100,
+  "has_more": false,
+  "customers": [ { "...": "含 sync_id、row_version、account_phone 的完整业务记录" } ],
+  "service_categories": [ "..." ],
+  "work_orders": [ "..." ],
+  "customer_code_mappings": [ "..." ]
 }
 ```
 
-- 顺序分页：一个游标贯穿四张表，直到 `has_more = false`。
-- **`snapshot_seq`**：首次请求时服务端固定的最大 `server_seq`，作为这份快照的基线；后续页重复返回同一个值。
+- **`snapshot_seq`**：服务端固定的最大 `server_seq`，作为这份快照的基线。
 - 只下载**当前在用**记录（`deleted_at` / `archived_at` 为空的软删记录不进入 bootstrap）；历史记录靠后续 Pull 的 delete 操作带出。
 - 客户端写完四张表后 `applied_server_seq = snapshot_seq`，再立即 Pull `snapshot_seq` 之后的新操作，把下载期间的增量补齐。
-- 接受各表分页下载期间的读时差（不同页可能“长在”不同版本上），靠后续 Pull 收敛到一致。
+- 接受各表下载期间的读时差（不同表可能"长在"不同版本上），靠后续 Pull 收敛到一致。
 
 ## 5. Push 语义
 
 - **保序**：同一 `sync_id` 的 create → update → delete 必须按请求顺序执行；服务端按数组顺序逐条处理。
 - **部分成功是特性**：一条 conflict 不阻塞整批，其余条照常 accepted。
-- 批量请求体大小设上限（条数 + 字节），超出由客户端拆批。
+- 批量请求体大小设上限（当前：最多 500 条操作、请求体 1MB），超出服务端返回 400 `invalid_request`，由客户端拆批重发。
 - `operation_id` 是幂等键，也是撤回关联与操作历史归组的键（`docs/data-model.md` §5.1）。
 
 ## 6. Pull 语义与同步循环
@@ -239,5 +244,6 @@ Theirs   冲突响应返回的服务端当前结果
 ## 12. 未定事项
 
 - 同步端点是否纳入 `docs/api.md`（当前 api.md 仅认证端点）。
-- bootstrap 分页游标的具体编码（`cursor` 是 base64 还是自增序号）。
+- bootstrap 分页：MVP 已定不分页（数据量小，四表整包返回），`cursor` 编码留待分页需求出现时再定。
+- Pull 响应字节精确上限（1MB）：MVP 以 `limit` 条数（上限 500）限流，不做响应字节截断；待数据量增大再实现。
 - 实际部署后的真机验证：iOS PWA 独立窗口模式对 refresh cookie 的影响。
