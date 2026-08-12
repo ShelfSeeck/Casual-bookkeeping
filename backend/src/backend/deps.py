@@ -25,7 +25,15 @@ from backend.errors import (
 )
 from backend.repositories.account_devices import AccountDevicesRepository
 from backend.repositories.accounts import AccountsRepository
+from backend.repositories.customer_code_mappings import (
+    CustomerCodeMappingsRepository,
+)
+from backend.repositories.customers import CustomersRepository
+from backend.repositories.operations import OperationsRepository
+from backend.repositories.service_categories import ServiceCategoriesRepository
+from backend.repositories.work_orders import WorkOrdersRepository
 from backend.services.auth import AuthService
+from backend.services.business_command import BusinessCommandService
 from backend.services.password import PasswordService
 from backend.services.rate_limiter import RateLimiter
 from backend.services.token import TokenError, TokenService
@@ -111,6 +119,46 @@ def get_AccountDevicesRepository(
     connection: sqlite3.Connection = Depends(get_Connection),
 ) -> AccountDevicesRepository:
     return AccountDevicesRepository(connection)
+
+
+def get_CustomersRepository(
+    connection: sqlite3.Connection = Depends(get_Connection),
+) -> CustomersRepository:
+    return CustomersRepository(connection)
+
+
+def get_ServiceCategoriesRepository(
+    connection: sqlite3.Connection = Depends(get_Connection),
+) -> ServiceCategoriesRepository:
+    return ServiceCategoriesRepository(connection)
+
+
+def get_CustomerCodeMappingsRepository(
+    connection: sqlite3.Connection = Depends(get_Connection),
+) -> CustomerCodeMappingsRepository:
+    return CustomerCodeMappingsRepository(connection)
+
+
+def get_WorkOrdersRepository(
+    connection: sqlite3.Connection = Depends(get_Connection),
+) -> WorkOrdersRepository:
+    return WorkOrdersRepository(connection)
+
+
+def get_OperationsRepository(
+    connection: sqlite3.Connection = Depends(get_Connection),
+) -> OperationsRepository:
+    return OperationsRepository(connection)
+
+
+def get_BusinessCommandService(
+    customers: CustomersRepository = Depends(get_CustomersRepository),
+    categories: ServiceCategoriesRepository = Depends(get_ServiceCategoriesRepository),
+    orders: WorkOrdersRepository = Depends(get_WorkOrdersRepository),
+    mappings: CustomerCodeMappingsRepository = Depends(get_CustomerCodeMappingsRepository),
+    operations: OperationsRepository = Depends(get_OperationsRepository),
+) -> BusinessCommandService:
+    return BusinessCommandService(customers, categories, orders, mappings, operations)
 
 
 def get_PasswordService() -> PasswordService:

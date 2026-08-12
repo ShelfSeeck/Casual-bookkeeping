@@ -16,6 +16,7 @@ from backend.data.schema import apply_schema
 from backend.deps import get_CurrentAccount
 from backend.errors import register_error_handlers
 from backend.routers import auth as auth_router
+from backend.routers import sync as sync_router
 
 
 @asynccontextmanager
@@ -37,4 +38,5 @@ app = FastAPI(
     openapi_url=None,
 )
 app.include_router(auth_router.router)
+app.include_router(sync_router.router)
 register_error_handlers(app)
