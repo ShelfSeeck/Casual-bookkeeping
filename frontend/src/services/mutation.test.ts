@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createBusinessDb } from '../db/db'
 import type { CbDatabase } from '../db/schema'
 import type { WorkOrder } from '../db/schema/business/workOrders'
-import { MutationService, type MutationInput } from './mutation'
+import type { OutboxEntry } from '../db/schema/operations/outbox'
+import { MutationService, RecordGatedError, type MutationInput } from './mutation'
 
 // 被测缝：MutationService.commit()
 // 验证：一次提交在同一个 IndexedDB 事务中原子写入 业务表 + operations + outbox；
@@ -34,6 +35,25 @@ function makeOrder(syncId: string): WorkOrder {
 
 let db: CbDatabase
 let svc: MutationService
+
+function makeOutbox(overrides: Partial<OutboxEntry> = {}): Omit<OutboxEntry, 'queueId'> {
+  return {
+    operationId: 'op-conflict',
+    operationType: 'update_work_order',
+    entitySyncIds: ['sync-a'],
+    command: { changes: [{ entitySyncId: 'sync-a', baseVersion: 1, patch: {} }] },
+    status: 'conflict',
+    attempts: 0,
+    nextRetryAt: null,
+    sendingStartedAt: null,
+    lastErrorJson: null,
+    actorType: 'user',
+    sourceTurnId: null,
+    conflictJson: { theirs: { row_version: 2 } },
+    createdAt: '2026-08-08T00:00:00Z',
+    ...overrides,
+  }
+}
 
 beforeEach(async () => {
   db = createBusinessDb(PHONE_A)
@@ -93,5 +113,118 @@ describe('MutationService.commit', () => {
     expect(await db.workOrders.get('sync-a')).toBeUndefined()
     expect(await db.operations.count()).toBe(0)
     expect(await db.outbox.count()).toBe(0)
+  })
+})
+
+describe('MutationService 撤回操作（docs/data-model.md §6.5）', () => {
+  it('撤回操作 commit 后，operations 记录 revertsOperationId，outbox.command 含 reverts_operation_id', async () => {
+    // 验证：撤回是普通操作，走同一本地事务；前端只提交"撤回哪条原操作"的意图，
+    // 反向 patch 由服务端根据 before_json 生成（§6.5）。所以 operations 存 camelCase
+    // revertsOperationId，outbox.command 存 wire 形状 snake_case reverts_operation_id。
+    const input: MutationInput = {
+      operationType: 'revert_work_order',
+      entitySyncIds: ['sync-a'],
+      revertsOperationId: 'op-100',
+      apply: (tx) => tx.workOrders.put(makeOrder('sync-a')),
+      actorType: 'user',
+    }
+    await svc.commit(input)
+
+    const ops = await db.operations.toArray()
+    expect(ops).toHaveLength(1)
+    expect(ops[0].revertsOperationId).toBe('op-100')
+
+    const outbox = await db.outbox.toArray()
+    expect(outbox).toHaveLength(1)
+    expect(outbox[0].command).toEqual({
+      changes: [{ entitySyncId: 'sync-a', baseVersion: 0 }],
+      reverts_operation_id: 'op-100',
+    })
+  })
+
+  it('普通操作不携带 revertsOperationId（默认 null）', async () => {
+    // 验证：非撤回操作不影响既有结构——operations.revertsOperationId 为 null，
+    // outbox.command 不出现 reverts_operation_id，保持现有命令形状不变。
+    const input: MutationInput = {
+      operationType: 'create_work_order',
+      entitySyncIds: ['sync-a'],
+      apply: (tx) => tx.workOrders.put(makeOrder('sync-a')),
+      actorType: 'user',
+    }
+    await svc.commit(input)
+
+    const ops = await db.operations.toArray()
+    expect(ops[0].revertsOperationId).toBeNull()
+
+    const outbox = await db.outbox.toArray()
+    const command = outbox[0].command as Record<string, unknown>
+    expect(command.reverts_operation_id).toBeUndefined()
+  })
+})
+
+describe('MutationService 单记录 gate（docs/sync-protocol.md §8）', () => {
+  it('syncId 在 outbox 有 conflict 未决条目时禁止再写该记录', async () => {
+    await db.outbox.add(makeOutbox())
+    const input: MutationInput = {
+      operationType: 'create_work_order',
+      entitySyncIds: ['sync-a'],
+      apply: (tx) => tx.workOrders.put(makeOrder('sync-a')),
+      actorType: 'user',
+    }
+    await expect(svc.commit(input)).rejects.toThrow(RecordGatedError)
+    // 未写入任何数据：业务表 / operations / outbox 都保持原状
+    expect(await db.workOrders.get('sync-a')).toBeUndefined()
+    expect(await db.operations.count()).toBe(0)
+    expect(await db.outbox.count()).toBe(1)
+  })
+
+  it('syncId 在 outbox 有 rejected 未决条目时禁止再写该记录', async () => {
+    await db.outbox.add(makeOutbox({ status: 'rejected', conflictJson: null }))
+    const input: MutationInput = {
+      operationType: 'create_work_order',
+      entitySyncIds: ['sync-a'],
+      apply: (tx) => tx.workOrders.put(makeOrder('sync-a')),
+      actorType: 'user',
+    }
+    await expect(svc.commit(input)).rejects.toThrow(RecordGatedError)
+  })
+
+  it('pending 未决条目允许继续写（保序）', async () => {
+    await db.outbox.add(makeOutbox({ status: 'pending', conflictJson: null }))
+    const input: MutationInput = {
+      operationType: 'create_work_order',
+      entitySyncIds: ['sync-a'],
+      apply: (tx) => tx.workOrders.put(makeOrder('sync-a')),
+      actorType: 'user',
+    }
+    await svc.commit(input)
+    expect(await db.operations.count()).toBe(1)
+  })
+
+  it('冲突未决条目存在时，写其他无冲突记录不受影响', async () => {
+    await db.outbox.add(makeOutbox())
+    const input: MutationInput = {
+      operationType: 'create_work_order',
+      entitySyncIds: ['sync-other'],
+      apply: (tx) => tx.workOrders.put(makeOrder('sync-other')),
+      actorType: 'user',
+    }
+    await svc.commit(input)
+    expect(await db.workOrders.get('sync-other')).toBeDefined()
+  })
+
+  it('gate 检查在事务内做：批量提交命中 gate 时不留下任何写入', async () => {
+    await db.outbox.add(makeOutbox())
+    const input: MutationInput = {
+      operationType: 'update_work_order',
+      entitySyncIds: ['sync-a', 'sync-b'],
+      apply: (tx) => {
+        tx.workOrders.put(makeOrder('sync-a'))
+        tx.workOrders.put(makeOrder('sync-b'))
+      },
+      actorType: 'user',
+    }
+    await expect(svc.commit(input)).rejects.toThrow(RecordGatedError)
+    expect(await db.workOrders.get('sync-b')).toBeUndefined()
   })
 })
