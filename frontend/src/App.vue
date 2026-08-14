@@ -3,7 +3,6 @@ import { onMounted, ref } from 'vue'
 import LoginView from './components/LoginView.vue'
 import { ApiClient } from './services/apiClient'
 import { AuthStore } from './services/authStore'
-import { createBusinessDb } from './db/db'
 
 const store = ref<AuthStore | null>(null)
 

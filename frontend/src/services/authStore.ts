@@ -18,6 +18,16 @@ export interface AuthHooks {
   onSessionInvalid: () => void
 }
 
+/** AuthStore 对外暴露的公开接口（供组件 prop 使用，剥离私有 api/hooks 字段）。
+ *  state 声明为展开后的 AuthState（而非 Ref），匹配模板里 ref 自动解包后的视图。 */
+export interface AuthStorePublic {
+  state: AuthState
+  init: () => Promise<void>
+  login: (phone: string, password: string) => Promise<void>
+  logout: () => Promise<void>
+  onSessionInvalid: () => void
+}
+
 export class AuthStore {
   state = ref<AuthState>({ status: 'unknown', accountPhone: null })
   private api: ApiClient

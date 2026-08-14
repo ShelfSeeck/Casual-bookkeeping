@@ -4,9 +4,10 @@ import type { CbDatabase } from '../db/schema'
 import type { WorkOrder } from '../db/schema/business/workOrders'
 import type { Customer } from '../db/schema/business/customers'
 import type { CustomerCodeMapping } from '../db/schema/business/customerCodeMappings'
-import { MutationService, type MutationInput } from './mutation'
+import { MutationService } from './mutation'
 import {
   SyncManager,
+  type PushOperation,
   type SyncApi,
   type SyncStatus,
   type SyncManagerOptions,
@@ -345,7 +346,7 @@ describe('SyncManager', () => {
       status: 'sending',
       sendingStartedAt: '2026-08-08T00:00:00Z',
     })
-    const push = vi.fn(async () => ({
+    const push = vi.fn(async (_ops: PushOperation[]) => ({
       results: [{ operationId: entry.operationId, status: 'accepted' as const, serverSeq: 1 }],
     }))
     await buildManager(makeApi({ push })).sync()
@@ -463,7 +464,7 @@ describe('SyncManager', () => {
     await manager.resolveConflict(entry.queueId, { quantity: { source: 'ours' } })
 
     const mergedOpId = (await db.outbox.toArray())[0].operationId
-    const push = vi.fn(async () => ({
+    const push = vi.fn(async (_ops: PushOperation[]) => ({
       results: [{ operationId: mergedOpId, status: 'accepted' as const, serverSeq: 7 }],
     }))
     const pull = vi.fn(async () => ({ operations: [], hasMore: false }))
@@ -531,7 +532,7 @@ describe('SyncManager', () => {
       apply: (tx) => tx.customerCodeMappings.put(makeMapping('sync-a')),
       actorType: 'user',
     })
-    const push = vi.fn(async () => ({ results: [] }))
+    const push = vi.fn(async (_ops: PushOperation[]) => ({ results: [] }))
     await buildManager(makeApi({ push })).sync()
 
     expect(push.mock.calls[0][0][0].changes[0].entityType).toBe('customer_code_mapping')
@@ -540,7 +541,7 @@ describe('SyncManager', () => {
   it('超过 pushBatchSize 时拆分多批推送（按队列顺序）', async () => {
     for (const id of ['sync-a', 'sync-b', 'sync-c']) await commitOrder(id)
     const realIds = (await db.outbox.orderBy('queueId').toArray()).map((e) => e.operationId)
-    const push = vi.fn(async () => ({ results: [] }))
+    const push = vi.fn(async (_ops: PushOperation[]) => ({ results: [] }))
     const api = makeApi({ push })
     await buildManager(api, { pushBatchSize: 2 }).sync()
 

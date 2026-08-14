@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { clearActiveAccount, getActiveAccount, setActiveAccount } from './apiClient'
 import { metaDb } from '../db/db'
 

@@ -13,22 +13,22 @@ const NEW_ACCESS = 'access-2'
 const REFRESH_PATH = '/auth/refresh'
 
 function mockFetchOnce(
-  path: string,
+  _path: string,
   status: number,
   body: unknown,
   headers: Record<string, string> = {},
 ) {
-  return vi.fn(async (url: string, init?: RequestInit) => ({
+  return vi.fn(async (_url: string, _init?: RequestInit) => ({
     ok: status >= 200 && status < 300,
     status,
     headers: new Headers(headers),
     async json() {
       return body
     },
-    async text() {
-      return typeof body === 'string' ? body : JSON.stringify(body)
+    async text(): Promise<string> {
+      return typeof body === 'string' ? body : (JSON.stringify(body) ?? '')
     },
-  })) as unknown as typeof fetch
+  }))
 }
 
 let callbacks: SessionCallbacks
@@ -77,7 +77,7 @@ describe('ApiClient', () => {
   it('401 时静默 refresh 并用新 token 重试一次', async () => {
     localStorage.setItem('cb_access_token', ACCESS)
     let pingCalls = 0
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       if (url === '/api/ping') {
         pingCalls += 1
         if (pingCalls === 1) {
@@ -89,7 +89,7 @@ describe('ApiClient', () => {
             async json() {
               return { error_code: 'invalid_token' }
             },
-            async text() {
+            async text(): Promise<string> {
               return ''
             },
           }
@@ -102,7 +102,7 @@ describe('ApiClient', () => {
           async json() {
             return { ok: true }
           },
-          async text() {
+          async text(): Promise<string> {
             return ''
           },
         }
@@ -115,7 +115,7 @@ describe('ApiClient', () => {
           async json() {
             return { access_token: NEW_ACCESS }
           },
-          async text() {
+          async text(): Promise<string> {
             return ''
           },
         }
@@ -127,7 +127,7 @@ describe('ApiClient', () => {
         async json() {
           return { ok: true }
         },
-        async text() {
+        async text(): Promise<string> {
           return ''
         },
       }
@@ -156,7 +156,7 @@ describe('ApiClient', () => {
           async json() {
             return { access_token: NEW_ACCESS }
           },
-          async text() {
+          async text(): Promise<string> {
             return ''
           },
         }
@@ -170,7 +170,7 @@ describe('ApiClient', () => {
           async json() {
             return { ok: true }
           },
-          async text() {
+          async text(): Promise<string> {
             return ''
           },
         }
@@ -184,7 +184,7 @@ describe('ApiClient', () => {
         async json() {
           return { error_code: 'invalid_token' }
         },
-        async text() {
+        async text(): Promise<string> {
           return ''
         },
       }
@@ -207,7 +207,7 @@ describe('ApiClient', () => {
           async json() {
             return { error_code: 'session_revoked' }
           },
-          async text() {
+          async text(): Promise<string> {
             return ''
           },
         }
@@ -219,7 +219,7 @@ describe('ApiClient', () => {
         async json() {
           return { error_code: 'invalid_token' }
         },
-        async text() {
+        async text(): Promise<string> {
           return ''
         },
       }

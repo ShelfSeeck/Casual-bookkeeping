@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { showFailToast, showSuccessToast } from 'vant'
-import { AuthStore } from '../services/authStore'
+import type { AuthStorePublic } from '../services/authStore'
 
-defineProps<{ store: AuthStore }>()
+const props = defineProps<{ store: AuthStorePublic }>()
 
 const phone = ref('')
 const password = ref('')
@@ -16,7 +16,7 @@ async function onSubmit() {
   }
   loading.value = true
   try {
-    await store.login(phone.value.trim(), password.value)
+    await props.store.login(phone.value.trim(), password.value)
     showSuccessToast('登录成功')
   } catch (e) {
     showFailToast((e as Error).message === 'invalid_credentials' ? '手机号或密码错误' : '登录失败，请检查网络')

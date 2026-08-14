@@ -171,16 +171,16 @@ export class SyncManager {
       await this.db.customerCodeMappings.clear()
       await this.db.serviceCategories.clear()
       for (const c of data.customers) {
-        await this.db.customers.put(toCamelRecord(c as Record<string, unknown>))
+        await this.db.customers.put(toCamelRecord(c as Record<string, unknown>) as never)
       }
       for (const c of data.serviceCategories) {
-        await this.db.serviceCategories.put(toCamelRecord(c as Record<string, unknown>))
+        await this.db.serviceCategories.put(toCamelRecord(c as Record<string, unknown>) as never)
       }
       for (const o of data.workOrders) {
-        await this.db.workOrders.put(toCamelRecord(o as Record<string, unknown>))
+        await this.db.workOrders.put(toCamelRecord(o as Record<string, unknown>) as never)
       }
       for (const m of data.customerCodeMappings) {
-        await this.db.customerCodeMappings.put(toCamelRecord(m as Record<string, unknown>))
+        await this.db.customerCodeMappings.put(toCamelRecord(m as Record<string, unknown>) as never)
       }
       await this.db.syncState.put({
         accountPhone: phone,
@@ -383,7 +383,6 @@ export class SyncManager {
         await this.db.outbox.update(e.queueId, {
           status: 'sending',
           sendingStartedAt: now,
-          updatedAt: now,
         })
       }
     })
@@ -407,7 +406,6 @@ export class SyncManager {
             nextRetryAt: new Date(Date.now() + backoff(attempts)).toISOString(),
             sendingStartedAt: null,
             lastErrorJson: JSON.stringify({ error: message, at: now }),
-            updatedAt: now,
           })
         }
       }
@@ -416,7 +414,6 @@ export class SyncManager {
 
   /** 应用重启时：sending 挂起恢复 pending（沿用原 operation_id 重试）。 */
   private async recoverStuckSending(): Promise<void> {
-    const now = new Date().toISOString()
     await this.db.transaction('rw', this.db.outbox, async () => {
       const stuck = await this.db.outbox
         .filter((e) => e.status === 'sending')
@@ -425,7 +422,6 @@ export class SyncManager {
         await this.db.outbox.update(e.queueId, {
           status: 'pending',
           sendingStartedAt: null,
-          updatedAt: now,
         })
       }
     })
@@ -461,14 +457,12 @@ export class SyncManager {
           await this.db.outbox.update(entry.queueId, {
             status: 'conflict',
             conflictJson: result.conflictJson ?? null,
-            updatedAt: now,
           })
           hadConflict = true
         } else if (result.status === 'rejected') {
           await this.db.outbox.update(entry.queueId, {
             status: 'rejected',
             lastErrorJson: JSON.stringify(result.errors ?? []),
-            updatedAt: now,
           })
         }
       }
@@ -558,17 +552,6 @@ export class SyncManager {
     if (operations.length === 0) return 0
     return operations[operations.length - 1].serverSeq
   }
-}
-
-// 供 bootstrap 用：最小 customer 记录类型
-interface CustomerRecord {
-  syncId: string
-  accountPhone: string
-  canonicalName: string
-  archivedAt: string | null
-  rowVersion: number
-  createdAt: string
-  updatedAt: string
 }
 
 // 后端快照是 snake_case（sync_id/row_version/account_phone...），前端 Dexie 用 camelCase
