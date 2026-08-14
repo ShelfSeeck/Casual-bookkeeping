@@ -42,6 +42,15 @@ class BusinessRepository(BaseRepository):
         super().__init__(connection)
         self._now_factory = lambda: datetime.now(timezone.utc).isoformat()
 
+    @staticmethod
+    def _is_valid_date(value: str) -> bool:
+        """严格校验 YYYY-MM-DD；读查询对非法日期返回空结果而非抛错。"""
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return False
+        return True
+
     def get_BySyncId(self, account_phone: str, sync_id: str) -> dict[str, Any] | None:
         """按 sync_id 查一条记录（含 row_version）；强制按账户过滤，查无返回 None。"""
         row = self.connection.execute(

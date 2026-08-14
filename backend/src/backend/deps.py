@@ -36,6 +36,7 @@ from backend.repositories.service_categories import ServiceCategoriesRepository
 from backend.repositories.work_orders import WorkOrdersRepository
 from backend.services.auth import AuthService
 from backend.services.business_command import BusinessCommandService
+from backend.services.business_query import BusinessQueryService
 from backend.services.chat import ChatService
 from backend.services.password import PasswordService
 from backend.services.rate_limiter import RateLimiter
@@ -162,6 +163,16 @@ def get_BusinessCommandService(
     operations: OperationsRepository = Depends(get_OperationsRepository),
 ) -> BusinessCommandService:
     return BusinessCommandService(customers, categories, orders, mappings, operations)
+
+
+def get_BusinessQueryService(
+    work_orders: WorkOrdersRepository = Depends(get_WorkOrdersRepository),
+    customers: CustomersRepository = Depends(get_CustomersRepository),
+    mappings: CustomerCodeMappingsRepository = Depends(get_CustomerCodeMappingsRepository),
+    categories: ServiceCategoriesRepository = Depends(get_ServiceCategoriesRepository),
+) -> BusinessQueryService:
+    """只读查询门面（docs/spec/agent-tools.md §6），供 Agent 工具与未来查询端点使用。"""
+    return BusinessQueryService(work_orders, customers, mappings, categories)
 
 
 def get_PasswordService() -> PasswordService:

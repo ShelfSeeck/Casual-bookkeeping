@@ -4,9 +4,12 @@
 {name, default_unit, is_active} 的合法对象（name/default_unit 非空字符串、
 is_active 为 bool）；小类 name 同数组内不重复；category_name 同账户内不重复
 （UNIQUE(account_phone, category_name) 兜底，捕获 sqlite IntegrityError 转 rejected）。
+
+查询（docs/spec/agent-tools.md §6）：list_Categories 默认只返回启用大类。
 """
 
 import json
+from typing import Any
 
 from backend.repositories.business_base import BusinessRepository
 
@@ -43,3 +46,22 @@ class ServiceCategoriesRepository(BusinessRepository):
     def _integrity_error_code(self):
         # UNIQUE(account_phone, category_name) 兜底：同账户大类重名
         return "category_name_duplicate"
+
+    def list_Categories(
+        self,
+        account_phone: str,
+        *,
+        include_inactive: bool = False,
+    ) -> list[dict[str, Any]]:
+        """查询服务大类；默认只返回启用（is_active=1）的大类。"""
+        conditions = ["account_phone = ?"]
+        params: list[Any] = [account_phone]
+        if not include_inactive:
+            conditions.append("is_active = 1")
+
+        where = " AND ".join(conditions)
+        rows = self.connection.execute(
+            f"SELECT * FROM {self.table} WHERE {where} ORDER BY category_name ASC",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
