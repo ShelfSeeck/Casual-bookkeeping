@@ -44,6 +44,20 @@ ERROR_SESSION_REVOKED = "session_revoked"              # 设备被踢，403
 ERROR_ACCOUNT_DISABLED = "account_disabled"            # 账户停用，403
 ERROR_INVALID_REQUEST = "invalid_request"              # 请求格式不合法（手机号/设备标识），400
 
+# 聊天域错误常量（docs/spec/chat-agent.md §7 / docs/error-codes.md §4.3）
+ERROR_SESSION_BUSY = "session_busy"                    # 同账户已有回合在运行，409
+ERROR_SESSION_NOT_FOUND = "session_not_found"          # 会话不存在或不属于该账户，404
+ERROR_TURN_NOT_FOUND = "turn_not_found"                # 回合不存在，404
+ERROR_INVALID_APPROVAL = "invalid_approval"            # 确认请求缺 approved 字段，400
+ERROR_APPROVAL_NOT_FOUND = "approval_not_found"        # 确认请求不存在或已处理，404
+ERROR_TOOL_APPROVAL_REQUIRED = "tool_approval_required"  # 存在未处理工具确认请求，409
+ERROR_MODEL_CONFIG_MISSING = "model_config_missing"    # config.toml 未配置 [model]，500
+ERROR_MODEL_BUILD_FAILED = "model_build_failed"        # Agent 构建失败，500
+ERROR_MODEL_AUTHENTICATION_ERROR = "model_authentication_error"  # 模型服务认证失败，502
+ERROR_MODEL_QUOTA_LIMIT_ERROR = "model_quota_limit_error"  # 模型额度不足/频率限制，429
+ERROR_MODEL_NETWORK_ERROR = "model_network_error"      # 模型服务网络/超时，502
+ERROR_MODEL_CALL_FAILED = "model_call_failed"          # 模型调用失败（通用），500
+
 
 def register_error_handlers(app: FastAPI) -> None:
     """注册 AppError → 统一错误 JSON 响应。"""

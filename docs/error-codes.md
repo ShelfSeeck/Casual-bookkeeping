@@ -101,6 +101,23 @@ rejected 响应结构（变更级，一条操作可带多条）：
 | `invalid_subcategories` | 小类 JSON 格式不合法 |
 | `subcategory_name_duplicate` | 小类 JSON 内重名 |
 
+### 4.3 聊天域（docs/spec/chat-agent.md §7）
+
+| error_code | HTTP | 含义 |
+| --- | --- | --- |
+| `session_busy` | 409 | 同一账户已有回合在运行（单飞锁） |
+| `session_not_found` | 404 | 会话不存在或不属于该账户 |
+| `turn_not_found` | 404 | 回合不存在 |
+| `invalid_approval` | 400 | 确认请求缺 `approved` 字段 |
+| `approval_not_found` | 404 | 确认请求不存在或已处理 |
+| `tool_approval_required` | 409 | 当前会话存在未处理的工具确认请求，先处理再发新消息 |
+| `model_config_missing` | 500 | `config.toml` 未配置 `[model]` |
+| `model_build_failed` | 500 | Agent 构建失败 |
+| `model_authentication_error` | 502 | 模型服务认证失败（api_key 错误） |
+| `model_quota_limit_error` | 429 | 模型额度不足 / 频率限制 |
+| `model_network_error` | 502 | 模型服务网络 / 超时 |
+| `model_call_failed` | 500 | 模型调用失败（通用） |
+
 ## 5. 前端映射与展示
 
 - 前端维护 `error_code → 中文文案` 映射表，收到错误后解析并展示（如 `invalid_quantity` → "数量必须是正整数"）。

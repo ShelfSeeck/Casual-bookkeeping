@@ -25,6 +25,8 @@ from backend.errors import (
 )
 from backend.repositories.account_devices import AccountDevicesRepository
 from backend.repositories.accounts import AccountsRepository
+from backend.repositories.chat_sessions import ChatSessionsRepository
+from backend.repositories.chat_turns import ChatTurnsRepository
 from backend.repositories.customer_code_mappings import (
     CustomerCodeMappingsRepository,
 )
@@ -34,6 +36,7 @@ from backend.repositories.service_categories import ServiceCategoriesRepository
 from backend.repositories.work_orders import WorkOrdersRepository
 from backend.services.auth import AuthService
 from backend.services.business_command import BusinessCommandService
+from backend.services.chat import ChatService
 from backend.services.password import PasswordService
 from backend.services.rate_limiter import RateLimiter
 from backend.services.token import TokenError, TokenService
@@ -203,6 +206,26 @@ def get_AuthService(
     limiter: RateLimiter = Depends(get_RateLimiter),
 ) -> AuthService:
     return AuthService(accounts, devices, password, tokens, limiter)
+
+
+def get_ChatSessionsRepository(
+    connection: sqlite3.Connection = Depends(get_Connection),
+) -> ChatSessionsRepository:
+    return ChatSessionsRepository(connection)
+
+
+def get_ChatTurnsRepository(
+    connection: sqlite3.Connection = Depends(get_Connection),
+) -> ChatTurnsRepository:
+    return ChatTurnsRepository(connection)
+
+
+def get_ChatService(
+    sessions: ChatSessionsRepository = Depends(get_ChatSessionsRepository),
+    turns: ChatTurnsRepository = Depends(get_ChatTurnsRepository),
+) -> ChatService:
+    # agent_factory 默认 build_Agent：每次 run 时热读 config.toml [model]
+    return ChatService(sessions, turns)
 
 
 def get_CurrentAccount(

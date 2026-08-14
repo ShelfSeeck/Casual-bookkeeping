@@ -19,7 +19,11 @@ class Database:
     def connect(self) -> sqlite3.Connection:
         # 目录不存在时先创建（首次运行时 data/ 目录尚未存在）
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.database_path)
+        # check_same_thread=False：允许连接跨线程使用。FastAPI 的 async 端点
+        # （如 chat SSE 流式）里，sync 依赖（get_Connection）在 threadpool 创建连接，
+        # 而端点函数体在事件循环线程执行，两者线程不同；本项目每请求一个连接、
+        # 请求内顺序使用，无并发共享同一连接，放宽线程检查是安全的。
+        connection = sqlite3.connect(self.database_path, check_same_thread=False)
         # row_factory = Row：SQL 返回的每行可按列名取值（row["phone"]），
         # 方便转成 dict/dataclass
         connection.row_factory = sqlite3.Row
