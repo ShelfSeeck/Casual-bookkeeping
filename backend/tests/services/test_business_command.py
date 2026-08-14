@@ -284,3 +284,197 @@ def test_accepts_create_customer_code_mapping(service, connection):
     result = service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", op)
     assert result.status == "accepted"
     assert result.row_versions == {"sync-000000000004": 1}
+
+
+def _create_customer_op(op_id, sync_id, name="某某厂"):
+    return {
+        "operation_id": op_id,
+        "operation_type": "create_customer",
+        "actor_type": "user",
+        "source_turn_id": None,
+        "changes": [
+            {
+                "entity_type": "customer",
+                "entity_sync_id": sync_id,
+                "base_version": 0,
+                "fields": {"canonical_name": name},
+            }
+        ],
+    }
+
+
+def _seed_category_and_customer(service, connection):
+    # 前置：客户 + 服务大类/小类都存在，供工单跨表校验通过
+    service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        _create_customer_op("op-000000000010", "sync-000000000900"),
+    )
+    ServiceCategoriesRepository(connection).apply_Write(
+        "13800000000",
+        "sync-000000000100",
+        {
+            "category_name": "洗水",
+            "subcategories_json": '[{"name":"单洗","default_unit":"件","is_active":true}]',
+            "is_active": 1,
+        },
+        0,
+    )
+
+
+def _work_order_op(op_id, sync_id, customer_code="001", work_order_date="2026-08-12"):
+    return {
+        "operation_id": op_id,
+        "operation_type": "create_work_order",
+        "actor_type": "user",
+        "source_turn_id": None,
+        "changes": [
+            {
+                "entity_type": "work_order",
+                "entity_sync_id": sync_id,
+                "base_version": 0,
+                "fields": {
+                    "work_order_date": work_order_date,
+                    "customer_id": 1,
+                    "customer_code": customer_code,
+                    "customer_name": "甲",
+                    "service_category": "洗水",
+                    "service_item": "单洗",
+                    "quantity": 12,
+                    "unit": "件",
+                    "unit_price_cents": None,
+                    "is_completed": 0,
+                },
+            }
+        ],
+    }
+
+
+# ---------- 撤回结构 / 设备归属 / 字段差异 / 映射校验（补测） ----------
+
+def test_stores_device_id_in_operation_history(service, connection):
+    # database_operations.device_id 必须记录来源设备（docs/data-model.md §5.3）。
+    # 曾因 execute_Operation 收了 device_id 却不传给 insert_Operation 而恒为 NULL。
+    result = service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6", _create_customer_op("op-000000000020", "sync-000000000020")
+    )
+    assert result.status == "accepted"
+    row = connection.execute(
+        "SELECT device_id FROM database_operations WHERE operation_id = 'op-000000000020'"
+    ).fetchone()
+    assert row["device_id"] == "dev-a1b2c3d4e5f6"
+
+
+def test_work_order_cross_rule_mapping_invalid(service, connection):
+    # 跨表校验：客户 + 大小类都合法，但该业务日期无有效编号映射 → customer_mapping_invalid
+    # （docs/error-codes.md §4.2）
+    _seed_category_and_customer(service, connection)
+    result = service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        _work_order_op("op-000000000021", "sync-000000000021", customer_code="001"),
+    )
+    assert result.status == "rejected"
+    assert result.errors[0]["error_code"] == "customer_mapping_invalid"
+
+
+def test_work_order_accepted_when_mapping_valid(service, connection):
+    # 有该业务日期的有效编号映射 → 跨表校验通过，accepted
+    _seed_category_and_customer(service, connection)
+    CustomerCodeMappingsRepository(connection).apply_Write(
+        "13800000000",
+        "sync-000000000901",
+        {
+            "customer_id": 1,
+            "customer_code": "001",
+            "customer_name": "甲",
+            "valid_from": "2026-08-01",
+            "valid_to": None,
+        },
+        0,
+    )
+    result = service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        _work_order_op("op-000000000022", "sync-000000000022", customer_code="001"),
+    )
+    assert result.status == "accepted"
+
+
+def test_restore_records_change_type_restore(service, connection):
+    # 软删后再恢复（archived_at 置空）→ change_type 应为 restore（docs/data-model.md §5.3）
+    service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        _create_customer_op("op-000000000030", "sync-000000000030"),
+    )
+    service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        {
+            "operation_id": "op-000000000031",
+            "operation_type": "archive_customer",
+            "actor_type": "user",
+            "source_turn_id": None,
+            "changes": [
+                {
+                    "entity_type": "customer",
+                    "entity_sync_id": "sync-000000000030",
+                    "base_version": 1,
+                    "fields": {"archived_at": "2026-08-12T00:00:00+00:00"},
+                }
+            ],
+        },
+    )
+    result = service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        {
+            "operation_id": "op-000000000032",
+            "operation_type": "restore_customer",
+            "actor_type": "user",
+            "source_turn_id": None,
+            "changes": [
+                {
+                    "entity_type": "customer",
+                    "entity_sync_id": "sync-000000000030",
+                    "base_version": 2,
+                    "fields": {"archived_at": None},
+                }
+            ],
+        },
+    )
+    assert result.status == "accepted"
+    row = connection.execute(
+        "SELECT change_type FROM operation_changes WHERE operation_id = 'op-000000000032'"
+    ).fetchone()
+    assert row["change_type"] == "restore"
+
+
+def test_changed_fields_json_records_business_diff(service, connection):
+    # changed_fields_json 应记录业务字段的 before/after 差异（docs/data-model.md §5.3），
+    # 且不含 row_version/updated_at 等账本字段。
+    service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        _create_customer_op("op-000000000040", "sync-000000000040"),
+    )
+    service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        {
+            "operation_id": "op-000000000041",
+            "operation_type": "update_customer",
+            "actor_type": "user",
+            "source_turn_id": None,
+            "changes": [
+                {
+                    "entity_type": "customer",
+                    "entity_sync_id": "sync-000000000040",
+                    "base_version": 1,
+                    "fields": {"canonical_name": "新名字"},
+                }
+            ],
+        },
+    )
+    row = connection.execute(
+        "SELECT changed_fields_json FROM operation_changes WHERE operation_id = 'op-000000000041'"
+    ).fetchone()
+    import json
+
+    diff = json.loads(row["changed_fields_json"])
+    assert diff["canonical_name"] == {"before": "某某厂", "after": "新名字"}
+    assert "row_version" not in diff
+    assert "updated_at" not in diff

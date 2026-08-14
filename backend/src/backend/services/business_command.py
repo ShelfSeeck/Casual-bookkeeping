@@ -89,7 +89,7 @@ class BusinessCommandService:
 
         # 2. 事务：逐 change 应用，任一失败整条回滚
         try:
-            result = self._apply_in_transaction(account_phone, operation)
+            result = self._apply_in_transaction(account_phone, device_id, operation)
             if result.status != "accepted":
                 # rejected / conflict：本事务内已写入的 change 全部回滚
                 self._connection.rollback()
@@ -103,7 +103,7 @@ class BusinessCommandService:
     # ---------- 私有实现 ----------
 
     def _apply_in_transaction(
-        self, account_phone: str, operation: dict[str, Any]
+        self, account_phone: str, device_id: str | None, operation: dict[str, Any]
     ) -> OperationResult:
         operation_id = operation["operation_id"]
         row_versions: dict[str, int] = {}
@@ -160,7 +160,7 @@ class BusinessCommandService:
                 errors.append(
                     {
                         "entity_sync_id": sync_id,
-                        "error_code": self._field_error_code(entity_type, change),
+                        "error_code": result.error_code or "invalid_request",
                         "message": "",
                     }
                 )
@@ -190,7 +190,7 @@ class BusinessCommandService:
                     "after_version": result.new_row_version,
                     "before_json": self._snapshot(before),
                     "after_json": self._snapshot(after),
-                    "changed_fields_json": self._snapshot(change.get("fields", {})),
+                    "changed_fields_json": self._changed_fields(before, after),
                 }
             )
 
@@ -198,7 +198,7 @@ class BusinessCommandService:
         result_json = _json_dumps({"status": "accepted", "row_versions": row_versions})
         server_seq = self._operations.insert_Operation(
             account_phone=account_phone,
-            device_id=operation.get("device_id"),
+            device_id=device_id,
             operation_id=operation_id,
             request_hash=self._compute_hash(operation),
             actor_type=operation.get("actor_type", "user"),
@@ -247,6 +247,13 @@ class BusinessCommandService:
                 return "service_option_disabled"
             if not valid:
                 return "service_item_mismatch"
+
+        # 编号映射按业务日期有效（docs/error-codes.md customer_mapping_invalid）
+        customer_code = fields.get("customer_code")
+        work_order_date = fields.get("work_order_date")
+        if customer_code and work_order_date:
+            if not self._mapping_valid(account_phone, customer_code, work_order_date):
+                return "customer_mapping_invalid"
         return None
 
     def _customer_exists(self, account_phone: str, customer_id: int) -> bool:
@@ -254,6 +261,18 @@ class BusinessCommandService:
             "SELECT 1 FROM customers"
             " WHERE account_phone = ? AND customer_id = ? AND archived_at IS NULL",
             (account_phone, customer_id),
+        ).fetchall()
+        return len(rows) > 0
+
+    def _mapping_valid(
+        self, account_phone: str, customer_code: str, work_order_date: str
+    ) -> bool:
+        """该业务日期是否存在有效的编号映射（docs/data-model.md §4.4 规则 1）。"""
+        rows = self._connection.execute(
+            "SELECT 1 FROM customer_code_mappings"
+            " WHERE account_phone = ? AND customer_code = ?"
+            " AND valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)",
+            (account_phone, customer_code, work_order_date, work_order_date),
         ).fetchall()
         return len(rows) > 0
 
@@ -277,32 +296,28 @@ class BusinessCommandService:
         names = {s.get("name") for s in subcategories if isinstance(s, dict)}
         return True, item_name in names
 
-    def _field_error_code(self, entity_type: str, change: dict[str, Any]) -> str:
-        fields = change.get("fields", {})
-        if entity_type == "work_order":
-            if fields.get("quantity") is not None and (
-                not isinstance(fields["quantity"], int) or fields["quantity"] <= 0
-            ):
-                return "invalid_quantity"
-            if fields.get("unit_price_cents") is not None and fields["unit_price_cents"] < 0:
-                return "invalid_unit_price"
-            if "unit" in fields and not fields["unit"].strip():
-                return "invalid_unit"
-        if entity_type == "customer" and "canonical_name" in fields and not fields["canonical_name"].strip():
-            return "invalid_customer_name"
-        if entity_type == "service_category":
-            return "invalid_subcategories"
-        return "invalid_request"
-
     def _change_type(self, base_version: int, change: dict[str, Any]) -> str:
         fields = change.get("fields", {})
         if base_version == 0:
             return "create"
-        if "deleted_at" in fields and fields["deleted_at"] is not None:
-            return "delete"
-        if "archived_at" in fields and fields["archived_at"] is not None:
-            return "delete"
+        if "deleted_at" in fields:
+            return "delete" if fields["deleted_at"] is not None else "restore"
+        if "archived_at" in fields:
+            return "delete" if fields["archived_at"] is not None else "restore"
         return "update"
+
+    def _changed_fields(self, before: dict[str, Any] | None, after: dict[str, Any]) -> str:
+        """字段差异展示（docs/data-model.md §5.3 changed_fields_json）：create 记全量快照，
+        其余只记发生变化的业务字段（排除 row_version/时间戳等账本字段）的 before/after。"""
+        if before is None:
+            return _json_dumps(after)
+        meta = {"row_version", "updated_at", "created_at", "account_phone", "sync_id"}
+        diff = {
+            key: {"before": before.get(key), "after": value}
+            for key, value in after.items()
+            if key not in meta and before.get(key) != value
+        }
+        return _json_dumps(diff)
 
     def _snapshot(self, row: dict[str, Any] | None) -> str | None:
         return _json_dumps(row) if row is not None else None

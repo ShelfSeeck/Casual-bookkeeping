@@ -18,10 +18,15 @@ class ServiceCategoriesRepository(BusinessRepository):
         if "subcategories_json" in fields:
             try:
                 parsed = json.loads(fields["subcategories_json"])
-                if not isinstance(parsed, list):
-                    return "invalid_subcategories"
-            except ValueError:
+            except (ValueError, TypeError):
                 return "invalid_subcategories"
-        if "category_name" in fields and not fields["category_name"].strip():
-            return "invalid_subcategories"
+            if not isinstance(parsed, list):
+                return "invalid_subcategories"
+            names = [s["name"] for s in parsed if isinstance(s, dict) and s.get("name")]
+            if len(names) != len(set(names)):
+                return "subcategory_name_duplicate"
         return None
+
+    def _integrity_error_code(self):
+        # UNIQUE(account_phone, category_name) 兜底：同账户大类重名
+        return "category_name_duplicate"

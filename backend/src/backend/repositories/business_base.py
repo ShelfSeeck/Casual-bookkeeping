@@ -24,10 +24,12 @@ class ApplyResult:
 
     - status: applied / conflict / rejected / not_found
     - new_row_version: applied 时的新版本；其他状态为 None
+    - error_code: rejected 时的具体业务错误码（docs/error-codes.md §4.2）；其他状态为 None
     """
 
     status: str
     new_row_version: int | None = None
+    error_code: str | None = None
 
 
 class BusinessRepository(BaseRepository):
@@ -67,7 +69,7 @@ class BusinessRepository(BaseRepository):
         """
         error = self._validate_fields(fields)
         if error is not None:
-            return ApplyResult("rejected")
+            return ApplyResult("rejected", error_code=error)
 
         if base_version == 0:
             existing = self.get_BySyncId(account_phone, sync_id)
@@ -84,8 +86,8 @@ class BusinessRepository(BaseRepository):
             try:
                 self._insert(self.table, values)
             except sqlite3.IntegrityError:
-                # 唯一约束冲突（如 category_name 同账户重名）→ rejected，不裸抛
-                return ApplyResult("rejected")
+                # 唯一/CHECK 约束冲突（如 category_name 同账户重名）→ rejected，不裸抛
+                return ApplyResult("rejected", error_code=self._integrity_error_code())
             return ApplyResult("applied", 1)
 
         existing = self.get_BySyncId(account_phone, sync_id)
@@ -133,3 +135,7 @@ class BusinessRepository(BaseRepository):
     def _validate_fields(self, fields: dict[str, Any]) -> str | None:
         """本表字段校验：子类覆写，返回 error_code 或 None。"""
         return None
+
+    def _integrity_error_code(self) -> str:
+        """create 时触发 DB 约束冲突（UNIQUE/CHECK）映射的业务错误码；子类覆写。"""
+        return "invalid_request"

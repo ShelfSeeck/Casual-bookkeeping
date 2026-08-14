@@ -18,8 +18,10 @@ class WorkOrdersRepository(BusinessRepository):
             quantity = fields["quantity"]
             if quantity is None or not isinstance(quantity, int) or quantity <= 0:
                 return "invalid_quantity"
-        if "unit" in fields and not fields["unit"].strip():
-            return "invalid_unit"
+        if "unit" in fields:
+            unit = fields["unit"]
+            if unit is None or not isinstance(unit, str) or not unit.strip():
+                return "invalid_unit"
         if "unit_price_cents" in fields:
             price = fields["unit_price_cents"]
             if price is not None and (not isinstance(price, int) or price < 0):

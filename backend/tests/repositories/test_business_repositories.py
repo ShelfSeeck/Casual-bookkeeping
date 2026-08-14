@@ -198,6 +198,26 @@ def test_service_categories_rejects_duplicate_category_name(connection):
         0,
     )
     assert result.status == "rejected"
+    # error_code 必须精确为 category_name_duplicate（docs/error-codes.md §4.2），
+    # 曾因 ApplyResult 不带错误码而被上层误报为 invalid_subcategories。
+    assert result.error_code == "category_name_duplicate"
+
+
+def test_service_categories_rejects_duplicate_subcategory_name(connection):
+    # 本表校验：小类 JSON 内重名 → rejected（docs/error-codes.md subcategory_name_duplicate）
+    repo = ServiceCategoriesRepository(connection)
+    result = repo.apply_Write(
+        "13800000000",
+        "sync-000000000001",
+        {
+            "category_name": "洗水",
+            "subcategories_json": '[{"name":"单洗"},{"name":"单洗"}]',
+            "is_active": 1,
+        },
+        0,
+    )
+    assert result.status == "rejected"
+    assert result.error_code == "subcategory_name_duplicate"
 
 
 def test_service_categories_rejects_bad_subcategories_json(connection):
@@ -274,6 +294,19 @@ def test_order_rejects_negative_unit_price(connection):
         0,
     )
     assert result.status == "rejected"
+
+
+def test_order_rejects_null_unit(connection):
+    # 本表校验：单位为 null → rejected（invalid_unit），不抛 AttributeError
+    repo = WorkOrdersRepository(connection)
+    result = repo.apply_Write(
+        "13800000000",
+        "sync-000000000001",
+        _make_order_fields(unit=None),
+        0,
+    )
+    assert result.status == "rejected"
+    assert result.error_code == "invalid_unit"
 
 
 def test_order_delete_sets_deleted_at(connection):
