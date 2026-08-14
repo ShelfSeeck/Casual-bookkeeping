@@ -3,7 +3,7 @@
 被测缝：
 - build_Agent —— 给定 ModelConfig 构建 Pydantic AI Agent：
   - 返回可运行的 Agent（TestModel override 后跑一个回合有固定输出）
-  - MVP 工具注册表为空 → 构建出的 agent 无 function tools
+  - 构建出的 agent 声明注册表中的 7 个业务工具（5 读 + 2 写草案）
   - 未传 ModelConfig 时走 get_ActiveModelConfig()（默认热读路径）
 - 工具注册表（tools/registry.py）：
   - register_tool 注册后 get_registered_tool_names 可见
@@ -32,12 +32,22 @@ async def test_build_Agent_runs_with_TestModel():
         api_key="sk-x",
     )
     agent = build_Agent(cfg)
-    model = TestModel()
+    model = TestModel(call_tools=[])  # 不发工具调用，保留“跑通”断言
     with agent.override(model=model):
         result = await agent.run("你好")
     assert result.output == "success (no tool calls)"
-    # MVP 无工具：构建出的 agent 不应声明任何 function tool
-    assert model.last_model_request_parameters.function_tools == []
+    # 构建出的 agent 应声明注册表中的 7 个业务工具（5 读 + 2 写草案）
+    assert {
+        t.name for t in model.last_model_request_parameters.function_tools
+    } == {
+        "query_work_orders",
+        "summarize_work_orders",
+        "query_customers",
+        "query_customer_code_mappings",
+        "query_service_categories",
+        "create_work_order",
+        "update_work_order",
+    }
 
 
 @pytest.mark.asyncio
@@ -56,7 +66,7 @@ async def test_build_Agent_defaults_to_active_config(monkeypatch):
     monkeypatch.setattr("backend.services.agent.get_ActiveModelConfig", fake_config)
     agent = build_Agent()
     assert captured["called"] is True
-    model = TestModel()
+    model = TestModel(call_tools=[])  # 不发工具调用，保留“跑通”断言
     with agent.override(model=model):
         result = await agent.run("你好")
     assert result.output == "success (no tool calls)"
