@@ -41,7 +41,7 @@
   - 工单 `service_item=null` 合法：仅当合并后 `service_item` 非空才做大小类校验。
 - 错误码常量沿用现有业务码的内联字符串风格（与 `invalid_quantity` 等一致），**不改 `errors.py`**；只更新 `docs/error-codes.md` §4.2 工单表新增 `invalid_service_item`（“小类既不是字符串也不是空值”）。
 
-**测试（新增，沿用 `tmp_path` 与现有 fixture）**：`backend/tests/repositories/test_business_repositories.py` 或新增 `test_business_validation.py` 覆盖：
+**测试（新增，沿用 `tmp_path` 与现有 fixture）**：`backend/tests/repositories/test_business_repositories.py` 或新增 `test_business_validation.py` 覆盖；若既有 `backend/tests/services/test_business_command.py` 的用例因新增校验而必须补种子数据才能保持语义，允许在该文件做**最小适配**（只改既有用例的测试数据，不新增用例、不动生产代码路径）——该文件因新校验被纳入本任务范围。覆盖：
 1. 工单 create/update 时 `service_item=null` 通过；`service_item=123` rejected `invalid_service_item`。
 2. 小类 JSON 三种坏结构 → `invalid_subcategories`；重名 → `subcategory_name_duplicate`；合法结构通过。
 3. 映射 create 重叠 → rejected `mapping_period_overlap`；相邻不重叠（`valid_to == 次日 valid_from`？按含端点语义用 `2026-06-30` / `2026-07-01`）通过；update 只改 `valid_from` 造成重叠 → rejected。
