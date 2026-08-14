@@ -1,6 +1,8 @@
 """ServiceCategoriesRepository：service_categories 表的受控读写接口。
 
-本表校验：subcategories_json 必须可解析为数组；category_name 同账户内不重复
+本表校验：subcategories_json 必须可解析为数组，且每个小类都是
+{name, default_unit, is_active} 的合法对象（name/default_unit 非空字符串、
+is_active 为 bool）；小类 name 同数组内不重复；category_name 同账户内不重复
 （UNIQUE(account_phone, category_name) 兜底，捕获 sqlite IntegrityError 转 rejected）。
 """
 
@@ -22,7 +24,18 @@ class ServiceCategoriesRepository(BusinessRepository):
                 return "invalid_subcategories"
             if not isinstance(parsed, list):
                 return "invalid_subcategories"
-            names = [s["name"] for s in parsed if isinstance(s, dict) and s.get("name")]
+            names = []
+            for item in parsed:
+                if (
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("name"), str)
+                    or not item["name"].strip()
+                    or not isinstance(item.get("default_unit"), str)
+                    or not item["default_unit"].strip()
+                    or not isinstance(item.get("is_active"), bool)
+                ):
+                    return "invalid_subcategories"
+                names.append(item["name"])
             if len(names) != len(set(names)):
                 return "subcategory_name_duplicate"
         return None

@@ -1,7 +1,8 @@
 """WorkOrdersRepository：work_orders 表的受控读写接口。
 
 本表校验（docs/spec/sync-backend.md §4）：quantity > 0、unit 非空、
-unit_price_cents 为 NULL 或 >= 0。跨表规则（大小类匹配、客户存在、映射有效）
+unit_price_cents 为 NULL 或 >= 0、service_item 为 NULL 或字符串
+（docs/spec/business-p0p1.md §5.1）。跨表规则（大小类匹配、客户存在、映射有效）
 由 BusinessCommandService 负责，不在此处。
 """
 
@@ -14,6 +15,10 @@ class WorkOrdersRepository(BusinessRepository):
     has_soft_delete = True
 
     def _validate_fields(self, fields):
+        if "service_item" in fields:
+            service_item = fields["service_item"]
+            if service_item is not None and not isinstance(service_item, str):
+                return "invalid_service_item"
         if "quantity" in fields:
             quantity = fields["quantity"]
             if quantity is None or not isinstance(quantity, int) or quantity <= 0:

@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
     customer_name TEXT NOT NULL,
 
     service_category TEXT NOT NULL,
-    service_item TEXT NOT NULL,
+    service_item TEXT,
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     unit TEXT NOT NULL CHECK (trim(unit) <> ''),
 

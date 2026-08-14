@@ -9,7 +9,8 @@
 3. 全部 applied → 写操作历史（insert_Operation，含 after_json）
 4. 提交，返回 accepted（server_seq + 新 row_versions）
 
-跨表校验（方案 A，放本服务）：工单大小类匹配、客户存在、映射按日期有效。
+跨表校验（方案 A，放本服务）：工单大小类匹配、客户存在、映射按日期有效；
+create/update 均按「现记录 ∪ patch」合并后的目标状态校验（docs/spec/business-p0p1.md §5.3/§5.4）。
 本表字段校验在各业务仓库（见 docs/spec/sync-backend.md §4）。
 """
 
@@ -226,34 +227,123 @@ class BusinessCommandService:
     def _validate_cross(
         self, entity_type: str, account_phone: str, change: dict[str, Any]
     ) -> str | None:
-        """跨表校验：放本服务（方案 A）。工单创建时校验引用。"""
-        if entity_type != "work_order" or change.get("base_version", 0) != 0:
-            return None
-        fields = change.get("fields", {})
+        """跨表校验：放本服务（方案 A）。
 
-        # 客户存在且未归档
-        customer_id = fields.get("customer_id")
-        if customer_id is not None:
-            found = self._customer_exists(account_phone, customer_id)
-            if not found:
+        - work_order：create 校验 change.fields；update 校验 {现记录, **fields}
+          合并后的目标状态，且只对 patch 触及的规则做校验（§5.4）。
+        - customer_code_mapping：create/update 校验 customer_id 存在性与
+          同编号重叠区间（含端点，§5.3）。
+        """
+        base_version = change.get("base_version", 0)
+        fields = change.get("fields", {})
+        sync_id = change.get("entity_sync_id", "")
+
+        if entity_type == "work_order":
+            return self._validate_work_order_cross(
+                account_phone, base_version, fields, sync_id
+            )
+        if entity_type == "customer_code_mapping":
+            return self._validate_mapping_cross(
+                account_phone, base_version, fields, sync_id
+            )
+        return None
+
+    def _validate_work_order_cross(
+        self,
+        account_phone: str,
+        base_version: int,
+        fields: dict[str, Any],
+        sync_id: str,
+    ) -> str | None:
+        if base_version == 0:
+            merged = fields
+        else:
+            existing = self._orders.get_BySyncId(account_phone, sync_id)
+            if existing is None:
+                # 记录不存在交给 apply_Write 报 entity_not_found
+                return None
+            merged = {**existing, **fields}
+
+        # service_item 类型守卫：非 None 且非 str → invalid_service_item。
+        # 仓库层也校验，但 cross 先于 apply_Write 执行，须在此先兜底，
+        # 避免把 123 这类值误判成 service_item_mismatch。
+        if base_version == 0 or "service_item" in fields:
+            item_name = merged.get("service_item")
+            if item_name is not None and not isinstance(item_name, str):
+                return "invalid_service_item"
+
+        # 客户存在且未归档：create 同现状；update 仅当 patch 触及 customer_id
+        if base_version == 0 or "customer_id" in fields:
+            customer_id = merged.get("customer_id")
+            if customer_id is not None and not self._customer_exists(account_phone, customer_id):
                 return "customer_not_found"
 
-        # 大小类匹配且可用
-        category_name = fields.get("service_category")
-        item_name = fields.get("service_item")
-        if category_name and item_name:
-            ok, valid = self._item_in_category(account_phone, category_name, item_name)
-            if not ok:
-                return "service_option_disabled"
-            if not valid:
-                return "service_item_mismatch"
+        # 大小类匹配 + 大类启用 + 小类启用：create 同现状；update 仅当 patch
+        # 触及 service_category 或 service_item。合并后 service_item 为空（空小类）合法。
+        if base_version == 0 or "service_category" in fields or "service_item" in fields:
+            category_name = merged.get("service_category")
+            item_name = merged.get("service_item")
+            if category_name and item_name:
+                error = self._validate_service_option(
+                    account_phone, category_name, item_name
+                )
+                if error is not None:
+                    return error
 
-        # 编号映射按业务日期有效（docs/error-codes.md customer_mapping_invalid）
-        customer_code = fields.get("customer_code")
-        work_order_date = fields.get("work_order_date")
-        if customer_code and work_order_date:
-            if not self._mapping_valid(account_phone, customer_code, work_order_date):
-                return "customer_mapping_invalid"
+        # 编号映射按业务日期有效：create 同现状；update 仅当 patch 触及
+        # work_order_date 或 customer_code，且用合并后的日期与编号。
+        if base_version == 0 or "work_order_date" in fields or "customer_code" in fields:
+            customer_code = merged.get("customer_code")
+            work_order_date = merged.get("work_order_date")
+            if customer_code and work_order_date:
+                if not self._mapping_valid(account_phone, customer_code, work_order_date):
+                    return "customer_mapping_invalid"
+        return None
+
+    def _validate_mapping_cross(
+        self,
+        account_phone: str,
+        base_version: int,
+        fields: dict[str, Any],
+        sync_id: str,
+    ) -> str | None:
+        if base_version == 0:
+            merged = fields
+        else:
+            existing = self._mappings.get_BySyncId(account_phone, sync_id)
+            if existing is None:
+                # 记录不存在交给 apply_Write 报 entity_not_found
+                return None
+            merged = {**existing, **fields}
+
+        # customer_id 存在且未归档：create 必查；update 仅当字段出现
+        if base_version == 0 or "customer_id" in fields:
+            customer_id = merged.get("customer_id")
+            if customer_id is None or not self._customer_exists(account_phone, customer_id):
+                return "customer_not_found"
+
+        # 同账户、同 customer_code、不同 sync_id 的重叠区间（含端点）。
+        # valid_to 为空表示开放区间；SQL 里显式处理 NULL，避免 <= NULL 恒假。
+        customer_code = merged.get("customer_code")
+        valid_from = merged.get("valid_from")
+        if customer_code is not None and valid_from is not None:
+            valid_to = merged.get("valid_to")
+            rows = self._connection.execute(
+                "SELECT 1 FROM customer_code_mappings"
+                " WHERE account_phone = ? AND customer_code = ? AND sync_id <> ?"
+                " AND (? IS NULL OR valid_from <= ?)"
+                " AND (valid_to IS NULL OR valid_to >= ?)",
+                (
+                    account_phone,
+                    customer_code,
+                    sync_id,
+                    valid_to,
+                    valid_to,
+                    valid_from,
+                ),
+            ).fetchall()
+            if rows:
+                return "mapping_period_overlap"
         return None
 
     def _customer_exists(self, account_phone: str, customer_id: int) -> bool:
@@ -276,25 +366,35 @@ class BusinessCommandService:
         ).fetchall()
         return len(rows) > 0
 
-    def _item_in_category(
+    def _validate_service_option(
         self, account_phone: str, category_name: str, item_name: str
-    ) -> tuple[bool, bool]:
-        """返回 (大类是否存在且启用, 小类是否在其中)。"""
+    ) -> str | None:
+        """校验大小类匹配与启用状态，返回错误码或 None。
+
+        大类不存在/停用 → service_option_disabled；小类不在大类内 →
+        service_item_mismatch；小类存在但 is_active=false → service_option_disabled。
+        """
         rows = self._connection.execute(
             "SELECT subcategories_json, is_active FROM service_categories"
             " WHERE account_phone = ? AND category_name = ?",
             (account_phone, category_name),
         ).fetchall()
         if not rows or rows[0]["is_active"] == 0:
-            return False, False
+            return "service_option_disabled"
         import json
 
         try:
             subcategories = json.loads(rows[0]["subcategories_json"])
         except ValueError:
-            return False, False
-        names = {s.get("name") for s in subcategories if isinstance(s, dict)}
-        return True, item_name in names
+            return "service_option_disabled"
+        if not isinstance(subcategories, list):
+            return "service_option_disabled"
+        for subcategory in subcategories:
+            if isinstance(subcategory, dict) and subcategory.get("name") == item_name:
+                if subcategory.get("is_active") is True:
+                    return None
+                return "service_option_disabled"
+        return "service_item_mismatch"
 
     def _change_type(self, base_version: int, change: dict[str, Any]) -> str:
         fields = change.get("fields", {})

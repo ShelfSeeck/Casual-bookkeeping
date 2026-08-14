@@ -75,6 +75,7 @@ rejected 响应结构（变更级，一条操作可带多条）：
 | `invalid_quantity` | 数量非正整数 |
 | `invalid_unit` | 单位为空 |
 | `invalid_unit_price` | 单价为负 |
+| `invalid_service_item` | 小类既不是字符串也不是空值 |
 | `service_item_mismatch` | 小类不属于所选大类 |
 | `service_option_disabled` | 服务大类/小类已停用 |
 | `customer_not_found` | 客户不存在或已归档 |
