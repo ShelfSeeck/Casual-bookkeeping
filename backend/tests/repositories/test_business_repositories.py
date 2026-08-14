@@ -211,7 +211,8 @@ def test_service_categories_rejects_duplicate_subcategory_name(connection):
         "sync-000000000001",
         {
             "category_name": "洗水",
-            "subcategories_json": '[{"name":"单洗"},{"name":"单洗"}]',
+            "subcategories_json": '[{"name":"单洗","default_unit":"件","is_active":true},'
+            '{"name":"单洗","default_unit":"袋","is_active":false}]',
             "is_active": 1,
         },
         0,

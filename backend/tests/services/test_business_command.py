@@ -260,7 +260,26 @@ def test_work_order_cross_rule_customer_not_found(service, connection):
 
 
 def test_accepts_create_customer_code_mapping(service, connection):
-    # 第四张业务表：编号映射也能 Push accepted（曾因 _repo_for 缺映射而 rejected）
+    # 第四张业务表：编号映射也能 Push accepted（曾因 _repo_for 缺映射而 rejected）。
+    # 映射 create 现在必查 customer_id 存在，因此先造一个真实客户。
+    service.execute_Operation(
+        "13800000000",
+        "dev-a1b2c3d4e5f6",
+        {
+            "operation_id": "op-000000000006a",
+            "operation_type": "create_customer",
+            "actor_type": "user",
+            "source_turn_id": None,
+            "changes": [
+                {
+                    "entity_type": "customer",
+                    "entity_sync_id": "sync-000000000900",
+                    "base_version": 0,
+                    "fields": {"canonical_name": "某某厂"},
+                }
+            ],
+        },
+    )
     op = {
         "operation_id": "op-000000000006",
         "operation_type": "create_customer_code_mapping",
