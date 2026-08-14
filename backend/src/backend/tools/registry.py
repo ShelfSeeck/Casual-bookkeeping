@@ -54,7 +54,7 @@ def requires_approval_for(tool_name: str) -> bool:
 
 def build_tools(allowed: list[str] | None = None) -> list[Tool[Any]]:
     """根据注册表构建 Tool 列表；allowed 为白名单过滤，None 表示全部。"""
-    allowed_set = set(allowed) if allowed else None
+    allowed_set = set(allowed) if allowed is not None else None
     tools: list[Tool[Any]] = []
     for tool_name, (func, requires_approval) in _TOOL_REGISTRY.items():
         if allowed_set is not None and tool_name not in allowed_set:

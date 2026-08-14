@@ -99,3 +99,8 @@ def test_build_tools_filters_by_allowed():
 
     filtered = build_tools(allowed=["tool_a"])
     assert [t.name for t in filtered] == ["tool_a"]
+
+
+def test_build_tools_empty_whitelist_returns_no_tools():
+    # allowed=[] 表示“本轮零工具”，必须返回空列表而不是退化为全部工具
+    assert build_tools([]) == []
