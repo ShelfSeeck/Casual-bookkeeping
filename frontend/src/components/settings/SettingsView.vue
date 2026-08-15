@@ -229,39 +229,6 @@ onMounted(async () => {
       </header>
 
       <main class="cb-settings-body">
-        <!-- 组 0：外观 -->
-        <section class="md3-list-group" aria-label="外观">
-          <div class="md3-list-group-header">外观</div>
-          <div class="md3-list-container">
-            <button
-              type="button"
-              class="md3-list-item cb-pressable"
-              aria-label="进入外观设置"
-              @click="currentSubPage = 'appearance'"
-            >
-              <div class="md3-list-item-leading" aria-hidden="true">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="13.5" cy="6.5" r="2.5"></circle>
-                  <circle cx="17.5" cy="10.5" r="1.5"></circle>
-                  <circle cx="8.5" cy="7.5" r="1.5"></circle>
-                  <circle cx="6.5" cy="12.5" r="2.5"></circle>
-                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.8-.1 2.6-.4.5-.2.9-.5 1.3-.9l.9-1.4c.7-1.1.7-2.5 0-3.6l-.4-.6c-.4-.6-1-1-1.7-1.3-2.2-.9-4.9.1-6.2 2-.9 1.3-1.2 3-.7 4.5.2.7.6 1.2 1.1 1.7-1.3.4-2.7-.1-3.5-1.3C3.7 14.6 2 10.3 4.2 6.7 6.3 3.4 10.5 2 12 2z"></path>
-                </svg>
-              </div>
-              <div class="md3-list-item-content">
-                <span class="md3-list-item-headline">外观设置</span>
-                <span class="md3-list-item-supporting">深浅模式与跟随系统</span>
-              </div>
-              <div class="md3-list-item-trailing">
-                <span class="md3-list-item-meta">{{ themeOptionLabel }}</span>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M9 18l6-6-6-6"/>
-                </svg>
-              </div>
-            </button>
-          </div>
-        </section>
-
         <!-- 组 1：基础档案 -->
         <section class="md3-list-group" aria-label="基础档案">
           <div class="md3-list-group-header">基础档案</div>
@@ -386,6 +353,39 @@ onMounted(async () => {
                 <span class="md3-mono-text">{{ deviceId || '—' }}</span>
               </div>
             </div>
+          </div>
+        </section>
+
+        <!-- 组 4：外观（低频设置放在最后） -->
+        <section class="md3-list-group" aria-label="外观">
+          <div class="md3-list-group-header">外观</div>
+          <div class="md3-list-container">
+            <button
+              type="button"
+              class="md3-list-item cb-pressable"
+              aria-label="进入外观设置"
+              @click="currentSubPage = 'appearance'"
+            >
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="13.5" cy="6.5" r="2.5"></circle>
+                  <circle cx="17.5" cy="10.5" r="1.5"></circle>
+                  <circle cx="8.5" cy="7.5" r="1.5"></circle>
+                  <circle cx="6.5" cy="12.5" r="2.5"></circle>
+                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.8-.1 2.6-.4.5-.2.9-.5 1.3-.9l.9-1.4c.7-1.1.7-2.5 0-3.6l-.4-.6c-.4-.6-1-1-1.7-1.3-2.2-.9-4.9.1-6.2 2-.9 1.3-1.2 3-.7 4.5.2.7.6 1.2 1.1 1.7-1.3.4-2.7-.1-3.5-1.3C3.7 14.6 2 10.3 4.2 6.7 6.3 3.4 10.5 2 12 2z"></path>
+                </svg>
+              </div>
+              <div class="md3-list-item-content">
+                <span class="md3-list-item-headline">外观设置</span>
+                <span class="md3-list-item-supporting">深浅模式与跟随系统</span>
+              </div>
+              <div class="md3-list-item-trailing">
+                <span class="md3-list-item-meta">{{ themeOptionLabel }}</span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
+              </div>
+            </button>
           </div>
         </section>
       </main>
