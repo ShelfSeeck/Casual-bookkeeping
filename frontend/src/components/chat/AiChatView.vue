@@ -104,11 +104,6 @@ watch(
     <header class="cb-chat-header">
       <div class="cb-chat-title-group">
         <div class="cb-header-left">
-          <div class="cb-ai-badge-icon" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-            </svg>
-          </div>
           <div>
             <h1 class="cb-chat-title cb-text-balance">AI 记账助手</h1>
             <span class="cb-chat-sub">仅联网可用</span>
@@ -152,8 +147,13 @@ watch(
       >
         <!-- AI 头像 -->
         <div v-if="msg.sender === 'assistant'" class="cb-avatar cb-avatar--ai" aria-hidden="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3l1.912 5.885h6.188l-5.006 3.638 1.912 5.885-5.006-3.638-5.006 3.638 1.912-5.885-5.006-3.638h6.188z"/>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 8V4H8"></path>
+            <rect x="4" y="8" width="16" height="12" rx="2"></rect>
+            <path d="M2 14h2"></path>
+            <path d="M20 14h2"></path>
+            <path d="M15 13v2"></path>
+            <path d="M9 13v2"></path>
           </svg>
         </div>
 
@@ -346,22 +346,9 @@ watch(
   gap: 12px;
 }
 
-.cb-ai-badge-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--md-sys-shape-corner-medium);
-  background: var(--md-sys-color-primary-container);
-  color: var(--md-sys-color-on-primary-container);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  box-shadow: var(--md-sys-elevation-1);
-}
-
 .cb-chat-title {
   margin: 0;
-  font-size: 19px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--md-sys-color-on-surface);
   letter-spacing: -0.3px;

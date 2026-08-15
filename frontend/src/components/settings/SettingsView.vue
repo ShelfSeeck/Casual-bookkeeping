@@ -229,6 +229,27 @@ onMounted(async () => {
       </header>
 
       <main class="cb-settings-body">
+        <!-- 组 0：个人信息 -->
+        <section class="md3-list-group" aria-label="个人信息">
+          <div class="md3-list-group-header">个人信息</div>
+          <div class="md3-list-container">
+            <div class="md3-list-item">
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+              </div>
+              <div class="md3-list-item-content">
+                <span class="md3-list-item-headline">登录账号</span>
+              </div>
+              <div class="md3-list-item-trailing">
+                <span class="md3-mono-text cb-tabular-nums">{{ activePhone || '—' }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- 组 1：基础档案 -->
         <section class="md3-list-group" aria-label="基础档案">
           <div class="md3-list-group-header">基础档案</div>
@@ -322,23 +343,6 @@ onMounted(async () => {
         <section class="md3-list-group" aria-label="账号与设备">
           <div class="md3-list-group-header">账号与设备</div>
           <div class="md3-list-container">
-            <div class="md3-list-item">
-              <div class="md3-list-item-leading" aria-hidden="true">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                  <circle cx="12" cy="7" r="4"></circle>
-                </svg>
-              </div>
-              <div class="md3-list-item-content">
-                <span class="md3-list-item-headline">当前登录账号</span>
-              </div>
-              <div class="md3-list-item-trailing">
-                <span class="md3-mono-text cb-tabular-nums">{{ activePhone || '—' }}</span>
-              </div>
-            </div>
-
-            <div class="md3-list-divider" aria-hidden="true"></div>
-
             <div class="md3-list-item">
               <div class="md3-list-item-leading" aria-hidden="true">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -960,7 +964,7 @@ onMounted(async () => {
 .md3-top-app-bar-large-title {
   margin: 0;
   padding: 0 8px;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--md-sys-color-on-surface);
   letter-spacing: -0.3px;
