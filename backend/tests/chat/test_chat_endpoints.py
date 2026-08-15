@@ -143,10 +143,12 @@ def test_create_and_list_sessions(client, seed_account):
     assert created["session_id"].startswith("s-")
     assert created["title"] == "7月对账"
     assert created["created_at"]
+    assert created["turn_count"] == 0
 
     body = client.get("/chat/sessions", headers=headers).json()
     assert len(body["sessions"]) == 1
     assert body["sessions"][0]["session_id"] == created["session_id"]
+    assert body["sessions"][0]["turn_count"] == 0
     assert "account_phone" not in body["sessions"][0]
 
 

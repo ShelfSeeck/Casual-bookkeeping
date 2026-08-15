@@ -154,7 +154,7 @@ def bootstrap(
 ) -> dict:
     # 四表当前在用记录 + snapshot_seq（docs/sync-protocol.md §4.3）
     # MVP 扁平返回、不分页（数据量小）；cursor 编码留待分页需求出现时再定（AGENTS.md 未定事项）
-    snapshot_seq = operations_repo.get_MaxSeq()
+    snapshot_seq = operations_repo.get_MaxSeq(current.account_phone)
     return {
         "snapshot_seq": snapshot_seq,
         "has_more": False,

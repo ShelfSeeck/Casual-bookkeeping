@@ -244,4 +244,25 @@ describe('ApiClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(callbacks.onSessionInvalid).not.toHaveBeenCalled()
   })
+
+  it('业务请求 403（session_revoked）触发 onSessionInvalid，不 refresh', async () => {
+    localStorage.setItem('cb_access_token', ACCESS)
+    const fetchMock = mockFetchOnce('/api/ping', 403, { error_code: 'session_revoked' })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(client.request('/api/ping')).rejects.toThrow('session_revoked')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(callbacks.onSessionInvalid).toHaveBeenCalled()
+  })
+
+  it('logout 服务端失败时也清本地 access 并抛错', async () => {
+    localStorage.setItem('cb_access_token', ACCESS)
+    const fetchMock = mockFetchOnce('/auth/logout', 500, { error_code: 'server_error' })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(client.logout()).rejects.toThrow('server_error')
+
+    expect(localStorage.getItem('cb_access_token')).toBeNull()
+  })
 })

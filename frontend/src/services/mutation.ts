@@ -111,14 +111,15 @@ export class MutationService {
     ], async (tx) => {
       // 单记录 gate（docs/sync-protocol.md §8）：conflict/rejected 未决条目禁止再写该记录，
       // 必须先解决冲突；pending 允许（保序）。查询在事务内做，保证与写入同读同写视图。
-      const outboxEntries = await tx.table('outbox').toArray()
-      const blocked = input.entitySyncIds.filter((id) =>
-        outboxEntries.some(
-          (e) =>
-            (e.status === 'conflict' || e.status === 'rejected') &&
-            e.entitySyncIds.includes(id),
-        ),
-      )
+      // 走 entitySyncIds 多值索引，只读涉及目标记录的 outbox 行，不整表扫描。
+      const outboxTable = tx.table('outbox')
+      const blocked: string[] = []
+      for (const id of input.entitySyncIds) {
+        const entries = await outboxTable.where('entitySyncIds').equals(id).toArray()
+        if (entries.some((e) => e.status === 'conflict' || e.status === 'rejected')) {
+          blocked.push(id)
+        }
+      }
       if (blocked.length > 0) throw new RecordGatedError(blocked)
 
       const txApi: MutationTx = {

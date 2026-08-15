@@ -55,8 +55,10 @@ def test_create_Session_then_get_returns_full_record(connection):
 
 
 def test_list_Sessions_orders_by_updated_at_desc(connection):
-    # spec §4.2：会话列表按 updated_at 倒序（最近活动在前）
+    # spec §4.2：会话列表按 updated_at 倒序（最近活动在前）；
+    # 同时验证 list 返回 turn_count：两会话分别有 2/1 个回合，空会话为 0
     repo = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
     repo._now_factory = _fake_now(
         "2026-08-13T00:00:01.000000+00:00",
         "2026-08-13T00:00:02.000000+00:00",
@@ -66,12 +68,18 @@ def test_list_Sessions_orders_by_updated_at_desc(connection):
     repo.create_Session("13800000000", "s-000000000002", "B")
     repo.create_Session("13800000000", "s-000000000003", "C")
 
+    # 回合只影响 count，不改变会话 updated_at；s-3 保持最新且无回合
+    turns.upsert_Turn("t-000000000001", "s-000000000001", "[]")
+    turns.upsert_Turn("t-000000000002", "s-000000000001", "[]")
+    turns.upsert_Turn("t-000000000003", "s-000000000002", "[]")
+
     sessions = repo.list_Sessions("13800000000")
     assert [s["session_id"] for s in sessions] == [
         "s-000000000003",
         "s-000000000002",
         "s-000000000001",
     ]
+    assert [s["turn_count"] for s in sessions] == [0, 1, 2]
 
 
 def test_list_Sessions_filters_by_account(connection):

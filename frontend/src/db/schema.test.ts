@@ -47,6 +47,18 @@ describe('业务库 schema', () => {
     expect(outbox.schema.idxByName['operationId']?.unique).toBe(true)
   })
 
+  it('outbox 带 entitySyncIds 多值索引、status 与 createdAt 索引', async () => {
+    // Obsidian 存储设计 §4：entity_sync_ids 多值索引（同记录未决查询）、
+    // status 索引（同步器筛选）、created_at 索引（按创建顺序发送）。
+    const db = createBusinessDb('13800000000')
+    await db.open()
+    const outbox = db.table('outbox')
+    const idx = outbox.schema.idxByName
+    expect(idx['entitySyncIds']?.multi, 'entitySyncIds 应为多值索引').toBe(true)
+    expect(idx['status'], 'status 应有索引').toBeTruthy()
+    expect(idx['createdAt'], 'createdAt 应有索引').toBeTruthy()
+  })
+
   it('operations 以 operationId 为主键，syncState 以 accountPhone 为主键', async () => {
     const db = createBusinessDb('13800000000')
     await db.open()

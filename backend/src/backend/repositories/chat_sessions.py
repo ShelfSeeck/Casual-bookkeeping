@@ -43,10 +43,15 @@ class ChatSessionsRepository(BaseRepository):
         return dict(row)
 
     def list_Sessions(self, account_phone: str) -> list[dict[str, Any]]:
-        # 该账户全部会话，按 updated_at 倒序（最近活动在前，spec §4.2）
+        # 该账户全部会话及回合数，按 updated_at 倒序（最近活动在前，spec §4.2）。
+        # LEFT JOIN + COUNT 保证无回合的会话 turn_count 为 0。
         rows = self.connection.execute(
-            "SELECT * FROM chat_sessions WHERE account_phone = ?"
-            " ORDER BY updated_at DESC",
+            "SELECT cs.*, COUNT(ct.turn_id) AS turn_count"
+            " FROM chat_sessions cs"
+            " LEFT JOIN chat_turns ct ON ct.session_id = cs.session_id"
+            " WHERE cs.account_phone = ?"
+            " GROUP BY cs.session_id"
+            " ORDER BY cs.updated_at DESC",
             (account_phone,),
         ).fetchall()
         return [dict(row) for row in rows]

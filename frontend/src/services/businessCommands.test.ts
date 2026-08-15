@@ -479,8 +479,8 @@ describe('createServiceCategory / updateServiceCategory（subcategoriesJson 序�
     expect(cmd.changes[0].entityType).toBe('service_category')
     expect(cmd.changes[0].patch?.subcategories_json).toBe(
       JSON.stringify([
-        { name: '单洗', defaultUnit: '件', isActive: true },
-        { name: '烘件染', defaultUnit: '件', isActive: false },
+        { name: '单洗', default_unit: '件', is_active: true },
+        { name: '烘件染', default_unit: '件', is_active: false },
       ]),
     )
   })
@@ -499,14 +499,27 @@ describe('createServiceCategory / updateServiceCategory（subcategoriesJson 序�
     expect(local?.subcategoriesJson.map((s) => s.name)).toEqual(['单洗', '洗烘一体'])
 
     const cmd = (await db.outbox.toArray())[0].command as {
-      changes: { entityType?: string; baseVersion: number; patch?: Record<string, unknown> }[]
+      changes: {
+        entityType?: string
+        baseVersion: number
+        baseSnapshot?: Record<string, unknown>
+        patch?: Record<string, unknown>
+      }[]
     }
     expect(cmd.changes[0].entityType).toBe('service_category')
     expect(cmd.changes[0].baseVersion).toBe(1)
     expect(cmd.changes[0].patch?.subcategories_json).toBe(
       JSON.stringify([
-        { name: '单洗', defaultUnit: '件', isActive: true },
-        { name: '洗烘一体', defaultUnit: '件', isActive: true },
+        { name: '单洗', default_unit: '件', is_active: true },
+        { name: '洗烘一体', default_unit: '件', is_active: true },
+      ]),
+    )
+    // baseSnapshot 与 patch 同属 wire 契约：subcategories_json 内元素也必须是 snake_case，
+    // 否则冲突三方比对时 Base（camelCase 元素）与 Theirs（snake_case 元素）必然假冲突。
+    expect(cmd.changes[0].baseSnapshot?.subcategories_json).toBe(
+      JSON.stringify([
+        { name: '单洗', default_unit: '件', is_active: true },
+        { name: '停用小类', default_unit: '件', is_active: false },
       ]),
     )
   })

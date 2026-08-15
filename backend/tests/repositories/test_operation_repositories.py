@@ -127,7 +127,7 @@ def test_list_AfterSeq_limit_and_has_more(connection):
 def test_get_MaxSeq_returns_zero_when_empty(connection):
     # bootstrap 的 snapshot_seq：空库为 0
     repo = OperationsRepository(connection)
-    assert repo.get_MaxSeq() == 0
+    assert repo.get_MaxSeq("13800000000") == 0
 
 
 def test_get_MaxSeq_returns_latest(connection):
@@ -135,4 +135,20 @@ def test_get_MaxSeq_returns_latest(connection):
     repo = OperationsRepository(connection)
     _insert_op(repo, "op-000000000001")
     _insert_op(repo, "op-000000000002")
-    assert repo.get_MaxSeq() == 2
+    assert repo.get_MaxSeq("13800000000") == 2
+
+
+def test_get_MaxSeq_respects_account_isolation(connection):
+    # bootstrap 的 snapshot_seq 必须锚定当前账户：其他账户的操作序号不计入
+    # （曾用全局 MAX(server_seq)，导致 A 账户 bootstrap 游标被 B 账户的操作推进）
+    repo = OperationsRepository(connection)
+    _insert_op(repo, "op-000000000001")
+    conn = repo.connection
+    conn.execute(
+        "INSERT INTO database_operations"
+        " (operation_id, request_hash, result_json, account_phone, device_id,"
+        "  actor_type, source_turn_id, operation_type, reverts_operation_id, created_at)"
+        " VALUES ('op-00000000000b', 'hash-b', '{}', '13900000000', NULL,"
+        "  'user', NULL, 'create_customer', NULL, '2026-08-14T00:00:00+00:00')"
+    )
+    assert repo.get_MaxSeq("13800000000") == 1

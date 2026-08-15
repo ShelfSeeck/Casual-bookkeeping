@@ -64,18 +64,43 @@ export class ApiClient {
         const retryHeaders = new Headers(init.headers)
         retryHeaders.set('Authorization', `Bearer ${newToken}`)
         const retry = await fetch(path, { ...init, headers: retryHeaders })
+        if (retry.status === 401) {
+          // 新 access 仍被拒（极端场景）：按会话失效处理，避免无限重试
+          const err = await this.toAppError(retry)
+          this.handleSessionInvalid()
+          throw err
+        }
         if (!retry.ok) throw await this.toAppError(retry)
         return retry
       }
       throw new Error('session_invalid')
+    }
+    if (resp.status === 403) {
+      // 设备被踢 / 账户停用：access 仍有效但会话已失效，不能当普通错误处理
+      const err = await this.toAppError(resp)
+      if (err.message === 'session_revoked' || err.message === 'account_disabled') {
+        this.handleSessionInvalid()
+      }
+      throw err
     }
     if (!resp.ok) throw await this.toAppError(resp)
     return resp
   }
 
   async logout(): Promise<void> {
-    await fetch('/auth/logout', { method: 'POST' })
+    try {
+      const resp = await fetch('/auth/logout', { method: 'POST' })
+      if (!resp.ok) throw await this.toAppError(resp)
+    } finally {
+      // 本地登出必须完成：即使服务端吊销失败，也不让旧 access 留在设备上
+      this.clearAccessToken()
+    }
+  }
+
+  /** 会话失效（被踢 / 停用 / refresh 过期）：清本地 access 并通知调用方。 */
+  handleSessionInvalid(): void {
     this.clearAccessToken()
+    this.callbacks.onSessionInvalid()
   }
 
   /** 主动刷新判活（应用启动时用）：失败抛错，由调用方决定是否视为会话失效。 */
@@ -100,8 +125,7 @@ export class ApiClient {
   private async doRefresh(): Promise<string | null> {
     const resp = await fetch('/auth/refresh', { method: 'POST' })
     if (resp.status === 401 || resp.status === 403) {
-      this.clearAccessToken()
-      this.callbacks.onSessionInvalid()
+      this.handleSessionInvalid()
       return null
     }
     if (!resp.ok) {

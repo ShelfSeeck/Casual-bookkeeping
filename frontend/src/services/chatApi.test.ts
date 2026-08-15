@@ -81,6 +81,7 @@ describe('ChatApi JSON 端点', () => {
         title: '7月对账',
         created_at: '2026-08-14T00:00:00Z',
         updated_at: '2026-08-14T00:00:00Z',
+        turn_count: 0,
       }),
     )
     chat = new ChatApi({ request: requestMock } as unknown as ApiClient)
@@ -97,6 +98,7 @@ describe('ChatApi JSON 端点', () => {
       title: '7月对账',
       createdAt: '2026-08-14T00:00:00Z',
       updatedAt: '2026-08-14T00:00:00Z',
+      turnCount: 0,
     })
   })
 
@@ -105,7 +107,7 @@ describe('ChatApi JSON 端点', () => {
     requestMock.mockResolvedValue(
       okResponse({
         sessions: [
-          { session_id: 's-2', title: '对账', created_at: '2026-08-13T00:00:00Z', updated_at: '2026-08-13T00:00:00Z' },
+          { session_id: 's-2', title: '对账', created_at: '2026-08-13T00:00:00Z', updated_at: '2026-08-13T00:00:00Z', turn_count: 3 },
         ],
       }),
     )
@@ -115,7 +117,7 @@ describe('ChatApi JSON 端点', () => {
 
     expect(requestMock).toHaveBeenCalledWith('/chat/sessions')
     expect(sessions).toEqual([
-      { sessionId: 's-2', title: '对账', createdAt: '2026-08-13T00:00:00Z', updatedAt: '2026-08-13T00:00:00Z' },
+      { sessionId: 's-2', title: '对账', createdAt: '2026-08-13T00:00:00Z', updatedAt: '2026-08-13T00:00:00Z', turnCount: 3 },
     ])
   })
 
@@ -282,5 +284,23 @@ describe('ChatApi.streamTurn SSE', () => {
     ).rejects.toThrow('session_busy')
     // 非 2xx 不重试
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('开始阶段 403（session_revoked）触发 onSessionInvalid，不 refresh', async () => {
+    localStorage.setItem('cb_access_token', ACCESS)
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ error_code: 'session_revoked', message: 'revoked' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      chat.streamTurn('s1', { message: '你好' }, vi.fn()),
+    ).rejects.toThrow('session_revoked')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(callbacks.onSessionInvalid).toHaveBeenCalled()
   })
 })

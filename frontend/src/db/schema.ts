@@ -31,8 +31,14 @@ export class CbDatabase extends Dexie {
       customerCodeMappings: customerCodeMappingsSchema,
       serviceCategories: serviceCategoriesSchema,
       operations: operationsSchema,
-      outbox: outboxSchema,
+      // v1 只有主键 + operationId 唯一；查询/排序索引在 v2 补上
+      outbox: '++queueId, &operationId',
       syncState: syncStateSchema,
+    })
+    // v2：outbox 增加多值索引 entitySyncIds（同记录未决查询）、
+    // status（同步器筛选）与 createdAt（按创建顺序发送）。Dexie 自动重建索引。
+    this.version(2).stores({
+      outbox: outboxSchema,
     })
   }
 }

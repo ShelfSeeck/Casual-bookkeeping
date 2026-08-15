@@ -62,9 +62,13 @@ export class AuthStore {
   }
 
   async logout(): Promise<void> {
-    await this.api.logout()
-    await clearActiveAccount()
-    this.state.value = { status: 'signed_out', accountPhone: null }
+    try {
+      await this.api.logout()
+    } finally {
+      // 本地登出必须完成：服务端吊销失败时也不保留本地身份与 access
+      await clearActiveAccount()
+      this.state.value = { status: 'signed_out', accountPhone: null }
+    }
   }
 
   /** 会话失效：仅置为未登录，保留本地数据（等重新登录恢复）。 */

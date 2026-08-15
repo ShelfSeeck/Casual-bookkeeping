@@ -110,9 +110,16 @@ class OperationsRepository(BaseRepository):
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_MaxSeq(self) -> int:
-        """bootstrap 的 snapshot_seq：当前最大 server_seq；空库为 0。"""
+    def get_MaxSeq(self, account_phone: str) -> int:
+        """bootstrap 的 snapshot_seq：当前账户最新 server_seq；空库为 0。
+
+        必须按账户过滤：server_seq 是全局自增序号，其他账户的操作会推高全局
+        MAX(server_seq)，若直接作为本账户快照锚点，会把前端 appliedServerSeq
+        推进到超过本账户实际进度的位置（docs/auth-structure.md §2.10 账户隔离）。
+        """
         row = self.connection.execute(
             "SELECT MAX(server_seq) AS m FROM database_operations"
+            " WHERE account_phone = ?",
+            (account_phone,),
         ).fetchone()
         return int(row["m"] or 0)

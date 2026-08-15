@@ -506,6 +506,12 @@ export async function updateCustomerCodeMapping(
 
 // ---------- 服务选项维护 ----------
 
+function toWireSubcategories(
+  subs: Subcategory[],
+): Array<{ name: string; default_unit: string; is_active: boolean }> {
+  return subs.map((s) => ({ name: s.name, default_unit: s.defaultUnit, is_active: s.isActive }))
+}
+
 export async function createServiceCategory(
   db: CbDatabase,
   fields: ServiceCategoryFields,
@@ -533,7 +539,7 @@ export async function createServiceCategory(
     baseSnapshot: {},
     patch: {
       category_name: fields.categoryName,
-      subcategories_json: JSON.stringify(fields.subcategories),
+      subcategories_json: JSON.stringify(toWireSubcategories(fields.subcategories)),
       is_active: true,
     },
   }
@@ -563,7 +569,7 @@ export async function updateServiceCategory(
 
   const wirePatch: Record<string, unknown> = {}
   if (patch.categoryName !== undefined) wirePatch.category_name = patch.categoryName
-  if (patch.subcategories !== undefined) wirePatch.subcategories_json = JSON.stringify(patch.subcategories)
+  if (patch.subcategories !== undefined) wirePatch.subcategories_json = JSON.stringify(toWireSubcategories(patch.subcategories))
   if (patch.isActive !== undefined) wirePatch.is_active = patch.isActive
 
   const change: MutationChange = {
@@ -737,12 +743,15 @@ function snakeToCamel(name: string): string {
   return name.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
 }
 
-/** 本地 camelCase patch/record → wire snake_case；subcategoriesJson 序列化为 JSON 字符串。 */
+/** 本地 camelCase patch/record → wire snake_case；subcategoriesJson 序列化为 JSON 字符串，
+ *  且元素字段一并转 snake_case（与 patch 生成共用 toWireSubcategories，避免 Base 与 Theirs 形状不一致）。 */
 function toWireRecord(record: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(record)) {
     if (key === 'subcategoriesJson' || key === 'subcategories') {
-      out['subcategories_json'] = JSON.stringify(value)
+      out['subcategories_json'] = JSON.stringify(
+        toWireSubcategories(value as Subcategory[]),
+      )
     } else {
       out[camelToSnake(key)] = value
     }
@@ -750,12 +759,20 @@ function toWireRecord(record: Record<string, unknown>): Record<string, unknown> 
   return out
 }
 
-/** wire patch（snake_case）→ 本地 camelCase patch；subcategories_json 反序列化为数组。 */
+/** wire patch（snake_case）→ 本地 camelCase patch；subcategories_json 反序列化为数组，
+ *  元素字段归一化回 camelCase（与 syncManager.normalizeServiceCategory 同规则）。 */
 function wirePatchToLocal(patch: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(patch)) {
     if (key === 'subcategories_json') {
-      out['subcategoriesJson'] = typeof value === 'string' ? JSON.parse(value) : value
+      const list = typeof value === 'string' ? JSON.parse(value) : value
+      out['subcategoriesJson'] = Array.isArray(list)
+        ? (list as Array<Record<string, unknown>>).map((s) => ({
+            name: s.name as string,
+            defaultUnit: (s.default_unit ?? s.defaultUnit ?? '') as string,
+            isActive: Boolean(s.is_active ?? s.isActive ?? true),
+          }))
+        : list
     } else {
       out[snakeToCamel(key)] = value
     }

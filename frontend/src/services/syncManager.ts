@@ -176,7 +176,9 @@ export class SyncManager {
         await this.db.customers.put(toCamelRecord(c as Record<string, unknown>) as never)
       }
       for (const c of data.serviceCategories) {
-        await this.db.serviceCategories.put(toCamelRecord(c as Record<string, unknown>) as never)
+        await this.db.serviceCategories.put(
+          normalizeServiceCategory(toCamelRecord(c as Record<string, unknown>)) as never,
+        )
       }
       for (const o of data.workOrders) {
         await this.db.workOrders.put(toCamelRecord(o as Record<string, unknown>) as never)
@@ -313,8 +315,8 @@ export class SyncManager {
     await this.recoverStuckSending()
 
     // 1. Push 全部 outbox（按 queueId 升序保序）
-    const outbox = await this.db.outbox.orderBy('queueId').toArray()
-    const pending = outbox.filter((e) => e.status === 'pending')
+    // status 索引只取 pending；queueId 排序复用主键顺序。
+    const pending = await this.db.outbox.where('status').equals('pending').sortBy('queueId')
     if (pending.length > 0) {
       // Push 前校验 operationType 可映射，未知类型直接抛错、不静默写错表
       const unknown = pending.find((e) => entityTypeFor(e.operationType) === null)
@@ -390,7 +392,7 @@ export class SyncManager {
   private async recoverStuckSending(): Promise<void> {
     await this.db.transaction('rw', this.db.outbox, async () => {
       const stuck = await this.db.outbox
-        .filter((e) => e.status === 'sending')
+        .where('status').equals('sending')
         .toArray()
       for (const e of stuck) {
         await this.db.outbox.update(e.queueId, {
@@ -567,7 +569,7 @@ export class SyncManager {
     } else if (entityType === 'customer') {
       await this.db.customers.put(record as never)
     } else if (entityType === 'service_category') {
-      await this.db.serviceCategories.put(record as never)
+      await this.db.serviceCategories.put(normalizeServiceCategory(record) as never)
     } else if (entityType === 'customer_code_mapping') {
       await this.db.customerCodeMappings.put(record as never)
     }
@@ -648,6 +650,28 @@ function toCamelRecord(row: Record<string, unknown>): Record<string, unknown> {
     out[snakeToCamel(key)] = value
   }
   return out
+}
+
+/** 服务选项本地表 subcategoriesJson 是数组；后端快照里是 JSON 字符串，
+ *  且元素字段是 snake_case（default_unit / is_active），写入前统一转 camelCase。 */
+function normalizeServiceCategory(record: Record<string, unknown>): Record<string, unknown> {
+  const value = record.subcategoriesJson
+  let list: Array<Record<string, unknown>> = []
+  if (typeof value === 'string') {
+    try {
+      list = JSON.parse(value)
+    } catch {
+      list = []
+    }
+  } else if (Array.isArray(value)) {
+    list = value as Array<Record<string, unknown>>
+  }
+  record.subcategoriesJson = list.map((s) => ({
+    name: s.name as string,
+    defaultUnit: (s.default_unit ?? s.defaultUnit ?? '') as string,
+    isActive: Boolean(s.is_active ?? s.isActive ?? true),
+  }))
+  return record
 }
 
 function snakeToCamel(name: string): string {

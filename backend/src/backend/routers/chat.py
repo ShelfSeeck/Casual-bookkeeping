@@ -81,6 +81,8 @@ def _session_public(record: dict[str, Any]) -> dict[str, Any]:
         "title": record["title"],
         "created_at": record["created_at"],
         "updated_at": record["updated_at"],
+        # list_Sessions 带回合数；get_Session / create_Session 无该字段时按 0 输出
+        "turn_count": record.get("turn_count", 0),
     }
 
 

@@ -11,6 +11,7 @@ export interface ChatSession {
   title: string
   createdAt: string
   updatedAt: string
+  turnCount: number
 }
 
 export interface ChatMessage {
@@ -60,6 +61,7 @@ interface RawSession {
   title: string
   created_at: string
   updated_at: string
+  turn_count: number
 }
 
 interface RawChatMessage {
@@ -178,6 +180,14 @@ export class ChatApi {
       retryHeaders.set('Authorization', `Bearer ${newToken}`)
       resp = await fetch(url, { ...init, headers: retryHeaders })
     }
+    if (resp.status === 403) {
+      // 设备被踢 / 账户停用：与 ApiClient.request 保持一致，触发会话失效
+      const err = await ChatApi.toAppError(resp)
+      if (err.message === 'session_revoked' || err.message === 'account_disabled') {
+        this.api.handleSessionInvalid()
+      }
+      throw err
+    }
 
     if (!resp.ok) {
       throw await ChatApi.toAppError(resp)
@@ -199,6 +209,7 @@ export class ChatApi {
       title: raw.title,
       createdAt: raw.created_at,
       updatedAt: raw.updated_at,
+      turnCount: raw.turn_count,
     }
   }
 

@@ -36,4 +36,4 @@ export interface OutboxEntry {
   createdAt: string
 }
 
-export const outboxSchema = '++queueId, &operationId'
+export const outboxSchema = '++queueId, &operationId, *entitySyncIds, status, createdAt'

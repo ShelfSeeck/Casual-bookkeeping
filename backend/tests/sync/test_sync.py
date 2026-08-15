@@ -264,6 +264,34 @@ def test_bootstrap_returns_active_records_and_snapshot_seq(client, seed_account)
     assert len(customer_records) == 1
 
 
+def test_bootstrap_snapshot_seq_anchors_to_account(client, seed_account):
+    # bootstrap 的 snapshot_seq 必须锚定当前账户：A 只 push 1 条时，
+    # 即使 B 后续 push 了 2 条，A 的 snapshot_seq 也只应是 A 自己的最新序号。
+    seed_account()
+    seed_account(phone="13900000000")
+    headers_a = _login(client, phone="13800000000")
+    headers_b = _login(client, phone="13900000000", device_id="dev-000000000000")
+
+    client.post(
+        "/sync/push",
+        headers=headers_a,
+        json={"operations": [_customer_op("op-000000000001", "sync-000000000001")]},
+    )
+    client.post(
+        "/sync/push",
+        headers=headers_b,
+        json={
+            "operations": [
+                _customer_op("op-000000000002", "sync-000000000002"),
+                _customer_op("op-000000000003", "sync-000000000003"),
+            ]
+        },
+    )
+
+    body = client.get("/sync/bootstrap", headers=headers_a).json()
+    assert body["snapshot_seq"] == 1
+
+
 def test_push_revert_op_carries_reverts_operation_id(client, seed_account):
     # 撤回操作：reverts_operation_id 随 Push 进库（database_operations.reverts_operation_id），
     # Pull 时带出（docs/data-model.md §6.5）。曾因 OperationIn schema 缺字段而恒为 NULL。
