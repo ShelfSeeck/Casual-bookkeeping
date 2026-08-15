@@ -145,7 +145,7 @@ CREATE TABLE service_categories (
 
 | 列名 | SQLite 类型 | 约束/含义 |
 | --- | --- | --- |
-| `customer_id` | INTEGER | 内部主键，自增，长期稳定 |
+| `customer_id` | INTEGER | 内部主键，自增，长期稳定；离线新建时允许客户端写入负整数权威值 |
 | `account_phone` | TEXT | 所属账户（手机号），账户间数据隔离 |
 | `canonical_name` | TEXT | 厂家的内部正式名称或稳定称呼 |
 | `created_at` | TEXT | 创建时间 |
@@ -162,6 +162,8 @@ CREATE TABLE customers (
     archived_at TEXT
 );
 ```
+
+> 离线新建客户：客户端按 `sync_id` 把 `customer_id` 派生为负整数（`-(int(sync_id 去掉 "sync-" 前缀的 12 位十六进制, 16))`），跨设备唯一，不占用后端自增序列；后端接受该负整数为权威值并原样写入（SQLite 允许显式插入负整数主键）。该负 `customer_id` 同步到其他设备后保持不变。
 
 ### 4.4 客户编号映射表 `customer_code_mappings`
 
@@ -217,7 +219,7 @@ CREATE TABLE customer_code_mappings (
 | `customer_code` | TEXT | 创建工单时的客户编号快照 |
 | `customer_name` | TEXT | 创建工单时的名称快照，可填写完整人名或缩写 |
 | `service_category` | TEXT | 创建工单时选中的服务大类文本 |
-| `service_item` | TEXT | 创建工单时选中的服务小类文本 |
+| `service_item` | TEXT | 创建工单时选中的服务小类文本；可空，空表示「空大类先建、小类后补」 |
 | `quantity` | INTEGER | 正整数数量 |
 | `unit` | TEXT | 单位文本，例如“件”“套” |
 | `unit_price_cents` | INTEGER | 可空；以分为单位的单价，`NULL` 表示尚未定价 |
@@ -237,7 +239,7 @@ CREATE TABLE work_orders (
     customer_name TEXT NOT NULL,
 
     service_category TEXT NOT NULL,
-    service_item TEXT NOT NULL,
+    service_item TEXT,  -- 可空：允许先建空大类、小类后补
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     unit TEXT NOT NULL CHECK (trim(unit) <> ''),
 
@@ -256,6 +258,7 @@ CREATE TABLE work_orders (
 4. 总价不单独入库，统计时计算 `quantity * unit_price_cents`。
 5. `is_completed` 仅作标记；无论是否完成，所有字段都允许修改。
 6. 内容完全相同的工单可以同时存在，以不同的 `work_order_id` 区分。
+7. `service_item` 可为 `NULL`（空大类先建、小类后补）；仅当非空时才参与大小类匹配校验。
 
 ### 4.6 录入与校验流程
 
@@ -264,7 +267,7 @@ CREATE TABLE work_orders (
 3. 选择客户后，将 `customer_id`、`customer_code` 和 `customer_name` 写入工单。
 4. 应用从启用的服务大类中加载小类 JSON。
 5. 选择小类后自动带入默认单位，使用者可以修改单位。
-6. 应用校验小类确实属于所选大类，然后将大类、小类和单位文本写入工单。
+6. 应用校验小类确实属于所选大类，然后将大类、小类和单位文本写入工单；不选小类时 `service_item` 写为 `NULL`（空大类先建、小类后补）。
 7. 数量必须是大于零的整数。
 8. 新工单单价保持为空，后期再统一处理。
 
@@ -396,7 +399,7 @@ CREATE TABLE work_orders (
 
 每轮同步先 Push、后 Pull：
 
-1. 提交本地待同步操作，让服务端立即检查版本。
+1. 提交本地待同步操作，让服务端立即检查版本；Push accepted 后，把响应中的 `row_versions` 回写到本地业务表对应记录的 `rowVersion`（同一 IndexedDB 事务）。
 2. 拉取 AI、其他设备以及自己的正式操作结果。
 3. 在同一个 IndexedDB 事务中更新业务表和 `applied_server_seq`，并写入本地操作镜像。
 
@@ -456,6 +459,8 @@ CREATE TABLE work_orders (
 
 事务全部成功后显示“已保存到本机”；后端接受后显示“已同步”。
 
+Push accepted 后，服务端返回的 `row_versions` 在同一 IndexedDB 事务中回写到本地业务表对应记录的 `rowVersion`（`docs/spec/business-p0p1.md` §5.7），避免下次编辑假冲突。
+
 ### 6.2 outbox 状态机
 
 ```text
@@ -476,6 +481,7 @@ pending → sending
 
 | 字段 | 作用 |
 | --- | --- |
+| `entity_type` | 可选；该 change 的实体类型。跨实体原子操作必须逐 change 标注；单实体操作可省略，由 `operation_type` 推导回退 |
 | `base_version` | 提交时让服务端判断是否基于旧版本 |
 | `base_snapshot` | 冲突时作为三方对比的 Base；服务端不信任它，只供前端合并 |
 | `patch` | 这次操作希望改变哪些业务字段 |
@@ -484,6 +490,7 @@ pending → sending
 
 ```json
 {
+  "entity_type": "work_order",
   "entity_sync_id": "order-001",
   "base_version": 4,
   "base_snapshot": {
@@ -506,10 +513,44 @@ AI 操作草案示例：
   "operation_type": "update_work_order",
   "changes": [
     {
+      "entity_type": "work_order",
       "entity_sync_id": "order-001",
       "base_version": 4,
       "patch": {
         "unit_price_cents": 1250
+      }
+    }
+  ]
+}
+```
+
+跨实体原子操作示例（新建客户一步建齐，change 顺序固定客户在前、映射在后）：
+
+```json
+{
+  "operation_id": "op-customer-101",
+  "actor_type": "user",
+  "operation_type": "create_customer_with_mapping",
+  "changes": [
+    {
+      "entity_type": "customer",
+      "entity_sync_id": "sync-9f3a2b1c4d5e",
+      "base_version": 0,
+      "patch": {
+        "customer_id": -123456789,
+        "canonical_name": "王老板"
+      }
+    },
+    {
+      "entity_type": "customer_code_mapping",
+      "entity_sync_id": "sync-b1c2d3e4f5a6",
+      "base_version": 0,
+      "patch": {
+        "customer_id": -123456789,
+        "customer_code": "001",
+        "customer_name": "王老板",
+        "valid_from": "2026-08-01",
+        "valid_to": null
       }
     }
   ]
