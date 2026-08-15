@@ -11,9 +11,7 @@ const openingSessionId = ref<string | null>(null)
 
 const quickPrompts = [
   '今日记账汇总',
-  '帮我记张老板3000件单洗',
   '今天一共洗了多少件？',
-  '李厂本周有哪些工单？',
 ]
 
 function isHistoryLocked() {

@@ -578,13 +578,14 @@ class AppState {
     const now = new Date()
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     this.chatMessages.push({ id: `m_${Date.now()}`, sender: 'user', content: text, timestamp: time })
-    const assistant: ChatMessage = {
-      id: `m_resp_${Date.now()}`,
+    // 经 reactive 数组内的 proxy 更新内容；直接改局部原始对象不触发视图更新（Vue3 响应式陷阱）
+    const assistantId = `m_resp_${Date.now()}`
+    this.chatMessages.push({
+      id: assistantId,
       sender: 'assistant',
       content: '',
       timestamp: time,
-    }
-    this.chatMessages.push(assistant)
+    })
     try {
       if (!this.chatSessionId) {
         const session = await api.createSession(text.slice(0, 20))
@@ -596,7 +597,7 @@ class AppState {
         { turn_id: newId('turn'), message: text },
         (e: ChatSseEvent) => {
           if (e.type === 'text_delta') {
-            assistant.content += e.content
+            this.appendToMessage(assistantId, e.content)
           } else if (e.type === 'tool_confirm_request') {
             this.pendingApproval.value = {
               requestId: e.request_id,
@@ -605,12 +606,15 @@ class AppState {
               summary: this.draftSummary(e.tool_name, e.draft),
             }
           } else if (e.type === 'done') {
-            if (assistant.content === '') assistant.content = e.error ? `出错：${e.error.error_code}` : '(无文本)'
+            const msg = this.chatMessages.find((m) => m.id === assistantId)
+            if (msg && msg.content === '') {
+              msg.content = e.error ? `出错：${e.error.error_code}` : '(无文本)'
+            }
           }
         },
       )
     } catch (e) {
-      assistant.content = `请求失败：${(e as Error).message}`
+      this.setMessageContent(assistantId, `请求失败：${(e as Error).message}`)
     } finally {
       this.chatBusy.value = false
     }
@@ -622,13 +626,13 @@ class AppState {
     const approval = this.pendingApproval.value
     if (!api || !approval || !this.chatSessionId) return
     this.chatBusy.value = true
-    const assistant: ChatMessage = {
-      id: `m_appr_${Date.now()}`,
+    const assistantId = `m_appr_${Date.now()}`
+    this.chatMessages.push({
+      id: assistantId,
       sender: 'assistant',
       content: '',
       timestamp: new Date().toTimeString().slice(0, 5),
-    }
-    this.chatMessages.push(assistant)
+    })
     try {
       if (approved) {
         // draft 来自 Vue ref（reactive proxy），写 IndexedDB 前先转成 plain object
@@ -641,14 +645,18 @@ class AppState {
         approval.requestId,
         approved,
         (e: ChatSseEvent) => {
-          if (e.type === 'text_delta') assistant.content += e.content
-          else if (e.type === 'done') {
-            if (assistant.content === '') assistant.content = e.error ? `出错：${e.error.error_code}` : approved ? '✅ 已确认写入' : '已拒绝'
+          if (e.type === 'text_delta') {
+            this.appendToMessage(assistantId, e.content)
+          } else if (e.type === 'done') {
+            const msg = this.chatMessages.find((m) => m.id === assistantId)
+            if (msg && msg.content === '') {
+              msg.content = e.error ? `出错：${e.error.error_code}` : approved ? '✅ 已确认写入' : '已拒绝'
+            }
           }
         },
       )
     } catch (e) {
-      assistant.content = `确认处理失败：${(e as Error).message}`
+      this.setMessageContent(assistantId, `确认处理失败：${(e as Error).message}`)
     } finally {
       this.pendingApproval.value = null
       this.chatBusy.value = false
@@ -664,6 +672,18 @@ class AppState {
     if (this.syncManager) {
       void this.syncManager.sync().then(() => this.reload())
     }
+  }
+
+  /** 追加消息内容：必须经 reactive 数组内的 proxy 修改，直接改局部原始对象不触发视图更新。 */
+  private appendToMessage(id: string, delta: string): void {
+    const msg = this.chatMessages.find((m) => m.id === id)
+    if (msg) msg.content += delta
+  }
+
+  /** 覆盖消息内容：同上，经 proxy 触发更新。 */
+  private setMessageContent(id: string, content: string): void {
+    const msg = this.chatMessages.find((m) => m.id === id)
+    if (msg) msg.content = content
   }
 
   private draftSummary(toolName: string, draft: unknown): string {
