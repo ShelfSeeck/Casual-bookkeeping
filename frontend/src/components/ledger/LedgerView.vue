@@ -112,7 +112,8 @@ function closeOrderDetail() {
 
 .cb-header-title {
   margin: 0;
-  font-size: 24px;
+  font-family: var(--cb-font-numeric);
+  font-size: 36px;
   font-weight: 800;
   color: var(--md-sys-color-on-surface);
   letter-spacing: -0.3px;
