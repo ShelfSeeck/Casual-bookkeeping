@@ -9,6 +9,9 @@
 export interface OutboxCommand {
   changes?: Array<{
     entitySyncId: string
+    /** 跨实体操作（如 create_customer_with_mapping）逐 change 标注实体类型；
+     *  单实体操作可省略，由 operationType 推导（docs/spec/business-p0p1.md §5.6）。 */
+    entityType?: string
     baseVersion: number
     baseSnapshot?: Record<string, unknown>
     patch?: Record<string, unknown>

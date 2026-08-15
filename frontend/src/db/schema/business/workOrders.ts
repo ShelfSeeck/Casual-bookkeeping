@@ -9,7 +9,7 @@ export interface WorkOrder {
   customerCode: string
   customerName: string
   serviceCategory: string
-  serviceItem: string
+  serviceItem: string | null
   quantity: number
   unit: string
   unitPriceCents: number | null

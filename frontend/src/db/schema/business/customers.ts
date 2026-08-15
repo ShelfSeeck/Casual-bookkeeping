@@ -4,6 +4,7 @@
 export interface Customer {
   syncId: string
   accountPhone: string
+  customerId: number
   canonicalName: string
   archivedAt: string | null
   rowVersion: number
