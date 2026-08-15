@@ -145,43 +145,26 @@
 
 ---
 
-## Task 5：前端 P0/P1 业务页面
+## Task 5：前端 P0/P1 业务页面 —— 已撤销（不做 UI）
 
-**范围**：新增页面与组件（文件结构照 `docs/spec/business-p0p1.md` §6.3），使用 Vant 4 现有依赖，不引入 vue-router。
-
-1. **全局样式 `style.css`**：黑白灰 design tokens（§6.3 视觉规范：`--color-bg-app:#F9FAFB`、`--color-surface:#FFFFFF`、`--color-border:#E5E7EB`、`--color-text-main:#111827`、`--color-text-sub:#4B5563`、`--color-text-muted:#9CA3AF`、`--color-accent:#2563EB`、状态色 success/warning/danger；`tabular-nums`；触控 ≥48px）。
-2. **`App.vue` 壳**：`store.state.status === 'signed_in'` → 渲染 `AppShell`；否则 `LoginView`。`AppShell`（新组件）持有 `activeTab` 状态与四个 view；登录成功后打开业务库、创建 `SyncManager`（`HttpSyncApi` + `createBusinessDb(phone)`）并 `init()`；提交后/前台恢复（`visibilitychange` visible）/网络恢复（`online`）触发 `sync()`；提供 `syncManager`、`db`、`apiClient` 给子页面（provide/inject 或 props，二选一并在文件头注释说明）。
-3. **组件**：
-   - `components/navigation/AppTabBar.vue`：四 tab，当前页高亮，显示冲突/待同步红点（用 `getSyncCounts` 响应式轮询或事件回调，实现为每 2s 轻量刷新 + 同步状态回调）。
-   - `components/common/StatusBadge.vue`：`saved`/`synced`/`conflict`/`rejected` 四种徽标与中文文案（已保存/已同步/冲突/被拒绝）。
-4. **`views/WorkOrderDesk.vue`**：日期默认今天；映射按日期加载（`findValid` 列表）；客户快捷行（最近录入的映射/工单去重后前 8 个）；大类选择 → 小类药丸（含停用小类不展示）→ 自动带单位（可改）；数量正整数；单价可空（分为单位输入，展示 `¥` 换算）；提交 → `createWorkOrder` → 清数量/单价、保留客户与大类上下文 → 今日流水（`query({dateFrom: 今天, dateTo: 今天})`）立即刷新，每张卡带 `StatusBadge`。
-5. **`views/LedgerView.vue`**：日期大胶囊（今天/昨天/本周/本月/自选区间，区间用 Vant Picker/Field 简化）；客户速选（最近 8 个）+ 品类/完成状态过滤；`summarize` 汇总条 `共 N 笔 · M 件 · 合计 ¥X.XX`，未定价显示 `N 笔未定价`；列表 `WorkOrderCard`（编号、客户、大类-小类、数量×单位、金额或“未定价”、日期、`StatusBadge`）；点击卡片只做只读详情弹层（编辑为二期，明确不实现）。
-6. **`views/SettingsView.vue` + 三个子管理组件**：
-   - `CustomerMappingMgr.vue`：客户列表（含归档标记）；「新建客户」一步建齐表单（正式名+编号+显示名+生效日，`buildCustomerWithMapping`）；加/改编号（即时重叠校验，错误用 `toErrorMessage`）；归档（确认后 `archiveCustomerWithMappings`）。
-   - `ServiceCategoryMgr.vue`：大类列表 + 小类编辑（增/改名/改默认单位/停用启用），`createServiceCategory`/`updateServiceCategory`；结构校验即时反馈。
-   - `SyncStatusPanel.vue`：`getSyncCounts` 计数、`syncState.lastSyncAt` 展示、手动同步按钮、冲突/被拒条目列表（只读，处理入口为二期）。
-   - 「账户与登出」组：显示当前手机号，登出按钮调 `authStore.logout()`。
-7. **反馈**：所有提交错误用 `showFailToast(toErrorMessage(err))`；成功用轻量 toast 或直接列表刷新。
-
-**验收**：`npm run build` 零错误；`npm run test` 现有测试全绿（本任务无新组件单测）；`App.vue` 从 LoginView 单向切换逻辑正确；浏览器手测路径（由最终评审用 `npm run dev` 冒烟）可录单、可查、可维护配置、状态徽标随同步变化。
+用户 2026-08-15 明确：前端页面不做，UI 只留接口。本任务已实施过一次并整体撤销（分支 reset 回 Task 4 基线 `e4ac845`，原提交 `ade4720`/`04223f7`/`173921c` 不再存在于分支历史）。后续任何页面实施都需用户重新确认，不得凭本节或 `docs/spec/business-p0p1.md` §6.3 的存档内容自行启动。
 
 ---
 
-## Task 6：前端 AI 对话页 + chatApi + 确认接口桩
+## Task 6：前端 chat 接口层（仅接口，不做页面）
 
-**范围**：
+**范围**：只做接口代码与单测，**禁止新增或修改任何 `.vue` 组件**（`App.vue`、`LoginView` 等一律不动）。
 
-1. **`services/chatApi.ts`**（§8）：`ChatApi(apiClient)`；`createSession/listSessions/listTurns`；`streamTurn(sid, payload, onEvent, signal?)` 用 `fetch + ReadableStream` 解析 SSE（`data: ` 帧按 `\n\n` 分割；非 2xx 先 `toAppError` 语义抛 `AppErrorLike`；start 时 401 → `refreshNow()` 重试一次）；`approveTurn`。
+1. **`services/chatApi.ts`**（§8）：`ChatApi(apiClient)`；`createSession/listSessions/listTurns`；`streamTurn(sid, payload, onEvent, signal?)` 用 `fetch + ReadableStream` 解析 SSE（`data: ` 帧按 `\n\n` 分割；非 2xx 抛带 error_code 的 Error；start 时 401 → `refreshNow()` 重试一次）；`approveTurn`。
 2. **`services/chatApproval.ts`**（§8）：`ChatApprovalUi` 接口、`notConnectedApprovalUi`（`requestApproval` 返回 `Promise.resolve(false)` 且调用方据此**不提交草案**、不发 approve）、`buildAiOperationFromDraft(turnId, draft)`：校验 draft 形状（`operation_type ∈ {create_work_order, update_work_order}`、changes 数组单条、entity_type=work_order、fields 存在），补齐 `operationId = newId('op')`、`actorType='ai'`、`sourceTurnId=turnId`；`entity_sync_id` 为 null 时生成 `sync-<12hex>` 并 `baseVersion=0`；update 必须携带数字 `base_version`；返回 `MutationInput`，形状与 `services/businessCommands.ts` 的 commit 输入一致；不合法返回 null。
-3. **`views/AiChatView.vue`**：会话列表（左/侧或顶部分区，Vant Cell/Field 创建会话）；消息流（user/assistant 气泡，assistant 渲染纯文本 + 换行，markdown 渲染本期不做）；输入框 + 快捷指令胶囊（`今日记账汇总`、`本月未定价有几单`、`查某客户本周工单`）；发送 → `ChatApi.streamTurn`：`text_delta` 增量追加到当前气泡；`tool_confirm_request` → 消息流占位文本（“AI 想执行 `tool_name`，参数：…；确认 UI 未接入”）并调 `ui.requestApproval(draft)`（默认 `notConnectedApprovalUi`，返回 false 则忽略，不提交不 approve——页面通过 prop 注入 `ChatApprovalUi`，默认 notConnected）；`done.error` 展示错误；`done` 后刷新回合列表。
-4. **AppShell 接线**：构造 `ChatApi(apiClient)` 并注入 `AiChatView`；`ChatApprovalUi` 通过 `AppShell` prop 提供（默认 `notConnectedApprovalUi`），保证“UI 留接口不做”落地。
+3. **不做**：`AiChatView.vue`、AppShell 接线、消息流渲染——全部留给后续页面任务（需用户确认后才启动）。
 
 **测试**：
 - `chatApi.test.ts`：mock global fetch 断言 JSON 端点路径/方法与 SSE 帧解析（多个 `data:` 帧、跨 chunk 拆分）；401 → refresh 重试一次。
 - `chatApproval.test.ts`：`buildAiOperationFromDraft` 对 create/update/缺字段/错误 operation_type 的四种行为；`notConnectedApprovalUi.requestApproval` 恒 false。
-- 现有 77+ 前端测试全绿。
+- 现有前端测试全绿。
 
-**验收**：`npm run test && npm run build` 全绿；SSE 事件类型与 `docs/spec/agent-tools.md` §5.6 一致。
+**验收**：`npm run test && npm run build` 全绿；无任何 `.vue` 文件被新增或修改；SSE 事件类型与 `docs/spec/agent-tools.md` §5.6 一致。
 
 ---
 
@@ -197,7 +180,7 @@
 2. `docs/api.md`：chat `POST /chat/sessions/{sid}/turns` 补充 approve 模式请求体与错误（`invalid_approval` 400、`approval_not_found` 404、`tool_approval_required` 409）；`docs/error-codes.md` 已由 Task 1 更新，复查一致性。
 3. `docs/spec/chat-agent.md`：§1/§2/§9/§10/§11 更新为「工具与确认握手已实现」的事实状态（保留原 MVP 历史描述要点，不整篇重写）；把「读工具/写工具为后续」改为指向 `docs/spec/agent-tools.md`；§6.2 补一句“运行时来源字段由前端确认时补齐”与实现现状。
 4. `AGENTS.md`：
-   - 「未定事项」删除/改写：`approve 模式 / 工具确认握手未实现（工具注册表为空）` → 改为已实现状态并保留已知近似（如 session_busy 流后抛出的近似是否仍成立，按 T3 实现实际情况改写）；「前端业务页面与交互界面未定」 → 更新为已按 `docs/spec/business-p0p1.md` 落地、确认 UI 仍留接口。
+   - 「未定事项」删除/改写：`approve 模式 / 工具确认握手未实现（工具注册表为空）` → 改为已实现状态并保留已知近似（如 session_busy 流后抛出的近似是否仍成立，按 T3 实现实际情况改写）；「前端业务页面与交互界面未定」保持未定，并注明本期 UI 一律未实施（Task 5 已撤销）、前端仅有数据层与 chat 接口。
    - 「当前协作状态」末尾补一条：一期业务功能 + Agent 工具已实现（日期、测试数、主要文件）。
    - 不改动任何 Obsidian 相关描述的外部路径句法；不要新增 Obsidian 提及。
 5. **全量验证**：后端 `pytest -m "not live"`、前端 `npm run test && npm run build`；如 Task 1 改了 SQL schema，`backend/data/` 下旧开发库若存在且测试未受影响则忽略（不入库）；检查 `git status` 无意外产物（`__pycache__`、`dist/` 等）后提交文档与必要清理。

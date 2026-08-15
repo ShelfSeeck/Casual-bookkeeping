@@ -10,15 +10,16 @@
 数据模型与同步管线已经就绪，但还缺两层东西：
 
 1. **业务语义缺口**：若干已定的业务规则没有落到校验代码里（小类可空、编号有效期重叠、小类结构校验、update 路径的跨表校验）。
-2. **产品闭环缺口**：前端没有业务页面，也没有面向页面的 Repository 查询、业务命令和同步状态展示；Agent 工具注册表为空。
+2. **接口层缺口**：前端没有面向后续页面的 Repository 查询、业务命令和同步状态推导；Agent 工具注册表为空。
 
-本设计补齐这两层，使移动端 PWA 能离线完成：维护服务选项与客户编号 → 录入工单 → 查询对账 → 看到每张单的同步状态；同时把只读查询与受控写草案接入 AI 助手（见 `docs/spec/agent-tools.md`）。
+本设计补齐业务校验与前端接口层，使后续页面/调用方可以离线完成：维护服务选项与客户编号 → 录入工单 → 查询对账 → 看到每张单的同步状态；同时把只读查询与受控写草案接入 AI 助手（见 `docs/spec/agent-tools.md`）。**按用户最新要求：本期前端只做接口，不实施任何页面 UI。**
 
 ### 1.2 明确不做（本期边界）
 
 - 工单编辑、软删、完成标记切换、批量定价（二期）。
 - 历史记录与撤回 UI、冲突三方对比 UI（二期）。
-- 前端 AI 工具确认的可视化界面（本期只留接口，见 `docs/spec/agent-tools.md` §8）。
+- **全部前端页面 UI**：工单台 / 查账本 / 档案与设置 / AI 对话页等界面本期一律不做，只保留前端数据层与接口（用户 2026-08-15 明确要求）；页面交互方案仍为未定事项，见 `AGENTS.md`。
+- 前端 AI 工具确认的可视化界面（同上：只留接口，见 `docs/spec/agent-tools.md` §8）。
 - 定时后台同步（MVP 同步触发时机已定：提交后 / 前台恢复 / 网络恢复 / 手动）。
 - 附件、图片、语音等大文件。
 
@@ -29,7 +30,7 @@
 3. 文本快照不变：改配置不改历史工单。
 4. 一个动作一条操作；跨表动作（新建客户+首条编号、归档客户+收尾编号）是**一条操作、多个 change**，后端事务保证原子。
 5. 离线新建的客户 `customer_id` 必须跨设备全局唯一（见 §5.5）。
-6. 页面只通过 Repository / 业务命令读写 Dexie，不直接碰 `db` 对象。
+6. 前端调用方只通过 Repository / 业务命令读写 Dexie，不直接碰 `db` 对象。
 
 ## 3. 现状盘点（基线）
 
@@ -317,9 +318,11 @@ export async function getSyncCounts(db): Promise<{ pending: number; conflict: nu
 | `services/syncManager.ts` | `toPushOperation` 逐 change entityType；accepted 回写 rowVersion |
 | `services/errorMessages.ts`（新） | `error_code → 中文文案` 映射（`docs/error-codes.md` §5） |
 
-### 6.3 页面（P0/P1）
+### 6.3 页面（P0/P1）——本期不实施，仅存档
 
-按状态切换的 4-Tab 壳（不引入 vue-router；登录态由 `AuthStore.state` 驱动）：
+> 按用户最新要求（2026-08-15），本期不实施任何前端页面 UI；页面交互方案仍为未定事项（见 `AGENTS.md`）。下面内容仅存档推导结果，后续实施前需重新确认。
+
+曾推导的页面形态（存档）：
 
 ```text
 App.vue
@@ -404,11 +407,11 @@ sequenceDiagram
 
 - 后端：工单 `service_item` null/非法、小类结构、映射重叠（create 与 update 合并路径）、update 跨表校验、`invalid_service_item` 错误码。
 - 前端：Repository `query`/`summarize` 的排序、过滤、软删排除与金额计算；businessCommands 的即时校验与多实体 change 形状；`toPushOperation` 逐 change entityType；accepted 回写 rowVersion；`syncStatus` 推导。
-- 页面组件：本期不做组件单测，以 `vue-tsc -b` + `vite build` + 手工冒烟为准（沿用现有前端测试分层约定）。
+- 页面组件：本期不实施页面，故无组件测试；接口层以 `vue-tsc -b` + `vite build` + 服务单测为准。
 
 ## 10. 验收标准
 
 1. `backend`: `pytest -m "not live"` 全绿；新测试覆盖 §9 后端条目。
 2. `frontend`: `npm run test` 全绿；`npm run build`（`vue-tsc -b`）零错误。
-3. 手动冒烟：登录 → 建档客户+编号 → 维护服务选项 → 录一张工单（小类可空、单价可空）→ 查账本过滤与汇总正确 → 状态从「已保存」变「已同步」→ AI 助手能查账、写草案事件出现且不落库。
+3. 手动冒烟（后端+接口层，不涉及页面 UI）：登录 → 用接口层命令建档客户+编号 → 维护服务选项 → 录一张工单（小类可空、单价可空）→ Repository 查询/汇总正确 → 状态从「已保存」变「已同步」→ Agent 读工具能查账、写草案事件出现且不落库。
 4. 文档同步：`docs/data-model.md`（service_item 可空、负 customer_id、outbox entityType）、`docs/error-codes.md`（invalid_service_item）、`AGENTS.md`（未定事项与当前状态）。
