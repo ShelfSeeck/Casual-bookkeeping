@@ -44,7 +44,7 @@ export default defineConfig(({ mode }) => {
             {
               // 业务数据走本地优先（IndexedDB），API 响应一律不缓存，
               // 避免 service worker 返回过期数据覆盖本地已确认状态。
-              urlPattern: /^\/(auth|sync|chat)(\/|$)/,
+              urlPattern: ({ url }) => /^\/(auth|sync|chat)(\/|$)/.test(url.pathname),
               handler: 'NetworkOnly',
             },
           ],

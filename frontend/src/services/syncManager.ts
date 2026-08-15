@@ -112,6 +112,8 @@ interface ConflictJson {
 export interface SyncManagerOptions {
   /** 单次 Push 的最大条数（后端批量上限 500，见 docs/sync-protocol.md §5）；测试可调小。 */
   pushBatchSize?: number
+  /** 当前账户是否仍是同步启动时的账户；false 表示已登出/切换账户，应中止本轮同步。 */
+  isCurrentAccount?: () => boolean
 }
 
 export class SyncManager {
@@ -119,6 +121,7 @@ export class SyncManager {
   private api: SyncApi
   private callbacks: SyncStatusCallbacks
   private pushBatchSize: number
+  private isCurrentAccount?: () => boolean
   private running = false
 
   constructor(
@@ -131,10 +134,12 @@ export class SyncManager {
     this.api = api
     this.callbacks = callbacks
     this.pushBatchSize = options.pushBatchSize ?? PUSH_BATCH_SIZE
+    this.isCurrentAccount = options.isCurrentAccount
   }
 
   /** 同步循环（单飞）：并发调用只跑一轮，其余共享。 */
   async sync(): Promise<void> {
+    if (this.isCurrentAccount && !this.isCurrentAccount()) return
     if (this.running) return
     this.running = true
     this.callbacks.onStatusChange({ state: 'syncing' })
@@ -310,7 +315,19 @@ export class SyncManager {
 
   // ---------- 私有 ----------
 
+  private isAccountCurrent(): boolean {
+    return this.isCurrentAccount ? this.isCurrentAccount() : true
+  }
+
+  /** 账户已切换/登出时中止本轮同步（会话级中止，不属于网络错误，不退避）。 */
+  private assertCurrentAccount(): void {
+    if (!this.isAccountCurrent()) {
+      throw new Error('account_changed')
+    }
+  }
+
   private async runOnce(): Promise<void> {
+    this.assertCurrentAccount()
     // 启动恢复：应用重启后，超时停留在 sending 的恢复为 pending（沿用原 operation_id 重试）
     await this.recoverStuckSending()
 
@@ -323,18 +340,23 @@ export class SyncManager {
       if (unknown) {
         throw new Error(`unknown_operation_type:${unknown.operationType}`)
       }
+      this.assertCurrentAccount()
       await this.markSending(pending)
       try {
         // 分批推送（后端批量上限 500 / 请求体 1MB，超出客户端拆批）
         for (let i = 0; i < pending.length; i += this.pushBatchSize) {
+          this.assertCurrentAccount()
           const chunk = pending.slice(i, i + this.pushBatchSize)
           const operations = chunk.map((e) => this.toPushOperation(e))
           const { results } = await this.api.push(operations)
           await this.applyPushResults(chunk, results)
         }
       } catch (e) {
-        // 网络错误：退回 pending + attempts++ + nextRetryAt（退避），不卡死循环
-        await this.revertOnNetworkError(pending, e)
+        // 网络错误：退回 pending + attempts++ + nextRetryAt（退避），不卡死循环；
+        // 账户已切换/登出是会话级中止，不执行退避/恢复 sending。
+        if (this.isAccountCurrent()) {
+          await this.revertOnNetworkError(pending, e)
+        }
         throw e
       }
     }
@@ -512,6 +534,7 @@ export class SyncManager {
 
     let hasMore = true
     while (hasMore) {
+      this.assertCurrentAccount()
       const page = await this.api.pull(after, 200)
       await this.applyPullPage(page)
       after = this.lastSeq(page.operations)

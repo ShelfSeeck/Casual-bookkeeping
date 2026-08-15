@@ -39,9 +39,12 @@ async function onAccountReady(phone: string) {
   // 不能让旧 syncManager 在新会话凭证下访问旧库。
   clearSyncTriggers()
   const db = createBusinessDb(phone)
-  const syncManager = new SyncManager(db, new HttpSyncApi(api), {
-    onStatusChange: () => {},
-  })
+  const syncManager = new SyncManager(
+    db,
+    new HttpSyncApi(api),
+    { onStatusChange: () => {} },
+    { isCurrentAccount: () => store.value?.state.accountPhone === phone },
+  )
   await appState.init(db, syncManager)
   // 启动 bootstrap/恢复同步：失败不阻塞本地页面（离线/首登无网时静默等待后续触发器）
   try {

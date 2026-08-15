@@ -291,6 +291,17 @@ describe('SyncManager', () => {
     expect(pushCount).toBe(1)
   })
 
+  it('isCurrentAccount 为 false 时 sync() 直接返回，不调用 API', async () => {
+    const api = makeApi()
+    await expect(
+      buildManager(api, { isCurrentAccount: () => false }).sync(),
+    ).resolves.toBeUndefined()
+
+    expect(api.push).not.toHaveBeenCalled()
+    expect(api.pull).not.toHaveBeenCalled()
+    expect(api.bootstrap).not.toHaveBeenCalled()
+  })
+
   it('init 时 outbox 有未决条目不 bootstrap（data-model §5.4 防覆盖）', async () => {
     // 本地有 pending 未推（如离线录入），即使无 syncState 也不 bootstrap 清空业务表
     await commitOrder('sync-a')
