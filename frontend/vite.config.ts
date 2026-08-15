@@ -39,12 +39,12 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,txt}'],
-          navigateFallbackDenylist: [/^\/api\//],
+          navigateFallbackDenylist: [/^\/(auth|sync|chat)(\/|$)/],
           runtimeCaching: [
             {
               // 业务数据走本地优先（IndexedDB），API 响应一律不缓存，
               // 避免 service worker 返回过期数据覆盖本地已确认状态。
-              urlPattern: /\/api\//,
+              urlPattern: /^\/(auth|sync|chat)(\/|$)/,
               handler: 'NetworkOnly',
             },
           ],
