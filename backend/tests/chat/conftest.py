@@ -3,6 +3,9 @@
 与 tests/sync/conftest.py 同套模式：dependency_overrides 替换 DB / TokenService /
 RateLimiter / AuthService，并额外 override get_ChatService 注入 TestModel agent_factory，
 业务逻辑（SSE 流、落库、摊平）由真实实现执行，不走真实模型。
+
+ChatService 的 _LOCKS / _PENDING 是进程级共享状态，autouse fixture 在每个测试
+前后调用 reset_SharedState()，避免 approve 测试的 pending 污染其他测试。
 """
 
 from datetime import datetime, timezone
@@ -32,7 +35,7 @@ from backend.main import app
 from backend.repositories.account_devices import AccountDevicesRepository
 from backend.repositories.accounts import AccountsRepository
 from backend.services.auth import AuthService
-from backend.services.chat import ChatService
+from backend.services.chat import ChatService, reset_SharedState
 from backend.services.password import PasswordService
 from backend.services.rate_limiter import RateLimiter
 from backend.services.token import TokenService
@@ -51,6 +54,14 @@ class Clock:
         return datetime.fromtimestamp(self.ts, tz=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _reset_chat_shared_state():
+    # 进程级共享状态：每个端点测试前后清空，避免串测试（见文件头说明）。
+    reset_SharedState()
+    yield
+    reset_SharedState()
+
+
 @pytest.fixture
 def clock():
     return Clock()
@@ -64,7 +75,23 @@ def test_database(tmp_path):
 
 
 @pytest.fixture
-def client(test_database, clock):
+def chat_agent_factory():
+    """可替换的 ChatService agent_factory 持有器。
+
+    默认返回 TestModel agent（文本直出）；approve 模式测试可把 .factory 换成
+    能模拟写草案暂停 / approve 续跑的 FakeAgent。
+    """
+
+    class Holder:
+        def factory(self, allowed_tools: list[str] | None = None) -> Agent:
+            # deps_type=object：ChatService 会传 BusinessToolDeps，测试 agent 兼容任意值
+            return Agent(TestModel(), name="test", deps_type=object)
+
+    return Holder()
+
+
+@pytest.fixture
+def client(test_database, clock, chat_agent_factory):
     tokens = TokenService(SECRET, ACCESS_TTL, REFRESH_TTL, now_factory=clock)
     limiter = RateLimiter(5, 900, now_factory=clock)
 
@@ -92,11 +119,11 @@ def client(test_database, clock):
         sessions=Depends(get_ChatSessionsRepository),
         turns=Depends(get_ChatTurnsRepository),
     ):
-        # TestModel 固定输出 "success (no tool calls)"，避免打真接口
-        def agent_factory() -> Agent:
-            return Agent(TestModel(), name="test")
-
-        return ChatService(sessions, turns, agent_factory=agent_factory)
+        # 默认 TestModel 固定输出 "success (no tool calls)"，避免打真接口；
+        # 测试可通过 chat_agent_factory.factory 换成 FakeAgent。
+        return ChatService(
+            sessions, turns, agent_factory=chat_agent_factory.factory
+        )
 
     app.dependency_overrides[get_Database] = _override_database
     app.dependency_overrides[get_TokenService] = _override_tokens
