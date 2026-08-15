@@ -8,7 +8,7 @@ import { getOrCreateDeviceId } from '../../db/device'
 import { applyTheme, getThemePreference, type ThemePreference } from '../../utils/theme'
 import type { ServiceCategoryUi } from '../../types/ui'
 
-type SubPageKey = 'main' | 'customers' | 'customer_new' | 'categories' | 'category_new' | 'sync'
+type SubPageKey = 'main' | 'appearance' | 'customers' | 'customer_new' | 'categories' | 'category_new' | 'sync'
 
 const currentSubPage = ref<SubPageKey>('main')
 
@@ -19,6 +19,10 @@ const themeOptions: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: '浅色' },
   { value: 'dark', label: '深色' },
 ]
+
+const themeOptionLabel = computed(
+  () => themeOptions.find((option) => option.value === themePreference.value)?.label ?? '跟随系统',
+)
 
 function setTheme(preference: ThemePreference) {
   themePreference.value = preference
@@ -228,49 +232,48 @@ onMounted(async () => {
         <!-- 组 0：外观 -->
         <section class="md3-list-group" aria-label="外观">
           <div class="md3-list-group-header">外观</div>
-          <div class="md3-card md3-card--outlined md3-list-container">
-            <div class="md3-list-item">
-              <div class="md3-list-item-leading md3-avatar--info" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="4"></circle>
-                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+          <div class="md3-list-container">
+            <button
+              type="button"
+              class="md3-list-item cb-pressable"
+              aria-label="进入外观设置"
+              @click="currentSubPage = 'appearance'"
+            >
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="13.5" cy="6.5" r="2.5"></circle>
+                  <circle cx="17.5" cy="10.5" r="1.5"></circle>
+                  <circle cx="8.5" cy="7.5" r="1.5"></circle>
+                  <circle cx="6.5" cy="12.5" r="2.5"></circle>
+                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.8-.1 2.6-.4.5-.2.9-.5 1.3-.9l.9-1.4c.7-1.1.7-2.5 0-3.6l-.4-.6c-.4-.6-1-1-1.7-1.3-2.2-.9-4.9.1-6.2 2-.9 1.3-1.2 3-.7 4.5.2.7.6 1.2 1.1 1.7-1.3.4-2.7-.1-3.5-1.3C3.7 14.6 2 10.3 4.2 6.7 6.3 3.4 10.5 2 12 2z"></path>
                 </svg>
               </div>
               <div class="md3-list-item-content">
-                <span class="md3-list-item-headline">深浅模式</span>
-                <span class="md3-list-item-supporting">默认跟随系统，也可固定浅色或深色</span>
+                <span class="md3-list-item-headline">外观设置</span>
+                <span class="md3-list-item-supporting">深浅模式与跟随系统</span>
               </div>
-            </div>
-            <div class="md3-theme-segmented-row">
-              <div class="md3-segmented-set" role="group" aria-label="选择深浅模式">
-                <button
-                  v-for="option in themeOptions"
-                  :key="option.value"
-                  type="button"
-                  class="md3-segment cb-pressable"
-                  :class="{ 'md3-segment--selected': themePreference === option.value }"
-                  :aria-pressed="themePreference === option.value"
-                  @click="setTheme(option.value)"
-                >
-                  {{ option.label }}
-                </button>
+              <div class="md3-list-item-trailing">
+                <span class="md3-list-item-meta">{{ themeOptionLabel }}</span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
               </div>
-            </div>
+            </button>
           </div>
         </section>
 
         <!-- 组 1：基础档案 -->
         <section class="md3-list-group" aria-label="基础档案">
           <div class="md3-list-group-header">基础档案</div>
-          <div class="md3-card md3-card--outlined md3-list-container">
+          <div class="md3-list-container">
             <button
               type="button"
               class="md3-list-item cb-pressable"
               aria-label="进入客户与编号管理"
               @click="currentSubPage = 'customers'"
             >
-              <div class="md3-list-item-leading md3-avatar--blue" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
                   <circle cx="9" cy="7" r="4"></circle>
                   <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
@@ -297,8 +300,8 @@ onMounted(async () => {
               aria-label="进入服务品类配置"
               @click="currentSubPage = 'categories'"
             >
-              <div class="md3-list-item-leading md3-avatar--purple" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
                   <line x1="7" y1="7" x2="7.01" y2="7"></line>
                 </svg>
@@ -320,15 +323,15 @@ onMounted(async () => {
         <!-- 组 2：数据同步 -->
         <section class="md3-list-group" aria-label="数据同步">
           <div class="md3-list-group-header">数据同步</div>
-          <div class="md3-card md3-card--outlined md3-list-container">
+          <div class="md3-list-container">
             <button
               type="button"
               class="md3-list-item cb-pressable"
               aria-label="进入数据同步页面"
               @click="currentSubPage = 'sync'"
             >
-              <div class="md3-list-item-leading md3-avatar--green" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="23 4 23 10 17 10"></polyline>
                   <polyline points="1 20 1 14 7 14"></polyline>
                   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -351,10 +354,10 @@ onMounted(async () => {
         <!-- 组 3：账号与设备 -->
         <section class="md3-list-group" aria-label="账号与设备">
           <div class="md3-list-group-header">账号与设备</div>
-          <div class="md3-card md3-card--outlined md3-list-container">
+          <div class="md3-list-container">
             <div class="md3-list-item">
-              <div class="md3-list-item-leading md3-avatar--gray" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                   <circle cx="12" cy="7" r="4"></circle>
                 </svg>
@@ -370,8 +373,8 @@ onMounted(async () => {
             <div class="md3-list-divider" aria-hidden="true"></div>
 
             <div class="md3-list-item">
-              <div class="md3-list-item-leading md3-avatar--gray" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
                   <line x1="12" y1="18" x2="12.01" y2="18"></line>
                 </svg>
@@ -382,6 +385,48 @@ onMounted(async () => {
               <div class="md3-list-item-trailing">
                 <span class="md3-mono-text">{{ deviceId || '—' }}</span>
               </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ====================================================================
+         页面 1.5：外观设置（深浅模式）
+         ==================================================================== -->
+    <div v-else-if="currentSubPage === 'appearance'" class="cb-page-container">
+      <header class="md3-top-app-bar">
+        <button
+          type="button"
+          class="md3-icon-button cb-pressable"
+          aria-label="返回设置页"
+          @click="currentSubPage = 'main'"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+        <h1 class="md3-top-app-bar-title">外观设置</h1>
+        <div style="width: 48px;"></div>
+      </header>
+
+      <main class="cb-subpage-body">
+        <section class="md3-list-group" aria-label="深浅模式">
+          <div class="md3-list-group-header">深浅模式</div>
+          <div class="md3-theme-option-card">
+            <p class="md3-theme-option-desc">默认跟随系统自动切换，也可以固定为浅色或深色。</p>
+            <div class="md3-segmented-set" role="group" aria-label="选择深浅模式">
+              <button
+                v-for="option in themeOptions"
+                :key="option.value"
+                type="button"
+                class="md3-segment cb-pressable"
+                :class="{ 'md3-segment--selected': themePreference === option.value }"
+                :aria-pressed="themePreference === option.value"
+                @click="setTheme(option.value)"
+              >
+                {{ option.label }}
+              </button>
             </div>
           </div>
         </section>
@@ -833,7 +878,7 @@ onMounted(async () => {
           </p>
         </div>
 
-        <div class="md3-card md3-card--outlined md3-list-container">
+        <div class="md3-list-container">
           <div class="md3-list-item">
             <div class="md3-list-item-content">
               <span class="md3-list-item-headline">待上传记录</span>
@@ -886,7 +931,7 @@ onMounted(async () => {
 .cb-settings-view {
   min-height: 100vh;
   padding-bottom: calc(var(--cb-tabbar-height) + 24px);
-  background: var(--md-sys-color-surface-dim);
+  background: var(--md-sys-color-surface);
 }
 
 .cb-page-container {
@@ -1000,32 +1045,15 @@ onMounted(async () => {
   background: var(--md-sys-color-surface-container-low);
 }
 
+/* MD3 设置列表 leading：普通 24dp 图标，不用色块容器 */
 .md3-list-item-leading {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--md-sys-shape-corner-medium);
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  margin-right: 14px;
-}
-
-.md3-avatar--blue,
-.md3-avatar--info {
-  background: var(--cb-status-info-bg);
-  color: var(--cb-status-info-text);
-}
-.md3-avatar--purple {
-  background: var(--cb-status-purple-bg);
-  color: var(--cb-status-purple-text);
-}
-.md3-avatar--green {
-  background: var(--cb-status-success-bg);
-  color: var(--cb-status-success-text);
-}
-.md3-avatar--gray {
-  background: var(--md-sys-color-surface-container-high);
+  margin-right: 16px;
   color: var(--md-sys-color-on-surface-variant);
 }
 
@@ -1065,12 +1093,19 @@ onMounted(async () => {
 .md3-list-divider {
   height: 1px;
   background: var(--md-sys-color-outline-variant);
-  margin-left: 70px;
+  margin-left: 56px;
 }
 
 /* MD3 Segmented Button：外观三态选择 */
-.md3-theme-segmented-row {
-  padding: 0 16px 16px;
+.md3-theme-option-card {
+  padding: 4px 16px;
+}
+
+.md3-theme-option-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--md-sys-color-on-surface-variant);
 }
 
 .md3-segmented-set {
