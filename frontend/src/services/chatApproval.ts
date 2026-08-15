@@ -2,13 +2,13 @@ import { applyWorkOrderPatch } from './businessCommands'
 import type { MutationChange, MutationInput } from './mutation'
 import { newId } from '../utils/id'
 
-// chatApproval：确认 UI 的接口契约 + 草案转 MutationInput（docs/spec/agent-tools.md §8）。
-// 约定：没有确认 UI 就没有任何写操作。本期 ChatApprovalUi 使用 notConnectedApprovalUi
-// （requestApproval 恒 false），调用方据此不提交草案、不发 approve。
-// buildAiOperationFromDraft 把后端 tool_confirm_request.draft（工具原始参数，§5.6）
+// chatApproval：草案转 MutationInput（docs/spec/agent-tools.md §8）。
+// 真实确认 UI 在 AiChatView 的 tool_confirm_request 卡片 → appState.resolveAiApproval：
+// 用户确认时 buildAiOperationFromDraft 把后端 tool_confirm_request.draft（工具原始参数，§5.6）
 // 按 toolName 补齐为 MutationService.commit 的输入；operationId 由 commit 时生成，
 // 这里补齐 entitySyncIds、actorType='ai'、sourceTurnId=turnId，apply 复用
 // businessCommands.applyWorkOrderPatch。
+// notConnectedApprovalUi 仅作测试替身（requestApproval 恒 false），业务代码不再使用。
 
 export interface ChatApprovalUi {
   /** 收到写草案时调用；resolve true 才继续 approve + 本地提交。 */

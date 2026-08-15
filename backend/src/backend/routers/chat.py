@@ -13,6 +13,7 @@ POST /turns 单模型双模式：
 """
 
 import json
+import sqlite3
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -30,6 +31,7 @@ from pydantic_ai.messages import (
 
 from backend.deps import (
     CurrentAccount,
+    get_Connection,
     get_CurrentAccount,
     get_ChatService,
     get_ChatSessionsRepository,
@@ -136,10 +138,15 @@ def create_session(
     body: CreateSessionRequest,
     current: CurrentAccount = Depends(get_CurrentAccount),
     sessions: ChatSessionsRepository = Depends(get_ChatSessionsRepository),
+    connection: sqlite3.Connection = Depends(get_Connection),
 ) -> dict:
     record = sessions.create_Session(
         current.account_phone, _new_session_id(), body.title
     )
+    # get_Connection 的 commit 在响应发出后才执行；前端 createSession 返回后会立即
+    # POST /sessions/{sid}/turns，若不在此显式提交，下一请求可能看不到该会话
+    # （复现：快速连续 create→turn 首轮 404 session_not_found）。
+    connection.commit()
     return _session_public(record)
 
 
