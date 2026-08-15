@@ -4,7 +4,7 @@ import { ChatApi, type ChatSseEvent } from './chatApi'
 
 // 被测缝：ChatApi（docs/spec/chat-agent.md §4/§5、docs/spec/agent-tools.md §8）
 // 验证：
-// 1. 四个 JSON 端点（createSession/listSessions/listTurns/approveTurn）的路径、方法与 snake→camel 映射。
+// 1. 三个 JSON 端点（createSession/listSessions/listTurns）的路径、方法与 snake→camel 映射。
 // 2. streamTurn 用 fetch + ReadableStream 解析 SSE（POST 不支持 EventSource）：
 //    data: 帧按 \n\n 分割，支持多个帧与跨 chunk 拆分。
 // 3. streamTurn 开始阶段 401 → apiClient.refreshNow() 后带新 token 重试一次。
@@ -152,22 +152,6 @@ describe('ChatApi JSON 端点', () => {
       ],
     })
   })
-
-  it('approveTurn POST /chat/sessions/{sid}/turns 发送 approval_request_id 与 approved', async () => {
-    const requestMock = vi.fn()
-    requestMock.mockResolvedValue(okResponse({}))
-    chat = new ChatApi({ request: requestMock } as unknown as ApiClient)
-
-    await chat.approveTurn('s1', 'ar-000000000001', true)
-
-    expect(requestMock).toHaveBeenCalledWith(
-      '/chat/sessions/s1/turns',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ approval_request_id: 'ar-000000000001', approved: true }),
-      }),
-    )
-  })
 })
 
 describe('ChatApi.streamTurn SSE', () => {
@@ -252,6 +236,35 @@ describe('ChatApi.streamTurn SSE', () => {
     expect(new Headers(turnRequests[1][1]?.headers as HeadersInit).get('Authorization')).toBe(
       `Bearer ${NEW_ACCESS}`,
     )
+  })
+
+  it('approveTurn 走同一 SSE 传输：payload 为 approval_request_id/approved 且事件分发', async () => {
+    localStorage.setItem('cb_access_token', ACCESS)
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      sseResponse([
+        'data: {"type":"text_delta","content":"已批准"}\n\n',
+        'data: {"type":"done","turn_id":"turn-000000000001","error":null}\n\n',
+      ]),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const events: ChatSseEvent[] = []
+    await chat.approveTurn('s1', 'ar-000000000001', true, (e) => {
+      events.push(e)
+    })
+
+    expect(events).toEqual([
+      { type: 'text_delta', content: '已批准' },
+      { type: 'done', turn_id: 'turn-000000000001', error: null },
+    ])
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/chat/sessions/s1/turns')
+    expect(new Headers(init?.headers as HeadersInit).get('Authorization')).toBe(`Bearer ${ACCESS}`)
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      approval_request_id: 'ar-000000000001',
+      approved: true,
+    })
   })
 
   it('非 2xx JSON 错误抛出包含后端 error_code 的 Error', async () => {

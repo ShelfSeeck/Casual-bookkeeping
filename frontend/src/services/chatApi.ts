@@ -126,15 +126,33 @@ export class ChatApi {
     }
   }
 
-  async approveTurn(sid: string, approvalRequestId: string, approved: boolean): Promise<void> {
-    await this.api.request(`/chat/sessions/${encodeURIComponent(sid)}/turns`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approval_request_id: approvalRequestId, approved }),
-    })
+  async approveTurn(
+    sid: string,
+    approvalRequestId: string,
+    approved: boolean,
+    onEvent: (e: ChatSseEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.streamPost(
+      sid,
+      { approval_request_id: approvalRequestId, approved },
+      onEvent,
+      signal,
+    )
   }
 
   async streamTurn(
+    sid: string,
+    payload: TurnPayload,
+    onEvent: (e: ChatSseEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.streamPost(sid, payload, onEvent, signal)
+  }
+
+  // ---------- 私有辅助 ----------
+
+  private async streamPost(
     sid: string,
     payload: TurnPayload,
     onEvent: (e: ChatSseEvent) => void,
@@ -169,8 +187,6 @@ export class ChatApi {
     }
     await ChatApi.readSse(resp.body, onEvent)
   }
-
-  // ---------- 私有辅助 ----------
 
   private authHeaders(): Record<string, string> {
     const token = this.api.getAccessToken()
