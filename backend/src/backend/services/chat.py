@@ -176,6 +176,23 @@ class ChatService:
         )
         self._business_query = business_query
 
+    def preflight_Send(self, account_phone: str) -> None:
+        """send 模式流前检查：pending 前置校验 → 单飞锁占用检查。
+
+        供路由在构造 StreamingResponse 前调用，让 tool_approval_required /
+        session_busy 以统一 JSON 在 SSE 流开始前返回；run_Turn 保留同样检查
+        作为直接服务调用方的防御纵深（检查幂等，可重复执行）。
+        """
+        if account_phone in _PENDING:
+            raise AuthError(ERROR_TOOL_APPROVAL_REQUIRED, "存在未处理的工具确认请求", 409)
+
+        lock = _LOCKS.get(account_phone)
+        if lock is None:
+            lock = asyncio.Lock()
+            _LOCKS[account_phone] = lock
+        if lock.locked():
+            raise AuthError(ERROR_SESSION_BUSY, "已有回合在运行", 409)
+
     async def run_Turn(
         self,
         account_phone: str,
@@ -190,16 +207,9 @@ class ChatService:
             raise AuthError(ERROR_SESSION_NOT_FOUND, "会话不存在", 404)
 
         # 先于锁检查：pending 意味着存在未处理确认，新消息一律 409。
-        if account_phone in _PENDING:
-            raise AuthError(ERROR_TOOL_APPROVAL_REQUIRED, "存在未处理的工具确认请求", 409)
-
-        lock = _LOCKS.get(account_phone)
-        if lock is None:
-            lock = asyncio.Lock()
-            _LOCKS[account_phone] = lock
-        if lock.locked():
-            raise AuthError(ERROR_SESSION_BUSY, "已有回合在运行", 409)
-
+        # 与 preflight_Send 相同的幂等检查，保护直接调用 ChatService 的调用方。
+        self.preflight_Send(account_phone)
+        lock = _LOCKS[account_phone]
         await lock.acquire()
         try:
             try:

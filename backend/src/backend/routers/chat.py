@@ -8,10 +8,8 @@ POST /turns 单模型双模式：
   归属校验由 ChatService.approve_Turn 用 pending.session_id 完成（本层不做
   sessions 查询），错误在流开始前以统一 JSON 返回。
 - 否则 send 模式：缺 turn_id / message → invalid_request 400；流开始前做
-  会话归属校验（session_not_found 404 直接返回）。
-
-已知近似：session_busy（单飞锁冲突）在 ChatService 内抛出，发生在 SSE 流开始
-之后（客户端看到流中断）。
+  会话归属校验（session_not_found 404 直接返回）与 ChatService.preflight_Send
+  （tool_approval_required / session_busy 409 直接返回）。
 """
 
 import json
@@ -204,6 +202,10 @@ async def post_turn(
     if body.turn_id is None or body.message is None:
         raise AppError(ERROR_INVALID_REQUEST, "缺少 turn_id 或 message", 400)
     _require_owned_session(sessions, sid, current.account_phone)
+    # 流前 preflight：pending 未处理 / 同账户回合运行中时，必须在 SSE 流开始
+    # 前以统一 JSON 返回 409（docs/spec/chat-agent.md §5）。run_Turn 内保留
+    # 同样的幂等检查作为直接服务调用方的防御纵深。
+    service.preflight_Send(current.account_phone)
     events = service.run_Turn(
         current.account_phone, sid, body.turn_id, body.message, body.allowed_tools
     )

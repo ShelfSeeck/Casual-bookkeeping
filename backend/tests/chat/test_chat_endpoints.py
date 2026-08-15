@@ -7,6 +7,12 @@ approval_not_found 404）。
 ChatService 用 TestModel 固定输出（见 conftest.py），不走真实模型。
 """
 
+import asyncio
+import threading
+import time
+
+import pytest
+from fastapi.testclient import TestClient
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -16,8 +22,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.tools import DeferredToolRequests
 
+from backend.main import app
 from backend.repositories.chat_turns import ChatTurnsRepository
+from backend.services import chat as chat_module
+from backend.services.chat import PendingApproval, PendingCall
 
 
 def _login(client, phone="13800000000", password="secret-password",
@@ -34,6 +44,79 @@ def _create_session(client, headers, title="7月对账"):
     resp = client.post("/chat/sessions", headers=headers, json={"title": title})
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+def _pending_approval(
+    session_id: str,
+    account_phone: str = "13800000000",
+    turn_id: str = "turn-000000000001",
+    request_id: str = "ar-000000000000",
+) -> PendingApproval:
+    return PendingApproval(
+        request_id=request_id,
+        account_phone=account_phone,
+        session_id=session_id,
+        turn_id=turn_id,
+        requests=DeferredToolRequests(approvals=[]),
+        calls=[
+            PendingCall(
+                request_id=request_id,
+                tool_call_id="call-1",
+                tool_name="update_work_order",
+                args={},
+            )
+        ],
+    )
+
+
+class _BusyRunResult:
+    """给阻塞 fake run 的 result：release 后 run_Turn 正常收尾落库。"""
+
+    output = "ok"
+
+    def new_messages_json(self) -> bytes:
+        return b"[]"
+
+
+class _BusyRun:
+    """首个事件前挂起，模拟"回合运行中"；release 后立即结束。"""
+
+    def __init__(self, release: threading.Event) -> None:
+        self._release = release
+        self._started = False
+        self.result = _BusyRunResult()
+
+    async def __aenter__(self) -> "_BusyRun":
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
+
+    def __aiter__(self) -> "_BusyRun":
+        return self
+
+    async def __anext__(self):
+        if not self._started:
+            self._started = True
+            # 用 threading.Event 配合 to_thread：主线程 set 即释放，跨线程安全。
+            await asyncio.to_thread(self._release.wait)
+            raise StopAsyncIteration
+        raise StopAsyncIteration
+
+
+class _BusyAgent:
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def run_stream_events(
+        self,
+        user_prompt: str | None = None,
+        *,
+        message_history: list | None = None,
+        deferred_tool_results=None,
+        deps=None,
+    ) -> _BusyRun:
+        return _BusyRun(self.release)
 
 
 # ---------- 鉴权 ----------
@@ -196,6 +279,85 @@ def test_send_turn_missing_fields_returns_invalid_request(client, seed_account):
     )
     assert resp.status_code == 400
     assert resp.json()["error_code"] == "invalid_request"
+
+
+def test_send_turn_with_pending_returns_409_json_before_sse(client, seed_account):
+    # send 模式 HTTP 契约：存在未处理工具确认时，POST /turns 必须在 SSE 流
+    # 开始前返回非 200 JSON（tool_approval_required 409），不能先回 200
+    # text/event-stream 再断流（docs/spec/agent-tools.md §5.2 step 2）。
+    seed_account()
+    headers = _login(client)
+    sid = _create_session(client, headers)["session_id"]
+
+    chat_module._PENDING["13800000000"] = _pending_approval(sid)
+
+    resp = client.post(
+        f"/chat/sessions/{sid}/turns",
+        headers=headers,
+        json={"turn_id": "turn-000000000002", "message": "新消息"},
+    )
+    assert resp.status_code == 409
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.json()["error_code"] == "tool_approval_required"
+    # 没有任何 SSE 字节流过：body 是统一错误 JSON，而不是 event-stream 帧
+    assert "text/event-stream" not in resp.headers["content-type"]
+    assert '"type": "text_delta"' not in resp.text
+    assert "data:" not in resp.text
+
+
+def test_send_turn_when_busy_returns_409_json_before_sse(
+    client, seed_account, chat_agent_factory
+):
+    # send 模式 HTTP 契约：同账户已有回合在跑时，第二个 POST /turns 必须在
+    # SSE 流开始前返回 session_busy 409 JSON；用首事件前阻塞的 fake run 制造
+    # 单飞锁占用（tests/services/test_chat.py 同款 seam，但走 HTTP）。
+    seed_account()
+    headers = _login(client)
+    sid = _create_session(client, headers)["session_id"]
+
+    busy = _BusyAgent()
+    chat_agent_factory.factory = lambda allowed_tools=None: busy
+
+    # 第二个 TestClient 用同一 app 与依赖覆盖，从独立 portal 并发发起请求；
+    # 第一个请求占住 ChatService 单飞锁后，第二个请求应被 preflight 拦截。
+    client2 = TestClient(app)
+    first_result: dict = {}
+
+    def _first_post() -> None:
+        first_result["resp"] = client.post(
+            f"/chat/sessions/{sid}/turns",
+            headers=headers,
+            json={"turn_id": "turn-000000000001", "message": "阻塞中的回合"},
+        )
+
+    thread = threading.Thread(target=_first_post)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            lock = chat_module._LOCKS.get("13800000000")
+            if lock is not None and lock.locked():
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("第一个回合未在超时前获取单飞锁")
+
+        resp = client2.post(
+            f"/chat/sessions/{sid}/turns",
+            headers=headers,
+            json={"turn_id": "turn-000000000002", "message": "并发消息"},
+        )
+        assert resp.status_code == 409
+        assert resp.headers["content-type"].startswith("application/json")
+        assert resp.json()["error_code"] == "session_busy"
+        assert '"type": "text_delta"' not in resp.text
+    finally:
+        busy.release.set()
+        thread.join(timeout=10)
+        client2.close()
+
+    assert first_result["resp"].status_code == 200
+    assert thread.is_alive() is False
 
 
 def test_approve_turn_missing_approved_returns_invalid_approval(client, seed_account):
