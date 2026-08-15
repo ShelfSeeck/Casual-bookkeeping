@@ -15,7 +15,9 @@ export default defineConfig(({ mode }) => {
       vue(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.png', 'apple-touch-icon.png'],
+        // 手动在 main.ts 用 virtual:pwa-register 注册，便于监听 controllerchange 提示刷新。
+        // favicon.png / apple-touch-icon.png 已在 public 下、被下方 globPatterns 命中，无需 includeAssets 重复声明。
+        injectRegister: false,
         manifest: {
           id: '/',
           name: 'Casual-bookkeeping 记账',
