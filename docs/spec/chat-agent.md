@@ -138,7 +138,7 @@
 ```
 
 - `turn_id`：前端生成 uuid，幂等；重试复用同一值。
-- `allowed_tools`：可选，本轮允许的工具白名单（预留；MVP 无工具忽略）。
+- `allowed_tools`：可选，本轮允许的工具白名单；send 模式按其过滤工具（缺省/`null` 用完整工具集）。approve resume 不使用该字段，使用完整工具集（已知近似，见 §11）。
 - 命中单飞锁（同账户已有回合运行）→ 409 `session_busy`。
 
 #### 模式 B：approve（确认工具）
