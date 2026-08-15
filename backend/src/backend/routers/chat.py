@@ -1,15 +1,17 @@
-"""聊天路由（docs/spec/chat-agent.md §4）：会话 / 回合 / 模型诊断。
+"""聊天路由（docs/spec/chat-agent.md §4、docs/spec/agent-tools.md §5.5）：会话 / 回合 / 模型诊断。
 
 4 个聊天端点 + 1 个模型诊断端点，全部经 get_CurrentAccount 鉴权并注入身份，
 账户隔离以注入的 account_phone 为准。SSE 事件协议见 docs/spec/chat-agent.md §5。
 
-MVP 范围：只实现 send 模式（POST /turns 发消息）。approve 模式 / 工具确认握手
-不实现（工具注册表为空，tool_confirm_request 不会触发）；approve 请求因缺
-turn_id/message 字段走 FastAPI 422。
+POST /turns 单模型双模式：
+- approval_request_id 非空 → approve 模式：缺 approved → invalid_approval 400；
+  归属校验由 ChatService.approve_Turn 用 pending.session_id 完成（本层不做
+  sessions 查询），错误在流开始前以统一 JSON 返回。
+- 否则 send 模式：缺 turn_id / message → invalid_request 400；流开始前做
+  会话归属校验（session_not_found 404 直接返回）。
 
-MVP 已知近似：session_busy（单飞锁冲突）在 ChatService.run_Turn 内抛出，
-发生在 SSE 流开始之后（客户端看到流中断）；session_not_found 由本层在流开始前
-直接返回 404 统一错误，满足 spec §5。
+已知近似：session_busy（单飞锁冲突）在 ChatService 内抛出，发生在 SSE 流开始
+之后（客户端看到流中断）。
 """
 
 import json
@@ -25,6 +27,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    UserPromptPart,
 )
 
 from backend.deps import (
@@ -35,6 +38,8 @@ from backend.deps import (
     get_ChatTurnsRepository,
 )
 from backend.errors import (
+    ERROR_INVALID_APPROVAL,
+    ERROR_INVALID_REQUEST,
     ERROR_MODEL_CONFIG_MISSING,
     ERROR_SESSION_NOT_FOUND,
     AppError,
@@ -55,11 +60,15 @@ class CreateSessionRequest(BaseModel):
     title: str
 
 
-class SendTurnRequest(BaseModel):
-    turn_id: str
-    message: str
-    # 本轮允许的工具白名单（预留；MVP 无工具，忽略）
+class TurnRequest(BaseModel):
+    """POST /turns 单模型双模式（docs/spec/agent-tools.md §5.5）。"""
+
+    turn_id: str | None = None
+    message: str | None = None
+    # 本轮允许的工具白名单（send 模式透传；approve 模式忽略）
     allowed_tools: list[str] | None = None
+    approval_request_id: str | None = None
+    approved: bool | None = None
 
 
 def _new_session_id() -> str:
@@ -87,8 +96,11 @@ def _flatten_messages(messages_json: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for message in messages:
         if isinstance(message, ModelRequest):
+            # 用户消息 part 是 UserPromptPart；工具回执（ToolReturnPart）等不展示。
             content = "".join(
-                p.content for p in message.parts if isinstance(p, TextPart)
+                p.content
+                for p in message.parts
+                if isinstance(p, (UserPromptPart, TextPart))
             )
             if content:
                 out.append({"role": "user", "content": content, "type": "text"})
@@ -168,20 +180,32 @@ def list_turns(
     }
 
 
-# ---------- POST /chat/sessions/{sid}/turns（send 模式，SSE） ----------
+# ---------- POST /chat/sessions/{sid}/turns（send / approve 双模式，SSE） ----------
 
 @router.post("/sessions/{sid}/turns")
-async def send_turn(
+async def post_turn(
     sid: str,
-    body: SendTurnRequest,
+    body: TurnRequest,
     current: CurrentAccount = Depends(get_CurrentAccount),
     sessions: ChatSessionsRepository = Depends(get_ChatSessionsRepository),
     service: ChatService = Depends(get_ChatService),
 ) -> StreamingResponse:
-    # 流开始前做归属校验：session_not_found 以统一 JSON 错误返回（spec §5）
+    if body.approval_request_id is not None:
+        # approve 模式：缺 approved → invalid_approval 400；归属校验由
+        # ChatService.approve_Turn 用 pending.session_id 完成（流开始前）。
+        if body.approved is None:
+            raise AppError(ERROR_INVALID_APPROVAL, "确认请求缺少 approved 字段", 400)
+        events = service.approve_Turn(
+            current.account_phone, sid, body.approval_request_id, body.approved
+        )
+        return StreamingResponse(_sse(events), media_type="text/event-stream")
+
+    # send 模式：缺字段 → invalid_request 400；流开始前做归属校验
+    if body.turn_id is None or body.message is None:
+        raise AppError(ERROR_INVALID_REQUEST, "缺少 turn_id 或 message", 400)
     _require_owned_session(sessions, sid, current.account_phone)
     events = service.run_Turn(
-        current.account_phone, sid, body.turn_id, body.message
+        current.account_phone, sid, body.turn_id, body.message, body.allowed_tools
     )
     return StreamingResponse(_sse(events), media_type="text/event-stream")
 

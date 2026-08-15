@@ -234,9 +234,11 @@ def get_ChatTurnsRepository(
 def get_ChatService(
     sessions: ChatSessionsRepository = Depends(get_ChatSessionsRepository),
     turns: ChatTurnsRepository = Depends(get_ChatTurnsRepository),
+    business_query: BusinessQueryService = Depends(get_BusinessQueryService),
 ) -> ChatService:
     # agent_factory 默认 build_Agent：每次 run 时热读 config.toml [model]
-    return ChatService(sessions, turns)
+    # business_query 注入只读查询门面，供 Agent 业务工具使用（docs/spec/agent-tools.md §4.1）
+    return ChatService(sessions, turns, business_query=business_query)
 
 
 def get_CurrentAccount(
