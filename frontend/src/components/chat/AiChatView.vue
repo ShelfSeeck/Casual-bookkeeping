@@ -10,8 +10,10 @@ const historyLoading = ref(false)
 const openingSessionId = ref<string | null>(null)
 
 const quickPrompts = [
-  '今日记账汇总',
-  '今天一共洗了多少件？',
+  '今日工单汇总',
+  '今天一共录了多少单？',
+  '有哪些工单还没定价？',
+  '本周工单汇总',
 ]
 
 function isHistoryLocked() {
