@@ -11,6 +11,10 @@ import type { OutboxEntry } from '../db/schema/operations/outbox'
 
 export interface MutationChange {
   entitySyncId: string
+  /** 实体类型（wire entity_type）。单实体操作可省略，由 operationType 推导；
+   *  跨实体操作（create_customer_with_mapping / archive_customer_with_mappings）
+   *  必须逐 change 标注（docs/spec/business-p0p1.md §5.6）。 */
+  entityType?: string
   /** 修改前服务端确认的版本（create 为 0）；取自本地记录的 rowVersion */
   baseVersion: number
   /** 修改前快照，冲突三方对比的 Base（data-model.md §6.3） */
@@ -66,17 +70,26 @@ export class MutationService {
       createdAt: now,
       updatedAt: now,
     }
-    const changes = input.changes ?? input.entitySyncIds.map((id) => ({
+    const changes: MutationChange[] = input.changes ?? input.entitySyncIds.map((id) => ({
       entitySyncId: id,
       baseVersion: 0,
+    }))
+    // outbox.command.changes 原样保留 entityType（docs/spec/business-p0p1.md §5.6）：
+    // 跨实体操作依赖逐 change 的 entityType，提交时不能丢字段。
+    const commandChanges = changes.map((c) => ({
+      entitySyncId: c.entitySyncId,
+      baseVersion: c.baseVersion,
+      ...(c.entityType !== undefined ? { entityType: c.entityType } : {}),
+      ...(c.baseSnapshot !== undefined ? { baseSnapshot: c.baseSnapshot } : {}),
+      ...(c.patch !== undefined ? { patch: c.patch } : {}),
     }))
     const outbox: Omit<OutboxEntry, 'queueId'> = {
       operationId,
       operationType: input.operationType,
       entitySyncIds: input.entitySyncIds,
       command: input.revertsOperationId
-        ? { changes, reverts_operation_id: input.revertsOperationId }
-        : { changes },
+        ? { changes: commandChanges, reverts_operation_id: input.revertsOperationId }
+        : { changes: commandChanges },
       status: 'pending',
       attempts: 0,
       nextRetryAt: null,

@@ -116,6 +116,31 @@ describe('MutationService.commit', () => {
   })
 })
 
+describe('MutationService 跨实体 entityType 保留（docs/spec/business-p0p1.md §5.6）', () => {
+  it('commit 把 change.entityType 原样写入 outbox.command.changes', async () => {
+    const input: MutationInput = {
+      operationType: 'create_customer_with_mapping',
+      entitySyncIds: ['sync-cust', 'sync-map'],
+      changes: [
+        { entitySyncId: 'sync-cust', baseVersion: 0, entityType: 'customer', patch: {} },
+        { entitySyncId: 'sync-map', baseVersion: 0, entityType: 'customer_code_mapping', patch: {} },
+      ],
+      apply: () => undefined,
+      actorType: 'user',
+    }
+    await svc.commit(input)
+
+    const outbox = (await db.outbox.toArray())[0]
+    const command = outbox.command as {
+      changes: { entitySyncId: string; entityType?: string }[]
+    }
+    expect(command.changes.map((c) => c.entityType)).toEqual([
+      'customer',
+      'customer_code_mapping',
+    ])
+  })
+})
+
 describe('MutationService 撤回操作（docs/data-model.md §6.5）', () => {
   it('撤回操作 commit 后，operations 记录 revertsOperationId，outbox.command 含 reverts_operation_id', async () => {
     // 验证：撤回是普通操作，走同一本地事务；前端只提交"撤回哪条原操作"的意图，
