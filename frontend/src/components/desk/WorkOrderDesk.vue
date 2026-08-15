@@ -3,6 +3,12 @@ import { ref, computed, watch } from 'vue'
 import { showFailToast, showSuccessToast } from 'vant'
 import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
+import {
+  isAllowedDecimalKey,
+  isAllowedIntegerKey,
+  sanitizeDecimalInput,
+  sanitizeIntegerInput,
+} from '../../utils/numericInput'
 
 // 表单状态
 const selectedCustomerId = ref<number | null>(null)
@@ -11,6 +17,8 @@ const selectedSubcategoryName = ref<string | null>(null)
 const unit = ref('件')
 const quantityStr = ref('')
 const unitPriceStr = ref('')
+const quantityError = ref('')
+const unitPriceError = ref('')
 const _now = new Date()
 const orderDate = ref(`${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`)
 
@@ -112,6 +120,34 @@ watch(
   },
   { immediate: true },
 )
+
+function onQuantityKeydown(e: KeyboardEvent) {
+  if (!isAllowedIntegerKey(e)) {
+    e.preventDefault()
+    quantityError.value = '只能输入数字'
+  }
+}
+
+function onQuantityInput(e: Event) {
+  const raw = (e.target as HTMLInputElement).value
+  const cleaned = sanitizeIntegerInput(raw)
+  quantityStr.value = cleaned
+  quantityError.value = raw !== cleaned ? '只能输入数字' : ''
+}
+
+function onUnitPriceKeydown(e: KeyboardEvent) {
+  if (!isAllowedDecimalKey(e)) {
+    e.preventDefault()
+    unitPriceError.value = '只能输入数字和小数点'
+  }
+}
+
+function onUnitPriceInput(e: Event) {
+  const raw = (e.target as HTMLInputElement).value
+  const cleaned = sanitizeDecimalInput(raw)
+  unitPriceStr.value = cleaned
+  unitPriceError.value = raw !== cleaned ? '只能输入数字和小数点' : ''
+}
 
 async function handleSave() {
   if (!selectedCustomerId.value) {
@@ -302,7 +338,7 @@ function scrollToTodayFlow() {
           <div class="m3-underline-input-box">
             <input
               id="work-order-qty-input"
-              v-model="quantityStr"
+              :value="quantityStr"
               type="text"
               inputmode="numeric"
               pattern="[0-9]*"
@@ -310,9 +346,12 @@ function scrollToTodayFlow() {
               placeholder="0"
               autocomplete="off"
               aria-label="工单数量"
+              @keydown="onQuantityKeydown"
+              @input="onQuantityInput"
             />
             <span class="m3-unit-suffix">{{ unit }}</span>
           </div>
+          <p v-if="quantityError" class="cb-inline-error" role="alert">{{ quantityError }}</p>
           <div class="m3-bottom-line" aria-hidden="true"></div>
         </div>
       </div>
@@ -329,15 +368,18 @@ function scrollToTodayFlow() {
             <span class="m3-currency-prefix">¥</span>
             <input
               id="work-order-price-input"
-              v-model="unitPriceStr"
+              :value="unitPriceStr"
               type="text"
               inputmode="decimal"
               class="m3-native-input cb-tabular-nums"
               placeholder="未定价"
               autocomplete="off"
               aria-label="工单单价"
+              @keydown="onUnitPriceKeydown"
+              @input="onUnitPriceInput"
             />
           </div>
+          <p v-if="unitPriceError" class="cb-inline-error" role="alert">{{ unitPriceError }}</p>
           <div class="m3-bottom-line" aria-hidden="true"></div>
         </div>
       </div>
@@ -927,6 +969,13 @@ function scrollToTodayFlow() {
   display: flex;
   align-items: baseline;
   gap: 10px;
+}
+
+.cb-inline-error {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--md-sys-color-error);
 }
 
 .m3-native-input {

@@ -2,6 +2,12 @@
 import { ref, watch } from 'vue'
 import type { WorkOrderUi } from '../../types/ui'
 import { appState } from '../../state/appState'
+import {
+  isAllowedDecimalKey,
+  isAllowedIntegerKey,
+  sanitizeDecimalInput,
+  sanitizeIntegerInput,
+} from '../../utils/numericInput'
 
 const props = defineProps<{
   order: WorkOrderUi
@@ -14,6 +20,8 @@ const emit = defineEmits<{
 // 数量与单价编辑状态（直接依赖系统输入法）
 const editQtyStr = ref(String(props.order.quantity))
 const editPriceStr = ref(props.order.unitPriceCents != null ? (props.order.unitPriceCents / 100).toFixed(2) : '')
+const qtyError = ref('')
+const priceError = ref('')
 
 // 历史轨迹展示
 const showHistory = ref(false)
@@ -23,9 +31,39 @@ watch(
   (newOrder) => {
     editQtyStr.value = String(newOrder.quantity)
     editPriceStr.value = newOrder.unitPriceCents != null ? (newOrder.unitPriceCents / 100).toFixed(2) : ''
+    qtyError.value = ''
+    priceError.value = ''
   },
   { deep: true }
 )
+
+function onQtyKeydown(e: KeyboardEvent) {
+  if (!isAllowedIntegerKey(e)) {
+    e.preventDefault()
+    qtyError.value = '只能输入数字'
+  }
+}
+
+function onQtyInput(e: Event) {
+  const raw = (e.target as HTMLInputElement).value
+  const cleaned = sanitizeIntegerInput(raw)
+  editQtyStr.value = cleaned
+  qtyError.value = raw !== cleaned ? '只能输入数字' : ''
+}
+
+function onPriceKeydown(e: KeyboardEvent) {
+  if (!isAllowedDecimalKey(e)) {
+    e.preventDefault()
+    priceError.value = '只能输入数字和小数点'
+  }
+}
+
+function onPriceInput(e: Event) {
+  const raw = (e.target as HTMLInputElement).value
+  const cleaned = sanitizeDecimalInput(raw)
+  editPriceStr.value = cleaned
+  priceError.value = raw !== cleaned ? '只能输入数字和小数点' : ''
+}
 
 function onQtyChange() {
   const qty = parseInt(editQtyStr.value, 10)
@@ -83,18 +121,21 @@ function handleDelete() {
           <div class="m3-edit-underline-row">
             <input
               id="edit-order-qty"
-              v-model="editQtyStr"
+              :value="editQtyStr"
               type="text"
               inputmode="numeric"
               pattern="[0-9]*"
               class="m3-edit-input cb-tabular-nums"
               placeholder="0"
               autocomplete="off"
+              @keydown="onQtyKeydown"
+              @input="onQtyInput"
               @blur="onQtyChange"
               @keyup.enter="onQtyChange"
             />
             <span class="m3-edit-unit">{{ order.unit }}</span>
           </div>
+          <p v-if="qtyError" class="m3-edit-inline-error" role="alert">{{ qtyError }}</p>
           <div class="m3-edit-bottom-line"></div>
         </div>
 
@@ -105,16 +146,19 @@ function handleDelete() {
             <span class="m3-edit-currency">¥</span>
             <input
               id="edit-order-price"
-              v-model="editPriceStr"
+              :value="editPriceStr"
               type="text"
               inputmode="decimal"
               class="m3-edit-input cb-tabular-nums"
               placeholder="未定价"
               autocomplete="off"
+              @keydown="onPriceKeydown"
+              @input="onPriceInput"
               @blur="onPriceChange"
               @keyup.enter="onPriceChange"
             />
           </div>
+          <p v-if="priceError" class="m3-edit-inline-error" role="alert">{{ priceError }}</p>
           <div class="m3-edit-bottom-line"></div>
         </div>
       </div>
@@ -298,6 +342,13 @@ function handleDelete() {
   font-weight: 700;
   color: var(--md-sys-color-on-surface-variant);
   flex-shrink: 0;
+}
+
+.m3-edit-inline-error {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--md-sys-color-error);
 }
 
 .m3-edit-bottom-line {

@@ -4,6 +4,12 @@ import { showFailToast, showSuccessToast } from 'vant'
 import type { WorkOrderUi } from '../../types/ui'
 import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
+import {
+  isAllowedDecimalKey,
+  isAllowedIntegerKey,
+  sanitizeDecimalInput,
+  sanitizeIntegerInput,
+} from '../../utils/numericInput'
 
 const props = defineProps<{
   order: WorkOrderUi
@@ -22,6 +28,8 @@ const quantityStr = ref(String(props.order.quantity))
 const unitPriceStr = ref(
   props.order.unitPriceCents != null ? (props.order.unitPriceCents / 100).toFixed(2) : ''
 )
+const quantityError = ref('')
+const unitPriceError = ref('')
 const orderDate = ref(props.order.orderDate)
 
 // 弹窗控制
@@ -112,6 +120,34 @@ const computedTotalAmount = computed(() => {
   if (isNaN(p) || p <= 0 || isNaN(qty) || qty <= 0) return null
   return (p * qty).toFixed(2)
 })
+
+function onQuantityKeydown(e: KeyboardEvent) {
+  if (!isAllowedIntegerKey(e)) {
+    e.preventDefault()
+    quantityError.value = '只能输入数字'
+  }
+}
+
+function onQuantityInput(e: Event) {
+  const raw = (e.target as HTMLInputElement).value
+  const cleaned = sanitizeIntegerInput(raw)
+  quantityStr.value = cleaned
+  quantityError.value = raw !== cleaned ? '只能输入数字' : ''
+}
+
+function onUnitPriceKeydown(e: KeyboardEvent) {
+  if (!isAllowedDecimalKey(e)) {
+    e.preventDefault()
+    unitPriceError.value = '只能输入数字和小数点'
+  }
+}
+
+function onUnitPriceInput(e: Event) {
+  const raw = (e.target as HTMLInputElement).value
+  const cleaned = sanitizeDecimalInput(raw)
+  unitPriceStr.value = cleaned
+  unitPriceError.value = raw !== cleaned ? '只能输入数字和小数点' : ''
+}
 
 // 保存修改
 async function handleSave() {
@@ -309,7 +345,7 @@ function handleDelete() {
           <div class="m3-underline-input-box">
             <input
               id="edit-order-qty-input"
-              v-model="quantityStr"
+              :value="quantityStr"
               type="text"
               inputmode="numeric"
               pattern="[0-9]*"
@@ -317,9 +353,12 @@ function handleDelete() {
               placeholder="0"
               autocomplete="off"
               aria-label="工单数量"
+              @keydown="onQuantityKeydown"
+              @input="onQuantityInput"
             />
             <span class="m3-unit-suffix">{{ unit }}</span>
           </div>
+          <p v-if="quantityError" class="cb-inline-error" role="alert">{{ quantityError }}</p>
           <div class="m3-bottom-line" aria-hidden="true"></div>
         </div>
       </div>
@@ -339,15 +378,18 @@ function handleDelete() {
             <span class="m3-currency-prefix">¥</span>
             <input
               id="edit-order-price-input"
-              v-model="unitPriceStr"
+              :value="unitPriceStr"
               type="text"
               inputmode="decimal"
               class="m3-native-input cb-tabular-nums"
               placeholder="未定价"
               autocomplete="off"
               aria-label="工单单价"
+              @keydown="onUnitPriceKeydown"
+              @input="onUnitPriceInput"
             />
           </div>
+          <p v-if="unitPriceError" class="cb-inline-error" role="alert">{{ unitPriceError }}</p>
           <div class="m3-bottom-line" aria-hidden="true"></div>
         </div>
       </div>
@@ -935,6 +977,13 @@ function handleDelete() {
   display: flex;
   align-items: baseline;
   gap: 10px;
+}
+
+.cb-inline-error {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--md-sys-color-error);
 }
 
 .m3-native-input {
