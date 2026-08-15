@@ -85,4 +85,51 @@ def list_orders(current: CurrentAccount = Depends(get_CurrentAccount)):
     # current.account_phone / current.device_id
 ```
 
-> 当前仅有认证端点；同步（bootstrap / Push / Pull）、AI 对话等后续端点按此模式接入。
+## 聊天端点（Chat）
+
+> 完整契约见 `docs/spec/chat-agent.md` §4/§5；错误码见 `docs/error-codes.md` §4.3。
+> 同步端点（bootstrap / Push / Pull）契约见 `docs/sync-protocol.md`。
+> 所有聊天端点均经 `get_CurrentAccount` 鉴权，`Authorization: Bearer <access_token>`；会话归属校验失败返回 404 `session_not_found`。
+
+### POST /chat/sessions
+
+创建会话。请求体 `{ "title": "7月对账" }`，成功 `200` 返回会话公共字段（`session_id` / `title` / `created_at` / `updated_at`）。
+
+### GET /chat/sessions
+
+当前账户会话列表，按 `updated_at` 倒序。
+
+### GET /chat/sessions/{sid}/turns
+
+回合历史，后端把每轮 `ModelMessage[]` 摊平成 user/assistant 文本段。游标分页参数：`after_turn_id`、`limit`（默认 50）。
+
+### POST /chat/sessions/{sid}/turns（send / approve 双模式）
+
+发消息 / 确认工具共用此端点；**send 与 approve 响应均为 SSE**（`text/event-stream`），事件协议见 `docs/spec/chat-agent.md` §5。
+
+send 模式请求体：
+
+```json
+{ "turn_id": "turn-...", "message": "帮我把昨天王老板的工单改成 12 件", "allowed_tools": ["query_work_orders"] }
+```
+
+approve 模式请求体：
+
+```json
+{ "approval_request_id": "ar-...", "approved": true }
+```
+
+错误（流开始前按统一错误格式返回，不发 SSE）：
+
+| error_code | HTTP | 场景 |
+| --- | --- | --- |
+| `invalid_approval` | 400 | approve 模式缺 `approved` 字段 |
+| `approval_not_found` | 404 | 确认请求不存在或已处理 |
+| `tool_approval_required` | 409 | 当前账户存在未处理的工具确认请求（或 `approval_request_id` 不是最新请求） |
+| `session_busy` | 409 | 同账户已有回合在运行（单飞锁） |
+| `session_not_found` | 404 | 会话不存在或不属于该账户 |
+| `turn_not_found` | 404 | 回合不存在 |
+
+### GET /chat/model-config
+
+模型配置诊断（只读），返回当前生效的模型配置。

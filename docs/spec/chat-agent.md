@@ -1,24 +1,24 @@
 # 记账助手对话 Agent（MVP）spec
 
-> 面向开发与前后端联调的接口设计。范围：后端可运行的纯文本对话助手骨架 + 工具接口预留。
-> 相关文档：`docs/ai-chat-storage.md`（会话/回合存储）、`docs/data-model.md`（AI 操作草案与确认）、`docs/error-codes.md`（错误码登记）、`docs/api.md`（端点约定）、`docs/sync-protocol.md`（同步）。
+> 面向开发与前后端联调的接口设计。范围：后端可运行的对话助手 + 业务工具与确认握手（**现状已实现**，见 `docs/spec/agent-tools.md`；MVP 历史描述保留并逐项标注）。
+> 相关文档：`docs/ai-chat-storage.md`（会话/回合存储）、`docs/data-model.md`（AI 操作草案与确认）、`docs/error-codes.md`（错误码登记）、`docs/api.md`（端点约定）、`docs/sync-protocol.md`（同步）、`docs/spec/agent-tools.md`（工具与确认握手实现）。
 
 ## 1. 目的与范围
 
 ### 目标
 
-搭一个可用的记账助手对话骨架：用户创建会话、发消息、后端用 Pydantic AI 跑一个回合、SSE 流式返回、回合落库。工具调用接口（注册表 + 确认握手协议）预留，MVP 不实现业务工具。
+搭一个可用的记账助手对话骨架：用户创建会话、发消息、后端用 Pydantic AI 跑一个回合、SSE 流式返回、回合落库。**现状（2026-08-15）**：工具调用与确认握手已实现——7 个业务工具（5 读 + 2 写草案）接入，写草案暂停等待前端确认后 resume；详见 `docs/spec/agent-tools.md`。以下 MVP 历史描述保留要点并标注现状。
 
 ### 范围
 
-- 后端：会话/回合仓库、Agent 构建（Pydantic AI 内循环）、SSE 流式、按账户单飞锁、模型配置热读。
+- 后端：会话/回合仓库、Agent 构建（Pydantic AI 内循环）、SSE 流式、按账户单飞锁、模型配置热读、业务工具与确认握手（已实现，见 `docs/spec/agent-tools.md`）。
 - 接口：4 个聊天端点 + 1 个模型诊断端点，含 SSE 事件协议与回合摊平展示格式。
-- 前端：**本次不搭建**，只定义前后端接口契约。
+- 前端：接口契约已定；数据层 `chatApi` / `chatApproval` 已实现，确认 UI 仍未实现（见 `docs/spec/agent-tools.md` §8）。
 
 ### 不做（MVP 明确排除）
 
 - regenerate / stop、状态机图引擎（Learnova 式外层循环）。
-- 业务工具（读写工单等）与 `tool_confirm_request` 的实际触发（机制预留，事件定义见 §6）。
+- 业务工具与 `tool_confirm_request` 的触发：MVP 原列为不做；**现状已实现**（`docs/spec/agent-tools.md`）。
 - 会话重命名 / 删除、附件、markdown 富渲染（前端后续做）。
 - 前端本地缓存对话：AI 会话以后端为权威，前端纯在线，不走离线优先。
 
@@ -34,9 +34,9 @@
 | 外层编排 | 不做状态机图，直接端点 → Agent → SSE |
 | 内循环 | Pydantic AI `agent.run_stream_events()` |
 | 单飞锁 | **按账户**（同一 `account_phone` 同时只跑一个回合，跨会话） |
-| 工具 | `register_tool` 注册表 + `build_tools(allowed=...)` 过滤；MVP 列表为空 |
+| 工具 | `register_tool` 注册表 + `build_tools(allowed=...)` 过滤；**现状：7 个业务工具**（5 读 + 2 写草案，见 `docs/spec/agent-tools.md` §4） |
 | 流式 | SSE（`text_delta` / `tool_call` / `tool_result` / `tool_confirm_request` / `done`） |
-| 确认 | 保留 `tool_confirm_request`（方案 B：确认握手，后端不执行写库） |
+| 确认 | `tool_confirm_request`（方案 B：确认握手，后端不执行写库）——**现状已实现**（send 暂停 → 部分回合落库 → approve 续跑） |
 | 模型配置 | `config.toml [model]`，每次运行热读，无 env 覆盖 |
 | 存储 | `chat_sessions` / `chat_turns`（§3） |
 
@@ -166,8 +166,8 @@
 | 事件 | 载荷 | 说明 |
 | --- | --- | --- |
 | `text_delta` | `{ "type": "text_delta", "content": "..." }` | 模型输出文本增量，逐帧推送 |
-| `tool_call` | `{ "type": "tool_call", "tool_name": "..." }` | 工具调用开始（MVP 无工具不触发） |
-| `tool_result` | `{ "type": "tool_result", "tool_name": "...", "status": "success"\|"error" }` | 工具执行结束（MVP 不触发） |
+| `tool_call` | `{ "type": "tool_call", "tool_name": "..." }` | 工具调用开始（协议保留；当前 `ChatService` 不转发，读工具在内循环执行） |
+| `tool_result` | `{ "type": "tool_result", "tool_name": "...", "status": "success"\|"error" }` | 工具执行结束（协议保留；当前不转发） |
 | `tool_confirm_request` | `{ "type": "tool_confirm_request", "request_id": "...", "tool_call_id": "...", "tool_name": "...", "draft": { ... } }` | 写工具暂停待确认；`draft` 即工具参数（§6） |
 | `done` | `{ "type": "done", "turn_id": "...", "error": { "error_code": "...", "message": "..." } \| null }` | 结束帧；成功时 `error` 为 `null` |
 
@@ -182,7 +182,7 @@
 ```
 写工具(requires_approval) → agent 暂停 → SSE tool_confirm_request(draft=工具参数)
 → 前端渲染「查看更改」确认框 → 用户点确认 → 前端同时：
-   ① 写 Dexie（业务表 + operations + outbox，actor_type=ai / source_turn_id / operation_id 取自 draft）
+   ① 写 Dexie（业务表 + operations + outbox；来源字段由前端确认时补齐，见 §6.2）
    ② 触发同步 Push
    ③ POST approve {approval_request_id, approved: true}
 → 后端握手工具执行（不写库）→ agent 收尾本回合 → done
@@ -191,6 +191,7 @@
 ### 6.2 协议对准
 
 - 工具的**参数 schema 即草案 schema**（`operation_type` + `changes[]` + `base_version`），`tool_confirm_request.draft` 原样携带工具参数——前端展示的「具体更改内容」与后端将要提交的是同一份数据，无需另设草案格式。
+- 运行时来源字段（`operation_id` / `actor_type=ai` / `source_turn_id`）由前端确认时补齐（`docs/spec/agent-tools.md` §4.3/§8）；工具参数本身不含这些字段，避免模型编造 ID。
 - 后端握手工具**永不落库**：权威写入只经前端 outbox → Push 链路（`docs/data-model.md` §7.2）。`operation_id` 幂等保证重复 Push 只生效一次，Pull 收敛。
 - 安全理由：即使前端漏渲染了确认请求（用户未看到具体更改），没有确认按钮就没有任何写操作——「未知情不动手」。这也是与 Learnova「确认后 agent 直接写库」的关键差异。
 
@@ -205,7 +206,7 @@
 | `turn_not_found` | 404 | 回合不存在 |
 | `invalid_approval` | 400 | 确认请求缺 `approved` 字段 |
 | `approval_not_found` | 404 | 确认请求不存在或已处理 |
-| `tool_approval_required` | 409 | 当前会话存在未处理的工具确认请求，先处理再发新消息 |
+| `tool_approval_required` | 409 | 当前账户存在未处理的工具确认请求（send 先处理再发新消息）；或 approve 的 `approval_request_id` 不是最新未处理请求 |
 | `model_config_missing` | 500 | `config.toml` 未配置 `[model]` |
 | `model_build_failed` | 500 | Agent 构建失败 |
 | `model_authentication_error` | 502 | 模型服务认证失败（api_key 错误） |
@@ -239,11 +240,14 @@ api_key = "sk-..."
 | data | 无（建表 SQL 已存在） | — |
 | repositories | `repositories/chat_sessions.py`、`repositories/chat_turns.py` | 会话/回合的受控读写；`account_phone` 归属校验、`turn_id` upsert、按游标分页取回合 |
 | services | `services/model_config.py` | `get_ActiveModelConfig()`：每次重读 `config.toml [model]` |
-| services | `services/agent.py` | 构建 Pydantic AI Agent：模型来自 `get_ActiveModelConfig()`，工具来自 `build_tools(allowed)`，`instructions` 固定助手设定 |
-| services | `services/chat.py` | 编排：单飞锁（按 `account_phone`，进程内 `asyncio.Lock` 字典）、`run_stream_events` 事件转发、回合保存 / 覆盖 |
-| tools | `tools/registry.py` | `register_tool` 注册表 + `build_tools(allowed)`；MVP 列表为空，`tool_confirm_request` 逻辑随写工具引入 |
-| routers | `routers/chat.py` | 4 个聊天端点 + 模型诊断端点，`Depends(get_CurrentAccount)` |
-| deps | `deps.py` | `get_ChatSessionsRepository` / `get_ChatTurnsRepository` / `get_ActiveModelConfig` / `get_ChatService` |
+| services | `services/business_query.py` | `BusinessQueryService`：四个业务仓库的只读查询门面（供 Agent 工具使用，见 `docs/spec/agent-tools.md` §6） |
+| services | `services/prompts.py` | Agent 系统指令：先查后改、只能通过写草案工具提议、必须等用户确认 |
+| services | `services/agent.py` | 构建 Pydantic AI Agent：模型来自 `get_ActiveModelConfig()`，工具来自 `build_tools(allowed)`，`deps_type=BusinessToolDeps`，`output_type=[str, DeferredToolRequests]` |
+| services | `services/chat.py` | 编排：单飞锁（按 `account_phone`，进程内 `asyncio.Lock` 字典）、`run_stream_events` 事件转发、send 暂停（部分回合落库 + `tool_confirm_request`）/ approve 续跑（整体覆盖落库）/ 恢复 |
+| tools | `tools/registry.py` | `register_tool` 注册表（`requires_approval` 元数据）+ `build_tools(allowed)` 白名单过滤；**现状已实现** |
+| tools | `tools/business_tools.py` | 7 个业务工具（5 读 + 2 写草案），见 `docs/spec/agent-tools.md` §4 |
+| routers | `routers/chat.py` | 4 个聊天端点 + 模型诊断端点，`Depends(get_CurrentAccount)`；`POST /turns` send/approve 双模式 + `preflight_Send` |
+| deps | `deps.py` | `get_ChatSessionsRepository` / `get_ChatTurnsRepository` / `get_ChatService` / `get_BusinessQueryService` |
 | errors | `errors.py` | 新增聊天域错误常量 |
 | main | `main.py` | `include_router(chat_router.router)` |
 
@@ -256,13 +260,15 @@ api_key = "sk-..."
 - 建表：`chat_sessions` / `chat_turns` 已建（补测）。
 - 仓库：会话创建 / 归属校验 / 列表排序；回合 upsert（幂等覆盖）、游标分页。
 - 模型配置：`get_ActiveModelConfig()` 热读（改文件立即反映）、缺 `[model]` 抛 `model_config_missing`。
-- Agent 服务：用 `TestModel` override 固定模型输出，断言 SSE 事件序列（`text_delta` → `done`）；单飞锁并发行为。
-- 确认握手：MVP 无工具，用测试工具桩验证 `approve` 流程的握手工具不写库。
+- Agent 服务：用 `TestModel` override 固定模型输出，断言 SSE 事件序列（`text_delta` → `done`）；单飞锁并发行为；`tool_confirm_request` 事件与错误码（`approval_not_found` / `tool_approval_required` / `invalid_approval`）。
+- 确认握手：已实现；用 FakeAgent/FakeRun 与测试工具桩验证 send 暂停 → 部分回合落库 → approve 续跑 → 握手工具不写库 → done 整体覆盖落库（见 `tests/chat/`）。
+- 业务工具：读工具用 `tmp_path` SQLite 造数直接断言；写草案用 `FunctionModel` 断言暂停与 `DeferredToolRequests`（见 `tests/services/test_agent_tools.py`）。
 
 ## 11. 未定与后续
 
 - 虚拟滚动：长会话加「区块索引端点」（`digest` / `content_length` / `estimated_height`），前端按需拉正文；当前 `turns` 接口已带游标与 `content_length` 元数据，直接扩即可。
-- 读工具：`query_work_orders` / `query_customers` 等只读工具，接现有业务仓库。
-- 写工具 + 草案确认完整链路：`DeferredToolRequests` resume、`tool_confirm_request` 真实触发、前端确认框与 outbox/Push 联调。
+- ~~读工具：`query_work_orders` / `query_customers` 等只读工具，接现有业务仓库。~~ **现状：已实现**（`tools/business_tools.py` + `BusinessQueryService`）。
+- ~~写工具 + 草案确认完整链路：`DeferredToolRequests` resume、`tool_confirm_request` 真实触发、前端确认框与 outbox/Push 联调。~~ **现状：后端已实现**（send 暂停 / approve 续跑 / 重启恢复）；前端 `chatApi` / `chatApproval` 接口已就绪，**确认 UI 与页面联调仍未做**（本期无 UI）。
 - resume 语义深化：确认且同步成功后，同一回合内由 agent 汇报同步结果（当前不 resume 汇报，回合在握手后即收尾）。
+- 已知近似（登记在 `AGENTS.md` 未定事项）：approve resume 使用完整工具集（`allowed_tools` 不生效）；resume 中若模型再次发起写草案不会再次暂停（直接收尾）。
 - 会话标题自动生成（当前创建时必填）。
