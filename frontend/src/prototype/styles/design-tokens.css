@@ -1,0 +1,194 @@
+/* Material Design 3 (M3) Design Tokens & Baseline Theme */
+:root {
+  /* ==========================================================================
+     1. M3 Color System (--md-sys-color-*)
+     ========================================================================== */
+  /* Primary & Tonal Roles */
+  --md-sys-color-primary: #2563eb;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #dbeafe;
+  --md-sys-color-on-primary-container: #1e3a8a;
+
+  /* Secondary */
+  --md-sys-color-secondary: #475569;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #e2e8f0;
+  --md-sys-color-on-secondary-container: #0f172a;
+
+  /* Tertiary */
+  --md-sys-color-tertiary: #0284c7;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #e0f2fe;
+  --md-sys-color-on-tertiary-container: #0369a1;
+
+  /* Error */
+  --md-sys-color-error: #dc2626;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-error-container: #fee2e2;
+  --md-sys-color-on-error-container: #7f1d1d;
+
+  /* Surface & Containers (Tonal Depth) */
+  --md-sys-color-surface: #ffffff;
+  --md-sys-color-surface-dim: #f8fafc;
+  --md-sys-color-surface-bright: #ffffff;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f8fafc;
+  --md-sys-color-surface-container: #f1f5f9;
+  --md-sys-color-surface-container-high: #e2e8f0;
+  --md-sys-color-surface-container-highest: #cbd5e1;
+
+  /* On Surface (Text & Icon Emphases) */
+  --md-sys-color-on-surface: #0f172a;
+  --md-sys-color-on-surface-variant: #475569;
+  --md-sys-color-outline: #94a3b8;
+  --md-sys-color-outline-variant: #e2e8f0;
+
+  /* Inverse */
+  --md-sys-color-inverse-surface: #0f172a;
+  --md-sys-color-inverse-on-surface: #f8fafc;
+  --md-sys-color-inverse-primary: #93c5fd;
+
+  /* ==========================================================================
+     2. M3 Shape Tokens (--md-sys-shape-corner-*)
+     ========================================================================== */
+  --md-sys-shape-corner-none: 0px;
+  --md-sys-shape-corner-extra-small: 4px;
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-extra-large: 28px;
+  --md-sys-shape-corner-full: 9999px;
+
+  /* ==========================================================================
+     3. M3 Elevation Levels (--md-sys-elevation-*)
+     ========================================================================== */
+  --md-sys-elevation-0: none;
+  --md-sys-elevation-1: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+  --md-sys-elevation-2: 0 3px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+  --md-sys-elevation-3: 0 6px 12px -2px rgba(0, 0, 0, 0.09), 0 3px 6px -3px rgba(0, 0, 0, 0.05);
+  --md-sys-elevation-4: 0 10px 20px -3px rgba(0, 0, 0, 0.10), 0 4px 8px -4px rgba(0, 0, 0, 0.06);
+  --md-sys-elevation-5: 0 16px 28px -4px rgba(0, 0, 0, 0.12), 0 6px 12px -6px rgba(0, 0, 0, 0.08);
+
+  /* ==========================================================================
+     4. M3 Motion Curves & Durations
+     ========================================================================== */
+  --md-sys-motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-easing-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-sys-motion-easing-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --md-sys-motion-duration-short: 200ms;
+  --md-sys-motion-duration-medium: 300ms;
+  --md-sys-motion-duration-long: 500ms;
+
+  /* ==========================================================================
+     5. Aliases for Existing Component Compatibility
+     ========================================================================== */
+  --cb-bg-app: var(--md-sys-color-surface-dim);
+  --cb-surface: var(--md-sys-color-surface);
+  --cb-surface-subtle: var(--md-sys-color-surface-container);
+  --cb-surface-active: var(--md-sys-color-surface-container-high);
+  --cb-border: var(--md-sys-color-outline-variant);
+  --cb-border-dark: var(--md-sys-color-outline);
+  --cb-divider: var(--md-sys-color-outline-variant);
+
+  --cb-text-main: var(--md-sys-color-on-surface);
+  --cb-text-sub: var(--md-sys-color-on-surface-variant);
+  --cb-text-muted: var(--md-sys-color-outline);
+  --cb-text-inverse: var(--md-sys-color-inverse-on-surface);
+
+  --cb-accent: var(--md-sys-color-primary);
+  --cb-accent-hover: #1d4ed8;
+  --cb-accent-subtle: var(--md-sys-color-primary-container);
+  --cb-accent-text: var(--md-sys-color-on-primary-container);
+
+  --cb-status-success-bg: #ecfdf5;
+  --cb-status-success-text: #059669;
+  --cb-status-success-border: #a7f3d0;
+
+  --cb-status-warning-bg: #fffbeb;
+  --cb-status-warning-text: #d97706;
+  --cb-status-warning-border: #fde68a;
+
+  --cb-status-danger-bg: var(--md-sys-color-error-container);
+  --cb-status-danger-text: var(--md-sys-color-error);
+  --cb-status-danger-border: #fecaca;
+
+  --cb-shadow-sm: var(--md-sys-elevation-1);
+  --cb-shadow-md: var(--md-sys-elevation-2);
+  --cb-shadow-lg: var(--md-sys-elevation-3);
+  --cb-shadow-sheet: var(--md-sys-elevation-4);
+
+  --cb-radius-sm: var(--md-sys-shape-corner-small);
+  --cb-radius-md: var(--md-sys-shape-corner-medium);
+  --cb-radius-lg: var(--md-sys-shape-corner-large);
+  --cb-radius-full: var(--md-sys-shape-corner-full);
+
+  --cb-control-height: 52px;
+  --cb-btn-height: 56px;
+  --cb-tabbar-height: 74px;
+
+  /* 数字字体：思源宋体 (Noto Serif SC / Source Han Serif SC) */
+  --cb-font-numeric: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
+}
+
+/* 全局基底 */
+.cb-app-container {
+  font-family: -apple-system, BlinkMacSystemFont, "Roboto", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--md-sys-color-surface-dim);
+  color: var(--md-sys-color-on-surface);
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 等宽数字排版：统一应用思源宋体 */
+.cb-tabular-nums {
+  font-family: var(--cb-font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-serif-num {
+  font-family: var(--cb-font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-text-balance {
+  text-wrap: balance;
+}
+
+/* 焦点环无障碍 */
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+
+/* M3 触觉微动效按压 */
+.cb-pressable {
+  transition: transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+              box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+              background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.cb-pressable:active {
+  transform: scale(0.985);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
