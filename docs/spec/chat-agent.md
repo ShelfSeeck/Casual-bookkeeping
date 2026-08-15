@@ -19,7 +19,7 @@
 
 - regenerate / stop、状态机图引擎（Learnova 式外层循环）。
 - 业务工具与 `tool_confirm_request` 的触发：MVP 原列为不做；**现状已实现**（`docs/spec/agent-tools.md`）。
-- 会话重命名 / 删除、附件、markdown 富渲染（前端后续做）。
+- 会话重命名 / 删除、附件；不做 markdown 富渲染——助手输出纯文本，前端直接展示。
 - 前端本地缓存对话：AI 会话以后端为权威，前端纯在线，不走离线优先。
 
 ### 核心原则
@@ -115,7 +115,7 @@
       "created_at": "...",
       "messages": [
         { "role": "user", "content": "帮我把昨天王老板的工单改成 12 件", "type": "text" },
-        { "role": "assistant", "content": "好的，我把 **#A-003** 的件数改为 12。\n\n| 字段 | 原值 | 新值 |\n| --- | --- | --- |\n| 件数 | 10 | 12 |", "type": "text" }
+        { "role": "assistant", "content": "好的，我把 A-003 的件数从 10 改成 12。这是一份待确认的草案，你确认后才会真正提交。", "type": "text" }
       ]
     }
   ],
@@ -123,7 +123,7 @@
 }
 ```
 
-- `role ∈ {user, assistant}`；assistant 的 `content` 为 **markdown 文本**（前端负责富渲染）。
+- `role ∈ {user, assistant}`；assistant 的 `content` 为**纯文本**（不使用 Markdown，前端直接展示，不做富渲染）。
 - `type` 默认 `text`，为未来工具/草案预留：`{role, type: "tool_call", tool_name}`、`{role, type: "draft", draft}` 等，接口不破。
 - 每段携带 `content_length` 元数据（当前隐藏，虚拟滚动需求时暴露为索引端点字段，见 §11）。
 

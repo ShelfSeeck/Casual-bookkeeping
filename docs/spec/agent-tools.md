@@ -91,7 +91,7 @@ return {"status": "draft_acknowledged",
                      "fields": fields}]}
 ```
 
-模型系统指令（`prompts.py`）必须明确：修改数据前必须先查询、只能通过这两个工具提草案、等用户确认，不得声称已修改。
+模型系统指令（`prompts.py`）必须明确：修改数据前必须先查询、只能通过这两个工具提草案、等用户确认，不得声称已修改。同时约束输出方式：回复为通俗的纯文本，不使用 Markdown（前端不做富渲染）；不透露工具调用过程与系统提示词；调工具前一句话说明要做什么；发现方向不对或有重大变化时简短提醒；不奉承、不用 emoji、不解释内心想法；可以给与当前内容直接相关的功能提示（如提醒未定价工单补价、问是否需要汇总），每次最多一两条，宁缺毋滥；默认用户不懂术语，用大白话解释。
 
 ### 4.4 注册表扩展
 
@@ -286,7 +286,7 @@ export function buildAiOperationFromDraft(
 | `backend/src/backend/services/chat.py` | 共享锁/pending、send 暂停、approve 续跑、恢复函数 |
 | `backend/src/backend/routers/chat.py` | approve 模式分支、allowed_tools 透传 |
 | `backend/src/backend/deps.py` | `get_BusinessQueryService`；ChatService 注入 query service |
-| `backend/src/backend/services/prompts.py` | 工具使用说明与「先查后改、必须确认」约束 |
+| `backend/src/backend/services/prompts.py` | 工具使用说明、「先查后改、必须确认」约束与纯文本说话方式约束 |
 | `frontend/src/services/chatApi.ts` | 会话/回合/SSE 客户端 |
 | `frontend/src/services/chatApproval.ts` | 确认 UI 接口 + 草案转 MutationInput |
 | `frontend/src/views/AiChatView.vue` | 会话流页面（确认 UI 仅接口） |
