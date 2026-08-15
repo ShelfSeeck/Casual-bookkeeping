@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import LoginView from './components/LoginView.vue'
 import AppShell from './views/AppShell.vue'
 import { ApiClient } from './services/apiClient'
@@ -7,11 +7,17 @@ import { AuthStore } from './services/authStore'
 import { createBusinessDb } from './db/db'
 import { HttpSyncApi } from './services/syncApi'
 import { SyncManager } from './services/syncManager'
+import { installSyncTriggers } from './services/syncTriggers'
 import { ChatApi } from './services/chatApi'
 import { appState } from './state/appState'
 
 const store = ref<AuthStore | null>(null)
 let api: ApiClient | null = null
+let cleanupTriggers: (() => void) | null = null
+
+onBeforeUnmount(() => {
+  cleanupTriggers?.()
+})
 
 async function onAccountReady(phone: string) {
   if (!api) return
@@ -20,6 +26,14 @@ async function onAccountReady(phone: string) {
     onStatusChange: () => {},
   })
   await appState.init(db, syncManager)
+  // 启动 bootstrap/恢复同步：失败不阻塞本地页面（离线/首登无网时静默等待后续触发器）
+  try {
+    await syncManager.init()
+  } catch {
+    // ignore
+  }
+  cleanupTriggers?.()
+  cleanupTriggers = installSyncTriggers(() => syncManager.sync())
   appState.initChat(new ChatApi(api))
   void appState.loadChatSessions()
 }
