@@ -7,7 +7,9 @@ import type { CustomerCodeMapping } from '../db/schema/business/customerCodeMapp
 import { MutationService } from './mutation'
 import {
   SyncManager,
+  buildPushOperation,
   type PushOperation,
+  type PushResult,
   type SyncApi,
   type SyncStatus,
   type SyncManagerOptions,
@@ -49,6 +51,7 @@ function makeCustomer(syncId: string, rowVersion = 1): Customer {
   return {
     syncId,
     accountPhone: PHONE,
+    customerId: 1,
     canonicalName: '某某厂',
     archivedAt: null,
     rowVersion,
@@ -609,5 +612,104 @@ describe('SyncManager.pruneLocalHistory（docs/sync-protocol.md §10）', () => 
     const remaining = (await db.operations.toArray()).map((o) => o.operationId)
     expect(remaining).toContain('recent-0')
     expect(remaining).not.toContain('old-1')
+  })
+})
+
+describe('SyncManager.buildPushOperation（docs/spec/business-p0p1.md §5.6）', () => {
+  function makeEntry(
+    operationType: string,
+    changes: Array<{
+      entitySyncId: string
+      baseVersion: number
+      patch?: Record<string, unknown>
+      entityType?: string
+    }>,
+  ): Parameters<typeof buildPushOperation>[0] {
+    return {
+      queueId: 1,
+      operationId: 'op-1',
+      operationType,
+      entitySyncIds: changes.map((c) => c.entitySyncId),
+      command: { changes },
+      status: 'pending',
+      attempts: 0,
+      nextRetryAt: null,
+      sendingStartedAt: null,
+      lastErrorJson: null,
+      actorType: 'user',
+      sourceTurnId: null,
+      conflictJson: null,
+      createdAt: '2026-08-08T00:00:00Z',
+    }
+  }
+
+  it('change 未带 entityType 时回退 operationType 推导', () => {
+    const op = buildPushOperation(makeEntry('create_work_order', [
+      { entitySyncId: 'sync-a', baseVersion: 0, patch: { quantity: 5 } },
+    ]))
+    expect(op.changes[0].entityType).toBe('work_order')
+    expect(op.changes[0].fields).toEqual({ quantity: 5 })
+  })
+
+  it('create_customer_with_mapping 逐 change 使用各自的 entityType', () => {
+    const op = buildPushOperation(makeEntry('create_customer_with_mapping', [
+      { entitySyncId: 'sync-cust', baseVersion: 0, entityType: 'customer', patch: { canonical_name: '厂' } },
+      { entitySyncId: 'sync-map', baseVersion: 0, entityType: 'customer_code_mapping', patch: { customer_code: '001' } },
+    ]))
+    expect(op.changes.map((c) => c.entityType)).toEqual(['customer', 'customer_code_mapping'])
+  })
+
+  it('跨实体操作类型缺逐条 entityType → 抛 unknown_operation_type', () => {
+    expect(() =>
+      buildPushOperation(makeEntry('create_customer_with_mapping', [
+        { entitySyncId: 'sync-cust', baseVersion: 0 },
+      ])),
+    ).toThrow('unknown_operation_type')
+    expect(() =>
+      buildPushOperation(makeEntry('archive_customer_with_mappings', [
+        { entitySyncId: 'sync-cust', baseVersion: 1 },
+      ])),
+    ).toThrow('unknown_operation_type')
+  })
+
+  it('未知 operationType 仍抛 unknown_operation_type', () => {
+    expect(() =>
+      buildPushOperation(makeEntry('mystery_command', [
+        { entitySyncId: 'sync-a', baseVersion: 0 },
+      ])),
+    ).toThrow('unknown_operation_type')
+  })
+})
+
+describe('SyncManager accepted 回写 rowVersion（docs/spec/business-p0p1.md §5.7）', () => {
+  it('accepted 后把 result.row_versions 按 syncId 回写对应业务表（同一事务）', async () => {
+    await commitOrder('sync-a')
+    const orderOpId = (await db.outbox.toArray())[0].operationId
+    // 再提交一条客户创建，让同一批 Push 覆盖两张业务表
+    await mutation.commit({
+      operationType: 'create_customer',
+      entitySyncIds: ['sync-cust'],
+      changes: [
+        { entitySyncId: 'sync-cust', baseVersion: 0, entityType: 'customer', patch: { canonical_name: '某某厂' } },
+      ],
+      apply: (tx) => tx.customers.put(makeCustomer('sync-cust', 1)),
+      actorType: 'user',
+    })
+    const customerOpId = (await db.outbox.orderBy('queueId').toArray())[1].operationId
+
+    const push = vi.fn(async (): Promise<{ results: PushResult[] }> => ({
+      results: [
+        { operationId: orderOpId, status: 'accepted', serverSeq: 10, rowVersions: { 'sync-a': 7 } },
+        { operationId: customerOpId, status: 'accepted', serverSeq: 11, rowVersions: { 'sync-cust': 3 } },
+      ],
+    }))
+    await buildManager(makeApi({ push })).sync()
+
+    expect((await db.workOrders.get('sync-a'))?.rowVersion).toBe(7)
+    expect((await db.customers.get('sync-cust'))?.rowVersion).toBe(3)
+    // 同一事务副作用：outbox 清空、operations 标 synced
+    expect(await db.outbox.count()).toBe(0)
+    const ops = await db.operations.toArray()
+    expect(ops.every((o) => o.syncStatus === 'synced')).toBe(true)
   })
 })

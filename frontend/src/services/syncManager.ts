@@ -95,6 +95,8 @@ export interface SyncStatus {
 /** outbox.command.changes 里一条变更的结构（data-model.md §6.3）。 */
 interface OutboxCommandChange {
   entitySyncId: string
+  /** 跨实体操作逐 change 标注实体类型（docs/spec/business-p0p1.md §5.6）。 */
+  entityType?: string
   baseVersion: number
   baseSnapshot?: Record<string, unknown>
   patch?: Record<string, unknown>
@@ -221,6 +223,7 @@ export class SyncManager {
         if (c.entitySyncId !== conflictingId) {
           return {
             entitySyncId: c.entitySyncId,
+            ...(c.entityType !== undefined ? { entityType: c.entityType } : {}),
             baseVersion: c.baseVersion,
             baseSnapshot: c.baseSnapshot,
             patch: c.patch,
@@ -235,6 +238,7 @@ export class SyncManager {
           typeof theirs.row_version === 'number' ? theirs.row_version : 0
         return {
           entitySyncId: c.entitySyncId,
+          ...(c.entityType !== undefined ? { entityType: c.entityType } : {}),
           baseVersion: rowVersion,
           patch: mergedPatch,
         }
@@ -313,7 +317,7 @@ export class SyncManager {
     const pending = outbox.filter((e) => e.status === 'pending')
     if (pending.length > 0) {
       // Push 前校验 operationType 可映射，未知类型直接抛错、不静默写错表
-      const unknown = pending.find((e) => this.entityTypeFor(e.operationType) === null)
+      const unknown = pending.find((e) => entityTypeFor(e.operationType) === null)
       if (unknown) {
         throw new Error(`unknown_operation_type:${unknown.operationType}`)
       }
@@ -342,37 +346,7 @@ export class SyncManager {
   }
 
   private toPushOperation(entry: OutboxEntry): PushOperation {
-    const command = entry.command as {
-      changes?: OutboxCommandChange[]
-      reverts_operation_id?: string
-    }
-    const entityType = this.entityTypeFor(entry.operationType)
-    if (!entityType) {
-      throw new Error(`unknown_operation_type:${entry.operationType}`)
-    }
-    return {
-      operationId: entry.operationId,
-      operationType: entry.operationType,
-      actorType: entry.actorType,
-      sourceTurnId: entry.sourceTurnId,
-      revertsOperationId: command?.reverts_operation_id ?? null,
-      changes: (command?.changes ?? []).map((c) => ({
-        entityType,
-        entitySyncId: c.entitySyncId,
-        baseVersion: c.baseVersion,
-        fields: c.patch ?? {},
-      })),
-    }
-  }
-
-  /** operationType → 后端实体类型（docs/data-model.md §5.3 entity_type 取值）；未知返回 null。 */
-  private entityTypeFor(operationType: string): string | null {
-    // 注意顺序：customer_code_mapping 含 "customer"，必须在其之前判断
-    if (operationType.includes('work_order')) return 'work_order'
-    if (operationType.includes('customer_code_mapping')) return 'customer_code_mapping'
-    if (operationType.includes('service_category')) return 'service_category'
-    if (operationType.includes('customer')) return 'customer'
-    return null
+    return buildPushOperation(entry)
   }
 
   /** pending → sending，记录 sendingStartedAt（判断中断后挂起的发送任务）。 */
@@ -427,19 +401,28 @@ export class SyncManager {
     })
   }
 
-  /** Push 结果原子应用（docs/sync-protocol.md §4.1）：删 outbox + 写 operations 镜像在同一个事务。 */
+  /** Push 结果原子应用（docs/sync-protocol.md §4.1）：删 outbox + 写 operations 镜像 + 回写 rowVersion 在同一个事务。 */
   private async applyPushResults(
     entries: OutboxEntry[],
     results: PushResult[],
   ): Promise<void> {
     const now = new Date().toISOString()
     let hadConflict = false
-    await this.db.transaction('rw', [this.db.outbox, this.db.operations], async () => {
+    await this.db.transaction('rw', [
+      this.db.workOrders,
+      this.db.customers,
+      this.db.customerCodeMappings,
+      this.db.serviceCategories,
+      this.db.outbox,
+      this.db.operations,
+    ], async () => {
       for (const result of results) {
         const entry = entries.find((e) => e.operationId === result.operationId)
         if (!entry) continue
         if (result.status === 'accepted') {
-          // 删 outbox，operations 标 synced + 填 serverSeq（同一事务，不留半状态）
+          // 回写服务端确认的 rowVersion（docs/spec/business-p0p1.md §5.7），
+          // 与删 outbox、operations 标 synced 同事务，避免本地版本停留在旧值导致假冲突。
+          await this.writeBackRowVersions(entry, result.rowVersions ?? {})
           await this.db.outbox.delete(entry.queueId)
           await this.db.operations.put({
             operationId: entry.operationId,
@@ -469,6 +452,54 @@ export class SyncManager {
     })
     if (hadConflict) {
       this.callbacks.onStatusChange({ state: 'conflict' })
+    }
+  }
+
+  /** 把 accepted 结果里的 row_versions 按 syncId 回写到四张业务表对应记录。 */
+  private async writeBackRowVersions(
+    entry: OutboxEntry,
+    rowVersions: Record<string, number>,
+  ): Promise<void> {
+    const command = entry.command as {
+      changes?: OutboxCommandChange[]
+    }
+    const entityTypeBySyncId = new Map<string, string>()
+    for (const c of command.changes ?? []) {
+      const entityType = c.entityType ?? entityTypeFor(entry.operationType)
+      if (entityType) entityTypeBySyncId.set(c.entitySyncId, entityType)
+    }
+
+    for (const [syncId, rowVersion] of Object.entries(rowVersions)) {
+      let entityType = entityTypeBySyncId.get(syncId)
+      if (!entityType) {
+        entityType = await this.findBusinessEntityType(syncId)
+      }
+      if (!entityType) continue
+      await this.updateBusinessRowVersion(entityType, syncId, rowVersion)
+    }
+  }
+
+  private async findBusinessEntityType(syncId: string): Promise<string | undefined> {
+    if (await this.db.workOrders.get(syncId)) return 'work_order'
+    if (await this.db.customers.get(syncId)) return 'customer'
+    if (await this.db.customerCodeMappings.get(syncId)) return 'customer_code_mapping'
+    if (await this.db.serviceCategories.get(syncId)) return 'service_category'
+    return undefined
+  }
+
+  private async updateBusinessRowVersion(
+    entityType: string,
+    syncId: string,
+    rowVersion: number,
+  ): Promise<void> {
+    if (entityType === 'work_order') {
+      await this.db.workOrders.update(syncId, { rowVersion })
+    } else if (entityType === 'customer') {
+      await this.db.customers.update(syncId, { rowVersion })
+    } else if (entityType === 'customer_code_mapping') {
+      await this.db.customerCodeMappings.update(syncId, { rowVersion })
+    } else if (entityType === 'service_category') {
+      await this.db.serviceCategories.update(syncId, { rowVersion })
     }
   }
 
@@ -552,6 +583,61 @@ export class SyncManager {
     if (operations.length === 0) return 0
     return operations[operations.length - 1].serverSeq
   }
+}
+
+/**
+ * outbox 条目 → PushOperation 的公共纯函数（docs/spec/business-p0p1.md §5.6）。
+ * 每条 change 的 entityType：c.entityType ?? entityTypeFor(operationType)。
+ * 跨实体操作类型（create_customer_with_mapping / archive_customer_with_mappings）
+ * 必须逐 change 标注，缺失直接抛 unknown_operation_type。
+ */
+export function buildPushOperation(entry: OutboxEntry): PushOperation {
+  const command = entry.command as {
+    changes?: OutboxCommandChange[]
+    reverts_operation_id?: string
+  }
+  return {
+    operationId: entry.operationId,
+    operationType: entry.operationType,
+    actorType: entry.actorType,
+    sourceTurnId: entry.sourceTurnId,
+    revertsOperationId: command?.reverts_operation_id ?? null,
+    changes: (command?.changes ?? []).map((c) => ({
+      entityType: resolveEntityType(entry.operationType, c),
+      entitySyncId: c.entitySyncId,
+      baseVersion: c.baseVersion,
+      fields: c.patch ?? {},
+    })),
+  }
+}
+
+/** operationType → 后端实体类型（docs/data-model.md §5.3 entity_type 取值）；未知返回 null。 */
+function entityTypeFor(operationType: string): string | null {
+  // 注意顺序：customer_code_mapping 含 "customer"，必须在其之前判断
+  if (operationType.includes('work_order')) return 'work_order'
+  if (operationType.includes('customer_code_mapping')) return 'customer_code_mapping'
+  if (operationType.includes('service_category')) return 'service_category'
+  if (operationType.includes('customer')) return 'customer'
+  return null
+}
+
+function resolveEntityType(
+  operationType: string,
+  change: OutboxCommandChange,
+): string {
+  if (change.entityType) return change.entityType
+  // 跨实体操作必须逐 change 标注，不允许回退（docs/spec/business-p0p1.md §5.6）
+  if (
+    operationType === 'create_customer_with_mapping' ||
+    operationType === 'archive_customer_with_mappings'
+  ) {
+    throw new Error(`unknown_operation_type:${operationType}`)
+  }
+  const fallback = entityTypeFor(operationType)
+  if (!fallback) {
+    throw new Error(`unknown_operation_type:${operationType}`)
+  }
+  return fallback
 }
 
 // 后端快照是 snake_case（sync_id/row_version/account_phone...），前端 Dexie 用 camelCase
