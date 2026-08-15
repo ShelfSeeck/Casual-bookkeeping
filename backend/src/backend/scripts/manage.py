@@ -9,6 +9,7 @@ argparse 只负责参数解析，main() 负责开连接、提交、打印结果�
 """
 
 import argparse
+import json
 from datetime import datetime, timedelta, timezone
 
 from backend.config import Settings
@@ -69,6 +70,104 @@ def revoke_Device(connection, phone: str, device_id: str) -> None:
     AccountDevicesRepository(connection).revoke_Device(phone, device_id)
 
 
+# ---------- 账户与库维护（新增维护子命令的纯函数） ----------
+
+# delete_Account 的级联删除顺序：先删子表、最后删 accounts。
+# chat_turns / operation_changes 没有 account_phone 列，经会话/操作主表定位。
+_ACCOUNT_CASCADE = [
+    ("chat_turns", "session_id IN (SELECT session_id FROM chat_sessions WHERE account_phone = ?)"),
+    ("chat_sessions", "account_phone = ?"),
+    ("operation_changes", "operation_id IN (SELECT operation_id FROM database_operations WHERE account_phone = ?)"),
+    ("database_operations", "account_phone = ?"),
+    ("work_orders", "account_phone = ?"),
+    ("customer_code_mappings", "account_phone = ?"),
+    ("customers", "account_phone = ?"),
+    ("service_categories", "account_phone = ?"),
+    ("account_devices", "account_phone = ?"),
+    ("accounts", "phone = ?"),
+]
+
+# db-rows 支持的过滤列：列不存在时该过滤条件自动跳过。
+_ROW_FILTERS = (
+    ("account_phone", "phone"),
+    ("sync_id", "sync_id"),
+)
+
+
+def list_Accounts(connection) -> list:
+    """列出全部账户（phone / status / created_at），按创建时间升序。"""
+    rows = connection.execute(
+        "SELECT phone, status, created_at FROM accounts ORDER BY created_at ASC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_Account(connection, phone: str) -> dict[str, int]:
+    """物理删除账户及其关联行（设备/业务/操作/聊天，账户维度全清）。
+
+    返回各表删除行数；账户不存在时抛 ValueError（避免误以为已删除）。
+    """
+    account = AccountsRepository(connection).get_Account(phone)
+    if account is None:
+        raise ValueError(f"账户不存在: {phone}")
+    deleted: dict[str, int] = {}
+    for table, where in _ACCOUNT_CASCADE:
+        cursor = connection.execute(f"DELETE FROM {table} WHERE {where}", (account.phone,))
+        deleted[table] = cursor.rowcount
+    return deleted
+
+
+def list_Tables(connection) -> list:
+    """列出全部业务表名与行数（排除 sqlite_ 内部表），供库维护排查。"""
+    rows = connection.execute(
+        "SELECT name FROM sqlite_master"
+        " WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        " ORDER BY name"
+    ).fetchall()
+    tables: list[dict] = []
+    for row in rows:
+        name = row["name"]
+        count = connection.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()["n"]
+        tables.append({"table": name, "rows": count})
+    return tables
+
+
+def list_Rows(
+    connection,
+    table: str,
+    *,
+    phone: str | None = None,
+    sync_id: str | None = None,
+    limit: int = 20,
+) -> list:
+    """按表查询具体数据行（JSON 输出），支持按 account_phone / sync_id 过滤。
+
+    表名必须是库里真实存在的表（防 SQL 注入，白名单 = sqlite_master 实际表名）；
+    目标表没有对应列时该过滤条件跳过；limit 收窄到 [1, 500]。
+    """
+    table_rows = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchall()
+    if not table_rows:
+        raise ValueError(f"表不存在: {table}")
+    columns = [row["name"] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()]
+    where: list[str] = []
+    params: list[str] = []
+    for column, param in _ROW_FILTERS:
+        value = {"phone": phone, "sync_id": sync_id}[param]
+        if value is not None and column in columns:
+            where.append(f"{column} = ?")
+            params.append(value)
+    where_sql = f" WHERE {' AND '.join(where)}" if where else ""
+    limit = max(1, min(limit, 500))
+    rows = connection.execute(
+        f"SELECT * FROM {table}{where_sql} LIMIT ?",
+        params + [limit],
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _connection():
     """打开数据库连接并确保表就绪（应用 schema 幂等建表）。"""
     settings = Settings()
@@ -118,6 +217,29 @@ def main(argv: list[str] | None = None) -> None:
     p_revoke.add_argument("device_id", help="设备标识（dev- + 12 位十六进制）")
     p_revoke.set_defaults(func=revoke_Device)
 
+    # list-accounts：列出全部账户
+    p_accounts = sub.add_parser("list-accounts", help="列出全部账户")
+    p_accounts.set_defaults(func=list_Accounts)
+
+    # delete-account：物理删除账户（--yes 防误删，级联清空关联行）
+    p_delete = sub.add_parser("delete-account", help="物理删除账户及其关联行")
+    p_delete.add_argument("phone", help="11 位手机号")
+    p_delete.add_argument("--yes", action="store_true", required=True,
+                          help="确认物理删除（不可恢复，会级联清空该账户全部数据）")
+    p_delete.set_defaults(func=delete_Account)
+
+    # db-tables：表与行数
+    p_tables = sub.add_parser("db-tables", help="列出全部业务表与行数")
+    p_tables.set_defaults(func=list_Tables)
+
+    # db-rows：查具体数据行
+    p_rows = sub.add_parser("db-rows", help="按表查询数据行（JSON 输出）")
+    p_rows.add_argument("table", help="表名（如 work_orders / customers）")
+    p_rows.add_argument("--phone", help="按 account_phone 过滤（列存在时生效）")
+    p_rows.add_argument("--sync-id", help="按 sync_id 过滤（列存在时生效）")
+    p_rows.add_argument("--limit", type=int, default=20, help="最多返回行数，范围 1-500")
+    p_rows.set_defaults(func=list_Rows)
+
     args = parser.parse_args(argv)
 
     connection = _connection()
@@ -141,6 +263,23 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "revoke-device":
             args.func(connection, args.phone, args.device_id)
             print(f"设备已踢出: {args.phone} / {args.device_id}")
+        elif args.command == "list-accounts":
+            for account in args.func(connection):
+                print(f"  {account['phone']}  status={account['status']}"
+                      f"  created={account['created_at']}")
+        elif args.command == "delete-account":
+            deleted = args.func(connection, args.phone)
+            for table, count in deleted.items():
+                if count:
+                    print(f"  已删除 {table}: {count} 行")
+            print(f"账户已物理删除: {args.phone}")
+        elif args.command == "db-tables":
+            for table in args.func(connection):
+                print(f"  {table['table']:<24} {table['rows']} 行")
+        elif args.command == "db-rows":
+            rows = args.func(connection, args.table, phone=args.phone,
+                             sync_id=args.sync_id, limit=args.limit)
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
         connection.commit()
     except ValueError as exc:
         connection.rollback()
