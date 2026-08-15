@@ -247,25 +247,33 @@ export interface ChatSseEvent = { type:'text_delta'; content:string }
 export class ChatApi {
   createSession(title): Promise<ChatSession>
   listSessions(): Promise<ChatSession[]>
-  listTurns(sid, afterTurnId?, limit?): Promise<{turns; next_cursor}>
+  listTurns(sid, afterTurnId?, limit?): Promise<{turns; nextCursor}>
   streamTurn(sid, payload: {turn_id?; message?; allowed_tools?; approval_request_id?; approved?},
              onEvent: (e: ChatSseEvent)=>void, signal?: AbortSignal): Promise<void>
-  approveTurn(sid, approvalRequestId, approved): Promise<void>
+  // approve 模式同样是 SSE（chat-agent.md §4.4 两种模式响应均为 text/event-stream）：
+  approveTurn(sid, approvalRequestId, approved, onEvent, signal?): Promise<void>
 }
 // SSE 用 fetch + ReadableStream（POST 不支持 EventSource）；start 阶段 401 → refreshNow 后重试一次
 
 // chatApproval：确认 UI 的接口契约（本期无实现组件）
 export interface ChatApprovalUi {
-  /** 收到写草案时调用；resolve true 才继续 approve+本地提交。默认实现抛 "approval_ui_not_connected"。 */
+  /** 收到写草案时调用；resolve true 才继续 approve+本地提交。默认实现始终 false。 */
   requestApproval(draft: unknown): Promise<boolean>
 }
 export const notConnectedApprovalUi: ChatApprovalUi
-export function buildAiOperationFromDraft(turnId: string, draft: unknown): MutationInput | null
-// 校验 draft 形状后补齐 operationId(新生成)/actorType='ai'/sourceTurnId=turnId；
-// entity_sync_id 为 null 时生成 sync-<12hex>；返回可直接喂给 MutationService.commit 的输入
+export function buildAiOperationFromDraft(
+  turnId: string, toolName: string, draft: unknown
+): MutationInput | null
+// draft 即 tool_confirm_request.draft（工具原始参数，§5.6）：
+//   create_work_order → {entity_sync_id: string|null, fields}
+//   update_work_order → {entity_sync_id: string, base_version: number, fields}
+// 适配器按 toolName 推导 operation_type/entity_type；填充 actorType='ai'、sourceTurnId=turnId；
+// create 的 entity_sync_id 为 null 时生成 sync-<12hex>；update 要求 base_version 为正整数。
+// MutationInput 本身不含 operationId —— 由 MutationService.commit 生成（docs/data-model.md §6.1）。
+// 返回可直接喂给 MutationService.commit 的输入；形状不合法返回 null。
 ```
 
-`AiChatView` 收到 `tool_confirm_request`：存在注入的 `ChatApprovalUi` → 调 `requestApproval(draft)`；确认后先 `buildAiOperationFromDraft` + `MutationService.commit` + `SyncManager.sync()`，再 `approveTurn(..., true)`；拒绝则 `approveTurn(..., false)`。**本期** `ChatApprovalUi` 使用 `notConnectedApprovalUi`（默认行为），只把事件和草稿留在消息流占位文本里，不发确认。这一约定保证：没有确认 UI 就没有任何写操作。
+后续页面收到 `tool_confirm_request` 时：存在注入的 `ChatApprovalUi` → 调 `requestApproval(draft)`；确认后先 `buildAiOperationFromDraft(turnId, tool_name, draft)` + `MutationService.commit` + `SyncManager.sync()`，再 `approveTurn(sid, request_id, true, onEvent)`；拒绝则 `approveTurn(..., false, onEvent)`。**本期** `ChatApprovalUi` 使用 `notConnectedApprovalUi`（始终 false），没有确认 UI 就没有任何写操作。
 
 ## 9. 最终文件清单
 

@@ -155,13 +155,13 @@
 
 **范围**：只做接口代码与单测，**禁止新增或修改任何 `.vue` 组件**（`App.vue`、`LoginView` 等一律不动）。
 
-1. **`services/chatApi.ts`**（§8）：`ChatApi(apiClient)`；`createSession/listSessions/listTurns`；`streamTurn(sid, payload, onEvent, signal?)` 用 `fetch + ReadableStream` 解析 SSE（`data: ` 帧按 `\n\n` 分割；非 2xx 抛带 error_code 的 Error；start 时 401 → `refreshNow()` 重试一次）；`approveTurn`。
-2. **`services/chatApproval.ts`**（§8）：`ChatApprovalUi` 接口、`notConnectedApprovalUi`（`requestApproval` 返回 `Promise.resolve(false)` 且调用方据此**不提交草案**、不发 approve）、`buildAiOperationFromDraft(turnId, draft)`：校验 draft 形状（`operation_type ∈ {create_work_order, update_work_order}`、changes 数组单条、entity_type=work_order、fields 存在），补齐 `operationId = newId('op')`、`actorType='ai'`、`sourceTurnId=turnId`；`entity_sync_id` 为 null 时生成 `sync-<12hex>` 并 `baseVersion=0`；update 必须携带数字 `base_version`；返回 `MutationInput`，形状与 `services/businessCommands.ts` 的 commit 输入一致；不合法返回 null。
+1. **`services/chatApi.ts`**（§8）：`ChatApi(apiClient)`；`createSession/listSessions/listTurns`；`streamTurn(sid, payload, onEvent, signal?)` 用 `fetch + ReadableStream` 解析 SSE（`data: ` 帧按 `\n\n` 分割；非 2xx 抛带 error_code 的 Error；start 时 401 → `refreshNow()` 重试一次）；**`approveTurn(sid, approvalRequestId, approved, onEvent, signal?)` 复用 SSE 传输**（approve 模式响应也是 `text/event-stream`，`docs/spec/chat-agent.md` §4.4）。
+2. **`services/chatApproval.ts`**（§8，契约以 §5.6 实际 draft 为准）：`ChatApprovalUi` 接口、`notConnectedApprovalUi`（`requestApproval` 恒 `false`）、`buildAiOperationFromDraft(turnId, toolName, draft)`：draft 即工具原始参数（`create_work_order` → `{entity_sync_id, fields}`；`update_work_order` → `{entity_sync_id, base_version, fields}`）；按 `toolName` 推导 `operationType` 与 `entityType='work_order'`；填充 `actorType='ai'`、`sourceTurnId=turnId`；create 的 `entity_sync_id` 为 null 时生成 `sync-<12hex>`、`baseVersion=0`；update 要求 `entity_sync_id` 为字符串、`base_version` 为**正整数**（`Number.isInteger` 且 >0）；`apply` 复用 `applyWorkOrderPatch`；返回 `MutationInput`（MutationInput 本身不含 operationId——由 `MutationService.commit` 生成）；形状不合法返回 null。
 3. **不做**：`AiChatView.vue`、AppShell 接线、消息流渲染——全部留给后续页面任务（需用户确认后才启动）。
 
 **测试**：
 - `chatApi.test.ts`：mock global fetch 断言 JSON 端点路径/方法与 SSE 帧解析（多个 `data:` 帧、跨 chunk 拆分）；401 → refresh 重试一次。
-- `chatApproval.test.ts`：`buildAiOperationFromDraft` 对 create/update/缺字段/错误 operation_type 的四种行为；`notConnectedApprovalUi.requestApproval` 恒 false。
+- `chatApproval.test.ts`：`buildAiOperationFromDraft` 对 create（含 null entity_sync_id）/update/缺字段/错误 toolName/非法 base_version 的行为；`notConnectedApprovalUi.requestApproval` 恒 false。
 - 现有前端测试全绿。
 
 **验收**：`npm run test && npm run build` 全绿；无任何 `.vue` 文件被新增或修改；SSE 事件类型与 `docs/spec/agent-tools.md` §5.6 一致。
