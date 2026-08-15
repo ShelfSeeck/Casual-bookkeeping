@@ -111,7 +111,7 @@ watch(
           </div>
           <div>
             <h1 class="cb-chat-title cb-text-balance">AI 记账助手</h1>
-            <span class="cb-chat-sub">本地优先 · 智能记账与查账</span>
+            <span class="cb-chat-sub">仅联网可用</span>
           </div>
         </div>
 
@@ -135,25 +135,6 @@ watch(
         </div>
       </div>
     </header>
-
-    <!-- M3 Suggestion Chips Toolbar -->
-    <div class="cb-prompts-bar" role="toolbar" aria-label="常用快捷指令">
-      <div class="cb-prompts-label-row">
-        <span class="cb-prompts-label">✨ 推荐快捷指令</span>
-      </div>
-      <div class="cb-prompts-scroll">
-        <button
-          v-for="p in quickPrompts"
-          :key="p"
-          type="button"
-          class="cb-prompt-chip cb-pressable"
-          :aria-label="`执行快捷指令：${p}`"
-          @click="send(p)"
-        >
-          <span>{{ p }}</span>
-        </button>
-      </div>
-    </div>
 
     <!-- 消息对话流 -->
     <main
@@ -217,6 +198,22 @@ watch(
         </div>
       </div>
     </main>
+
+    <!-- M3 Suggestion Chips Toolbar：放在消息区下方，靠近输入框 -->
+    <div class="cb-prompts-bar" role="toolbar" aria-label="常用快捷指令">
+      <div class="cb-prompts-scroll">
+        <button
+          v-for="p in quickPrompts"
+          :key="p"
+          type="button"
+          class="cb-prompt-chip cb-pressable"
+          :aria-label="`执行快捷指令：${p}`"
+          @click="send(p)"
+        >
+          <span>{{ p }}</span>
+        </button>
+      </div>
+    </div>
 
     <!-- M3 底部输入 Dock -->
     <footer class="cb-chat-input-bar">
@@ -420,30 +417,19 @@ watch(
 }
 
 /* ==========================================================================
-   2. M3 Suggestion Chips Toolbar
+   2. M3 Suggestion Chips Toolbar（消息区下方，贴近输入框）
    ========================================================================== */
 .cb-prompts-bar {
   background: var(--md-sys-color-surface);
   padding: 8px 16px 10px;
-  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.cb-prompts-label-row {
-  display: flex;
-  align-items: center;
-}
-
-.cb-prompts-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--md-sys-color-outline);
 }
 
 .cb-prompts-scroll {
   display: flex;
+  flex: 1;
+  min-width: 0;
   gap: 8px;
   overflow-x: auto;
   scrollbar-width: none;
