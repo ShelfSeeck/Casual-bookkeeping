@@ -241,7 +241,7 @@ api_key = "sk-..."
 | repositories | `repositories/chat_sessions.py`、`repositories/chat_turns.py` | 会话/回合的受控读写；`account_phone` 归属校验、`turn_id` upsert、按游标分页取回合 |
 | services | `services/model_config.py` | `get_ActiveModelConfig()`：每次重读 `config.toml [model]` |
 | services | `services/business_query.py` | `BusinessQueryService`：四个业务仓库的只读查询门面（供 Agent 工具使用，见 `docs/spec/agent-tools.md` §6） |
-| services | `services/prompts.py` | Agent 系统指令：先查后改、只能通过写草案工具提议、必须等用户确认 |
+| services | `services/prompts.py` | Agent 系统指令：先查后改、只能通过写草案工具提议、必须等用户确认；`render_Instructions()` 动态注入当前日期等上下文 |
 | services | `services/agent.py` | 构建 Pydantic AI Agent：模型来自 `get_ActiveModelConfig()`，工具来自 `build_tools(allowed)`，`deps_type=BusinessToolDeps`，`output_type=[str, DeferredToolRequests]` |
 | services | `services/chat.py` | 编排：单飞锁（按 `account_phone`，进程内 `asyncio.Lock` 字典）、`run_stream_events` 事件转发、send 暂停（部分回合落库 + `tool_confirm_request`）/ approve 续跑（整体覆盖落库）/ 恢复 |
 | tools | `tools/registry.py` | `register_tool` 注册表（`requires_approval` 元数据）+ `build_tools(allowed)` 白名单过滤；**现状已实现** |

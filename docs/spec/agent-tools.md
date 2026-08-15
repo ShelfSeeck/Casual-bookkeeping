@@ -109,11 +109,13 @@ def requires_approval_for(tool_name) -> bool
 新增 `tools/business_tools.py` 注册 §4.2/§4.3 的全部工具。`build_Agent` 改为：
 
 ```python
-Agent(model, name=AGENT_NAME, instructions=INSTRUCTIONS,
+Agent(model, name=AGENT_NAME, instructions=render_Instructions(),
       deps_type=BusinessToolDeps,
       output_type=[str, DeferredToolRequests],   # 文本正常输出；写草案暂停时输出 DeferredToolRequests
       tools=build_tools(allowed_tools))
 ```
+
+`render_Instructions()` 每次构建 Agent 时把动态上下文注入指令模板，MVP 注入当前日期（用户说“今天/本周”时按该日期推算，不再反问日期）；后续动态内容挂同一入口。
 
 > 版本注意（Pydantic AI 2.27.1 实测）：工具函数与 `RunContext` 必须显式类型标注，否则 `requires_approval` 不会暂停而会直接执行工具。所有工具实现按 §4 签名写全注解。
 

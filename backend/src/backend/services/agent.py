@@ -18,7 +18,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from backend.services.business_query import BusinessQueryService
 from backend.services.model_config import ModelConfig, get_ActiveModelConfig
-from backend.services.prompts import INSTRUCTIONS
+from backend.services.prompts import render_Instructions
 from backend.tools.registry import build_tools
 
 AGENT_NAME = "bookkeeping_assistant"
@@ -54,7 +54,7 @@ def build_Agent(
     return Agent(
         model,
         name=AGENT_NAME,
-        instructions=INSTRUCTIONS,
+        instructions=render_Instructions(),
         deps_type=BusinessToolDeps,
         output_type=[str, DeferredToolRequests],
         tools=build_tools(allowed_tools),
