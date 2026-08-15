@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import '../styles/design-tokens.css'
 import { appState } from '../state/appState'
 import TabBar from '../components/navigation/AppTabBar.vue'
 import UndoSnackbar from '../components/common/UndoSnackbar.vue'

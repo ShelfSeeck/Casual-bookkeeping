@@ -7,6 +7,8 @@ body {
   margin: 0;
   min-height: 100vh;
   min-height: 100dvh;
+  background: var(--md-sys-color-surface-dim);
+  color: var(--md-sys-color-on-surface);
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

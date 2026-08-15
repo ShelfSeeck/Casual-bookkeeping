@@ -149,7 +149,7 @@ function closeOrderDetail() {
 
 .cb-sum-strong {
   font-family: var(--cb-font-numeric);
-  color: #ffffff;
+  color: var(--cb-surface);
   font-weight: 800;
   font-size: 15px;
 }
@@ -161,7 +161,7 @@ function closeOrderDetail() {
 .cb-unpriced-flag {
   font-family: var(--cb-font-numeric);
   font-size: 11px;
-  color: #fbbf24;
+  color: var(--cb-status-warning-text);
 }
 
 .cb-sum-right {
@@ -179,7 +179,7 @@ function closeOrderDetail() {
   font-family: var(--cb-font-numeric);
   font-size: 17px;
   font-weight: 800;
-  color: #34d399;
+  color: var(--cb-status-success-text);
 }
 
 /* 主体列表 */

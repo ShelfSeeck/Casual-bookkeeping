@@ -207,7 +207,7 @@ function handleDelete() {
 .cb-sheet-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--cb-overlay);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: flex-end;
@@ -383,7 +383,7 @@ function handleDelete() {
 }
 
 .cb-status-toggle-btn--done {
-  background: #059669;
+  background: var(--cb-status-success-text);
 }
 
 /* 次级操作 */

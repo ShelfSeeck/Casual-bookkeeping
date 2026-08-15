@@ -1,5 +1,13 @@
-/* Material Design 3 (M3) Design Tokens & Baseline Theme */
+/* Material Design 3 (M3) Design Tokens & Baseline Theme
+   主题切换契约：
+   - html[data-theme="light"]：强制浅色
+   - html[data-theme="dark"]：强制深色
+   - html[data-theme="system"]（或缺失）：跟随 prefers-color-scheme
+   index.html 引导脚本与 src/utils/theme.ts 负责写入该属性。
+*/
 :root {
+  color-scheme: light;
+
   /* ==========================================================================
      1. M3 Color System (--md-sys-color-*)
      ========================================================================== */
@@ -113,6 +121,22 @@
   --cb-status-danger-text: var(--md-sys-color-error);
   --cb-status-danger-border: #fecaca;
 
+  --cb-status-info-bg: #eff6ff;
+  --cb-status-info-text: #2563eb;
+  --cb-status-info-border: #bfdbfe;
+
+  --cb-status-purple-bg: #f5f3ff;
+  --cb-status-purple-text: #7c3aed;
+  --cb-status-purple-border: #ddd6fe;
+
+  --cb-confirm-bg: #059669;
+  --cb-confirm-hover: #047857;
+  --cb-confirm-text: #ffffff;
+
+  --cb-overlay: rgba(0, 0, 0, 0.4);
+  --cb-hairline: rgba(0, 0, 0, 0.05);
+  --cb-inverse-hairline: rgba(255, 255, 255, 0.1);
+
   --cb-shadow-sm: var(--md-sys-elevation-1);
   --cb-shadow-md: var(--md-sys-elevation-2);
   --cb-shadow-lg: var(--md-sys-elevation-3);
@@ -129,6 +153,194 @@
 
   /* 数字字体：思源宋体 (Noto Serif SC / Source Han Serif SC) */
   --cb-font-numeric: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
+
+  /* ==========================================================================
+     6. Vant 4 主题桥接：组件消费项目 M3 tokens
+     ========================================================================== */
+  --van-primary-color: var(--md-sys-color-primary);
+  --van-background: var(--md-sys-color-surface-dim);
+  --van-background-2: var(--md-sys-color-surface);
+  --van-background-3: var(--md-sys-color-surface-container);
+  --van-text-color: var(--md-sys-color-on-surface);
+  --van-text-color-2: var(--md-sys-color-on-surface-variant);
+  --van-text-color-3: var(--md-sys-color-outline);
+  --van-active-color: var(--md-sys-color-primary-container);
+  --van-border-color: var(--md-sys-color-outline-variant);
+  --van-cell-background: var(--md-sys-color-surface);
+  --van-cell-group-background: var(--md-sys-color-surface);
+  --van-cell-border-color: var(--md-sys-color-outline-variant);
+  --van-cell-text-color: var(--md-sys-color-on-surface);
+  --van-cell-value-color: var(--md-sys-color-on-surface-variant);
+  --van-cell-label-color: var(--md-sys-color-on-surface-variant);
+  --van-field-label-color: var(--md-sys-color-on-surface-variant);
+  --van-field-input-text-color: var(--md-sys-color-on-surface);
+  --van-field-placeholder-text-color: var(--md-sys-color-outline);
+  --van-button-primary-background: var(--md-sys-color-primary);
+  --van-button-primary-border-color: var(--md-sys-color-primary);
+  --van-button-primary-color: var(--md-sys-color-on-primary);
+  --van-popup-background: var(--md-sys-color-surface);
+}
+
+/* ==========================================================================
+   深色主题 1/2：html[data-theme="system"]（或未设置）跟随系统深色
+   ========================================================================== */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --md-sys-color-primary: #93c5fd;
+    --md-sys-color-on-primary: #0f172a;
+    --md-sys-color-primary-container: #1d4ed8;
+    --md-sys-color-on-primary-container: #dbeafe;
+
+    --md-sys-color-secondary: #cbd5e1;
+    --md-sys-color-on-secondary: #0f172a;
+    --md-sys-color-secondary-container: #334155;
+    --md-sys-color-on-secondary-container: #e2e8f0;
+
+    --md-sys-color-tertiary: #7dd3fc;
+    --md-sys-color-on-tertiary: #082f49;
+    --md-sys-color-tertiary-container: #0369a1;
+    --md-sys-color-on-tertiary-container: #e0f2fe;
+
+    --md-sys-color-error: #f87171;
+    --md-sys-color-on-error: #450a0a;
+    --md-sys-color-error-container: #7f1d1d;
+    --md-sys-color-on-error-container: #fee2e2;
+
+    --md-sys-color-surface: #0f172a;
+    --md-sys-color-surface-dim: #0b1220;
+    --md-sys-color-surface-bright: #1e293b;
+    --md-sys-color-surface-container-lowest: #0a0f1e;
+    --md-sys-color-surface-container-low: #131c2e;
+    --md-sys-color-surface-container: #1e293b;
+    --md-sys-color-surface-container-high: #2b3a52;
+    --md-sys-color-surface-container-highest: #3b4a66;
+
+    --md-sys-color-on-surface: #e2e8f0;
+    --md-sys-color-on-surface-variant: #94a3b8;
+    --md-sys-color-outline: #64748b;
+    --md-sys-color-outline-variant: #334155;
+
+    --md-sys-color-inverse-surface: #e2e8f0;
+    --md-sys-color-inverse-on-surface: #0f172a;
+    --md-sys-color-inverse-primary: #1d4ed8;
+
+    --md-sys-elevation-1: 0 1px 3px 0 rgba(0, 0, 0, 0.42), 0 1px 2px -1px rgba(0, 0, 0, 0.3);
+    --md-sys-elevation-2: 0 3px 6px -1px rgba(0, 0, 0, 0.46), 0 2px 4px -2px rgba(0, 0, 0, 0.34);
+    --md-sys-elevation-3: 0 6px 12px -2px rgba(0, 0, 0, 0.5), 0 3px 6px -3px rgba(0, 0, 0, 0.38);
+    --md-sys-elevation-4: 0 10px 20px -3px rgba(0, 0, 0, 0.54), 0 4px 8px -4px rgba(0, 0, 0, 0.42);
+    --md-sys-elevation-5: 0 16px 28px -4px rgba(0, 0, 0, 0.58), 0 6px 12px -6px rgba(0, 0, 0, 0.46);
+
+    --cb-accent-hover: #3b82f6;
+
+    --cb-status-success-bg: #052e22;
+    --cb-status-success-text: #34d399;
+    --cb-status-success-border: #065f46;
+
+    --cb-status-warning-bg: #451a03;
+    --cb-status-warning-text: #fbbf24;
+    --cb-status-warning-border: #92400e;
+
+    --cb-status-danger-bg: var(--md-sys-color-error-container);
+    --cb-status-danger-text: var(--md-sys-color-error);
+    --cb-status-danger-border: #7f1d1d;
+
+    --cb-status-info-bg: #172554;
+    --cb-status-info-text: #93c5fd;
+    --cb-status-info-border: #1e3a8a;
+
+    --cb-status-purple-bg: #2e1065;
+    --cb-status-purple-text: #c4b5fd;
+    --cb-status-purple-border: #5b21b6;
+
+    --cb-confirm-bg: #10b981;
+    --cb-confirm-hover: #34d399;
+    --cb-confirm-text: #052e22;
+
+    --cb-overlay: rgba(0, 0, 0, 0.6);
+    --cb-hairline: rgba(255, 255, 255, 0.06);
+  }
+}
+
+/* ==========================================================================
+   深色主题 2/2：html[data-theme="dark"] 强制深色（浅色系统下也生效）
+   ========================================================================== */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --md-sys-color-primary: #93c5fd;
+  --md-sys-color-on-primary: #0f172a;
+  --md-sys-color-primary-container: #1d4ed8;
+  --md-sys-color-on-primary-container: #dbeafe;
+
+  --md-sys-color-secondary: #cbd5e1;
+  --md-sys-color-on-secondary: #0f172a;
+  --md-sys-color-secondary-container: #334155;
+  --md-sys-color-on-secondary-container: #e2e8f0;
+
+  --md-sys-color-tertiary: #7dd3fc;
+  --md-sys-color-on-tertiary: #082f49;
+  --md-sys-color-tertiary-container: #0369a1;
+  --md-sys-color-on-tertiary-container: #e0f2fe;
+
+  --md-sys-color-error: #f87171;
+  --md-sys-color-on-error: #450a0a;
+  --md-sys-color-error-container: #7f1d1d;
+  --md-sys-color-on-error-container: #fee2e2;
+
+  --md-sys-color-surface: #0f172a;
+  --md-sys-color-surface-dim: #0b1220;
+  --md-sys-color-surface-bright: #1e293b;
+  --md-sys-color-surface-container-lowest: #0a0f1e;
+  --md-sys-color-surface-container-low: #131c2e;
+  --md-sys-color-surface-container: #1e293b;
+  --md-sys-color-surface-container-high: #2b3a52;
+  --md-sys-color-surface-container-highest: #3b4a66;
+
+  --md-sys-color-on-surface: #e2e8f0;
+  --md-sys-color-on-surface-variant: #94a3b8;
+  --md-sys-color-outline: #64748b;
+  --md-sys-color-outline-variant: #334155;
+
+  --md-sys-color-inverse-surface: #e2e8f0;
+  --md-sys-color-inverse-on-surface: #0f172a;
+  --md-sys-color-inverse-primary: #1d4ed8;
+
+  --md-sys-elevation-1: 0 1px 3px 0 rgba(0, 0, 0, 0.42), 0 1px 2px -1px rgba(0, 0, 0, 0.3);
+  --md-sys-elevation-2: 0 3px 6px -1px rgba(0, 0, 0, 0.46), 0 2px 4px -2px rgba(0, 0, 0, 0.34);
+  --md-sys-elevation-3: 0 6px 12px -2px rgba(0, 0, 0, 0.5), 0 3px 6px -3px rgba(0, 0, 0, 0.38);
+  --md-sys-elevation-4: 0 10px 20px -3px rgba(0, 0, 0, 0.54), 0 4px 8px -4px rgba(0, 0, 0, 0.42);
+  --md-sys-elevation-5: 0 16px 28px -4px rgba(0, 0, 0, 0.58), 0 6px 12px -6px rgba(0, 0, 0, 0.46);
+
+  --cb-accent-hover: #3b82f6;
+
+  --cb-status-success-bg: #052e22;
+  --cb-status-success-text: #34d399;
+  --cb-status-success-border: #065f46;
+
+  --cb-status-warning-bg: #451a03;
+  --cb-status-warning-text: #fbbf24;
+  --cb-status-warning-border: #92400e;
+
+  --cb-status-danger-bg: var(--md-sys-color-error-container);
+  --cb-status-danger-text: var(--md-sys-color-error);
+  --cb-status-danger-border: #7f1d1d;
+
+  --cb-status-info-bg: #172554;
+  --cb-status-info-text: #93c5fd;
+  --cb-status-info-border: #1e3a8a;
+
+  --cb-status-purple-bg: #2e1065;
+  --cb-status-purple-text: #c4b5fd;
+  --cb-status-purple-border: #5b21b6;
+
+  --cb-confirm-bg: #10b981;
+  --cb-confirm-hover: #34d399;
+  --cb-confirm-text: #052e22;
+
+  --cb-overlay: rgba(0, 0, 0, 0.6);
+  --cb-hairline: rgba(255, 255, 255, 0.06);
 }
 
 /* 全局基底 */

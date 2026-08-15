@@ -70,7 +70,7 @@ function handleUndo() {
 }
 
 .cb-undo-icon {
-  color: #34d399;
+  color: var(--cb-status-success-text);
   display: flex;
   align-items: center;
   flex-shrink: 0;
@@ -97,7 +97,7 @@ function handleUndo() {
   transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .cb-undo-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--cb-inverse-hairline);
 }
 
 .cb-undo-progress-bar {

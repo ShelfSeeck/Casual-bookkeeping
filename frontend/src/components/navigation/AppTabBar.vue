@@ -59,7 +59,7 @@ const tabs = [
   justify-content: space-around;
   align-items: center;
   z-index: 100;
-  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 -2px 12px var(--cb-hairline);
 }
 
 .cb-tab-item {

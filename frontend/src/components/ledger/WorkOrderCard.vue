@@ -192,14 +192,14 @@ const emit = defineEmits<{
   font-family: var(--cb-font-numeric);
   font-size: 18px;
   font-weight: 800;
-  color: #059669;
+  color: var(--cb-status-success-text);
 }
 
 .cb-unpriced-pill {
   font-size: 12px;
   font-weight: 700;
-  color: #d97706;
-  background: #fffbeb;
+  color: var(--cb-status-warning-text);
+  background: var(--cb-status-warning-bg);
   padding: 2px 8px;
   border-radius: var(--md-sys-shape-corner-extra-small);
 }

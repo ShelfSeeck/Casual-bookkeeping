@@ -2,8 +2,13 @@ import { createApp } from 'vue'
 import Vant from 'vant'
 import 'vant/lib/index.css'
 import { registerSW } from 'virtual:pwa-register'
+import './styles/design-tokens.css'
 import './style.css'
+import { initTheme } from './utils/theme'
 import App from './App.vue'
+
+// 主题：与 index.html 引导脚本同步，保证 DOM 状态与持久化偏好一致。
+initTheme()
 
 // PWA：注册 Service Worker（autoUpdate 模式，新版本自动 skipWaiting + clientsClaim）。
 registerSW({ immediate: true })

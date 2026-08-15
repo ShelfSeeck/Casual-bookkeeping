@@ -1198,21 +1198,21 @@ function scrollToTodayFlow() {
   font-family: var(--cb-font-numeric);
   font-size: 14px;
   font-weight: 700;
-  color: #059669;
+  color: var(--cb-status-success-text);
 }
 
 .cb-stream-unpriced-val {
   font-family: var(--cb-font-numeric);
   font-size: 12px;
   font-weight: 600;
-  color: #d97706;
+  color: var(--cb-status-warning-text);
 }
 
 /* 底部滑出抽屉（M3 Modal Bottom Sheet） */
 .cb-sheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--cb-overlay);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: flex-end;

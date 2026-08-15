@@ -5,11 +5,25 @@ import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
 import { getActiveAccount } from '../../services/apiClient'
 import { getOrCreateDeviceId } from '../../db/device'
+import { applyTheme, getThemePreference, type ThemePreference } from '../../utils/theme'
 import type { ServiceCategoryUi } from '../../types/ui'
 
 type SubPageKey = 'main' | 'customers' | 'customer_new' | 'categories' | 'category_new' | 'sync'
 
 const currentSubPage = ref<SubPageKey>('main')
+
+// ==================== 0. 外观主题（浅色 / 深色 / 跟随系统） ====================
+const themePreference = ref<ThemePreference>(getThemePreference())
+const themeOptions: Array<{ value: ThemePreference; label: string }> = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+]
+
+function setTheme(preference: ThemePreference) {
+  themePreference.value = preference
+  applyTheme(preference)
+}
 
 // ==================== 1. 客户档案管理 ====================
 const customerSearchKeyword = ref('')
@@ -211,6 +225,40 @@ onMounted(async () => {
       </header>
 
       <main class="cb-settings-body">
+        <!-- 组 0：外观 -->
+        <section class="md3-list-group" aria-label="外观">
+          <div class="md3-list-group-header">外观</div>
+          <div class="md3-card md3-card--outlined md3-list-container">
+            <div class="md3-list-item">
+              <div class="md3-list-item-leading md3-avatar--info" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="4"></circle>
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+                </svg>
+              </div>
+              <div class="md3-list-item-content">
+                <span class="md3-list-item-headline">深浅模式</span>
+                <span class="md3-list-item-supporting">默认跟随系统，也可固定浅色或深色</span>
+              </div>
+            </div>
+            <div class="md3-theme-segmented-row">
+              <div class="md3-segmented-set" role="group" aria-label="选择深浅模式">
+                <button
+                  v-for="option in themeOptions"
+                  :key="option.value"
+                  type="button"
+                  class="md3-segment cb-pressable"
+                  :class="{ 'md3-segment--selected': themePreference === option.value }"
+                  :aria-pressed="themePreference === option.value"
+                  @click="setTheme(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- 组 1：基础档案 -->
         <section class="md3-list-group" aria-label="基础档案">
           <div class="md3-list-group-header">基础档案</div>
@@ -257,7 +305,7 @@ onMounted(async () => {
               </div>
               <div class="md3-list-item-content">
                 <span class="md3-list-item-headline">服务品类</span>
-                <span class="md3-list-item-supporting">洗涤大类、具体项目与默认单位</span>
+                <span class="md3-list-item-supporting">服务大类、具体项目与默认单位</span>
               </div>
               <div class="md3-list-item-trailing">
                 <span class="md3-list-item-meta cb-tabular-nums">{{ appState.categories.length }} 个大类</span>
@@ -604,7 +652,7 @@ onMounted(async () => {
 
             <!-- 内联添加小类项目表单（MD3 Outlined Container） -->
             <div v-if="activeAddingCatId === cat.syncId" class="md3-inline-add-container">
-              <div class="md3-card-title">为「{{ cat.name }}」添加洗涤项目</div>
+              <div class="md3-card-title">为「{{ cat.name }}」添加服务项目</div>
               <div class="cb-form-2col-grid">
                 <div class="md3-text-field-container">
                   <label class="md3-text-field-label">项目名称</label>
@@ -612,7 +660,7 @@ onMounted(async () => {
                     <input
                       v-model="inlineSubName"
                       type="text"
-                      placeholder="如 普洗 / 炒雪花"
+                      placeholder="如 标准 / 加急"
                       class="md3-text-field-input"
                       autocomplete="off"
                       aria-label="项目名称"
@@ -730,7 +778,7 @@ onMounted(async () => {
                 <input
                   v-model="formNewCatName"
                   type="text"
-                  placeholder="例如 水洗 / 干洗 / 特种后整"
+                  placeholder="例如 清洁 / 养护 / 定制"
                   class="md3-text-field-input"
                   autocomplete="off"
                   spellcheck="false"
@@ -963,17 +1011,18 @@ onMounted(async () => {
   margin-right: 14px;
 }
 
-.md3-avatar--blue {
-  background: #eff6ff;
-  color: #2563eb;
+.md3-avatar--blue,
+.md3-avatar--info {
+  background: var(--cb-status-info-bg);
+  color: var(--cb-status-info-text);
 }
 .md3-avatar--purple {
-  background: #f5f3ff;
-  color: #7c3aed;
+  background: var(--cb-status-purple-bg);
+  color: var(--cb-status-purple-text);
 }
 .md3-avatar--green {
-  background: #ecfdf5;
-  color: #059669;
+  background: var(--cb-status-success-bg);
+  color: var(--cb-status-success-text);
 }
 .md3-avatar--gray {
   background: var(--md-sys-color-surface-container-high);
@@ -1017,6 +1066,40 @@ onMounted(async () => {
   height: 1px;
   background: var(--md-sys-color-outline-variant);
   margin-left: 70px;
+}
+
+/* MD3 Segmented Button：外观三态选择 */
+.md3-theme-segmented-row {
+  padding: 0 16px 16px;
+}
+
+.md3-segmented-set {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-sys-shape-corner-full);
+  box-sizing: border-box;
+}
+
+.md3-segment {
+  height: 40px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+
+.md3-segment--selected {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  box-shadow: var(--md-sys-elevation-1);
 }
 
 .md3-badge-success {
@@ -1089,7 +1172,7 @@ onMounted(async () => {
 }
 
 .cb-required-star {
-  color: #ef4444;
+  color: var(--md-sys-color-error);
 }
 
 .md3-outlined-text-field {
@@ -1293,7 +1376,7 @@ onMounted(async () => {
   cursor: pointer;
 }
 .md3-input-chip-del:hover {
-  color: #ef4444;
+  color: var(--md-sys-color-error);
 }
 
 .md3-filter-chip {

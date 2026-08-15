@@ -223,7 +223,7 @@ watch(
       <input
         v-model="inputVal"
         type="text"
-        placeholder="输入记账或查询指令，例如：记张老板3000件单洗…"
+        placeholder="输入记账或查询指令，例如：今天一共录了多少单？"
         class="cb-chat-input"
         autocomplete="off"
         spellcheck="false"
@@ -654,8 +654,8 @@ watch(
 .cb-draft-confirm-btn {
   width: 100%;
   height: 44px;
-  background: #059669;
-  color: #ffffff;
+  background: var(--cb-confirm-bg);
+  color: var(--cb-confirm-text);
   border: none;
   border-radius: var(--md-sys-shape-corner-medium);
   font-size: 14px;
@@ -669,7 +669,7 @@ watch(
   transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .cb-draft-confirm-btn:hover {
-  background: #047857;
+  background: var(--cb-confirm-hover);
   box-shadow: var(--md-sys-elevation-2);
 }
 

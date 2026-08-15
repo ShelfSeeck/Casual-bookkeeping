@@ -14,6 +14,24 @@
     />
     <title>Casual-bookkeeping 记账</title>
 
+    <!-- 主题引导：首屏渲染前按持久化偏好设置 data-theme，避免深浅色闪烁（与 src/utils/theme.ts 同逻辑） -->
+    <script>
+      ;(function () {
+        try {
+          var pref = localStorage.getItem('cb_theme')
+          if (pref !== 'light' && pref !== 'dark') pref = 'system'
+          document.documentElement.dataset.theme = pref
+          var dark =
+            pref === 'dark' ||
+            (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          var meta = document.querySelector('meta[name="theme-color"]')
+          if (meta) meta.setAttribute('content', dark ? '#0f172a' : '#2563eb')
+        } catch (e) {
+          document.documentElement.dataset.theme = 'system'
+        }
+      })()
+    </script>
+
     <!-- iOS PWA：添加到主屏幕后以独立窗口运行，状态栏与安全区配合 -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />

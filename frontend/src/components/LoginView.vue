@@ -77,7 +77,7 @@ async function onSubmit() {
   margin: 0 0 8px;
 }
 .brand p {
-  color: #969799;
+  color: var(--cb-text-muted);
   margin: 0;
 }
 .submit-wrap {
