@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { appState } from '../state/appState'
 import TabBar from '../components/navigation/AppTabBar.vue'
 import UndoSnackbar from '../components/common/UndoSnackbar.vue'
@@ -6,16 +7,24 @@ import WorkOrderDesk from '../components/desk/WorkOrderDesk.vue'
 import LedgerView from '../components/ledger/LedgerView.vue'
 import AiChatView from '../components/chat/AiChatView.vue'
 import SettingsView from '../components/settings/SettingsView.vue'
+
+const views = {
+  desk: WorkOrderDesk,
+  ledger: LedgerView,
+  chat: AiChatView,
+  settings: SettingsView,
+} as const
+
+const currentView = computed(() => views[appState.currentTab.value as keyof typeof views] ?? WorkOrderDesk)
 </script>
 
 <template>
   <div class="cb-app-container">
-    <!-- 主视图区域 -->
+    <!-- 主视图区域：Tab 切换时轻量淡入上移 -->
     <main class="cb-main-content">
-      <WorkOrderDesk v-if="appState.currentTab.value === 'desk'" />
-      <LedgerView v-else-if="appState.currentTab.value === 'ledger'" />
-      <AiChatView v-else-if="appState.currentTab.value === 'chat'" />
-      <SettingsView v-else-if="appState.currentTab.value === 'settings'" />
+      <Transition name="cb-tab" mode="out-in">
+        <component :is="currentView" :key="appState.currentTab.value" />
+      </Transition>
     </main>
 
     <!-- 全局 5 秒即时撤回浮条 -->

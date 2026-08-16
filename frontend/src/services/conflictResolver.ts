@@ -90,6 +90,7 @@ export function buildMergedPatch(
   resolution: ConflictResolution,
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {}
+  const diffFields = new Set(analysis.diffs.map((d) => d.field))
   for (const diff of analysis.diffs) {
     const pick = resolution[diff.field]
     if (diff.state === 'theirs-only') {
@@ -117,6 +118,11 @@ export function buildMergedPatch(
     } else {
       patch[diff.field] = pick.value
     }
+  }
+  // 非冲突字段也可修改：resolution 里不属于任何 diff 的手填值直接进 patch
+  for (const [field, pick] of Object.entries(resolution)) {
+    if (diffFields.has(field)) continue
+    if (pick && !('source' in pick)) patch[field] = pick.value
   }
   return patch
 }

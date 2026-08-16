@@ -221,6 +221,20 @@ export class SyncManager {
   }
 
   /**
+   * 丢弃整条冲突（docs/sync-protocol.md §5 冲突/rejected 可丢弃）：放弃本机修改，
+   * 服务端 Theirs 保留；移除 outbox 冲突条目与 operations 镜像，不生成新操作。
+   */
+  async discardConflict(queueId: number): Promise<void> {
+    await this.db.transaction('rw', [this.db.outbox, this.db.operations], async () => {
+      const entry = await this.db.outbox.get(queueId)
+      if (!entry) throw new Error('outbox_entry_not_found')
+      if (entry.status !== 'conflict') throw new Error('not_a_conflict_entry')
+      await this.db.outbox.delete(queueId)
+      await this.db.operations.delete(entry.operationId)
+    })
+  }
+
+  /**
    * 解决冲突（docs/sync-protocol.md §7）：以 Theirs 当前 row_version 为 base_version、
    * 合并结果为新 patch，生成新 operation（新 operation_id）重新走 Push。
    * 原冲突操作从 outbox 移除。resolution 覆盖该条冲突记录所有 both 字段的决策。

@@ -20,3 +20,62 @@ body {
   width: 100%;
   overflow-x: hidden;
 }
+
+/* 底部弹层过渡（遮罩淡入淡出 + 面板上滑/下滑） */
+.cb-sheet-enter-active,
+.cb-sheet-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.cb-sheet-enter-from,
+.cb-sheet-leave-to {
+  opacity: 0;
+}
+
+.cb-sheet-enter-active .cb-sheet-drawer,
+.cb-sheet-leave-active .cb-sheet-drawer,
+.cb-sheet-enter-active .cb-batch-sheet-panel,
+.cb-sheet-leave-active .cb-batch-sheet-panel {
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cb-sheet-enter-from .cb-sheet-drawer,
+.cb-sheet-leave-to .cb-sheet-drawer,
+.cb-sheet-enter-from .cb-batch-sheet-panel,
+.cb-sheet-leave-to .cb-batch-sheet-panel {
+  transform: translateY(100%);
+}
+
+/* Tab 切换：轻量淡入上移（out-in） */
+.cb-tab-enter-active,
+.cb-tab-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.cb-tab-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.cb-tab-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* 子页面 / 详情页入场：淡入上移 */
+.cb-subpage-body,
+.cb-order-edit-page,
+.cb-conflict-detail-page {
+  animation: cb-page-in 0.22s ease-out;
+}
+
+@keyframes cb-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

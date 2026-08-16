@@ -659,6 +659,14 @@ class AppState {
     void this.syncManager.sync().then(() => this.reload())
   }
 
+  /** 丢弃整条冲突：放弃本机修改、保留服务端版本，随后刷新并触发同步。 */
+  async discardConflict(queueId: number): Promise<void> {
+    if (!this.syncManager) throw new Error('同步未初始化')
+    await this.syncManager.discardConflict(queueId)
+    await this.reload()
+    void this.syncManager.sync().then(() => this.reload())
+  }
+
   // ---------- 客户 / 编号映射（真实业务命令） ----------
 
   async addCustomerWithMapping(input: {

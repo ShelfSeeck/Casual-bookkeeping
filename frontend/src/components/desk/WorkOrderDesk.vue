@@ -462,6 +462,7 @@ function scrollToTodayFlow() {
     </div>
 
     <!-- 底部滑出弹窗 1：客户全量选择抽屉 -->
+    <Transition name="cb-sheet">
     <div
       v-if="showCustomerSheet"
       class="cb-sheet-backdrop"
@@ -507,8 +508,10 @@ function scrollToTodayFlow() {
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 底部滑出弹窗 2：小类选择抽屉 (当小类过多时) -->
+    <Transition name="cb-sheet">
     <div
       v-if="showSubcategorySheet && activeCategory"
       class="cb-sheet-backdrop"
@@ -540,8 +543,10 @@ function scrollToTodayFlow() {
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 底部滑出弹窗 3：日期切换抽屉 -->
+    <Transition name="cb-sheet">
     <div
       v-if="showDatePickerSheet"
       class="cb-sheet-backdrop"
@@ -609,6 +614,7 @@ function scrollToTodayFlow() {
         </div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 

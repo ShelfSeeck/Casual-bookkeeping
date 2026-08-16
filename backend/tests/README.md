@@ -8,7 +8,7 @@
 # 后端全部（238 个，跳过 live）
 cd backend && uv run pytest -q
 
-# 前端全部（218 个）+ 类型检查
+# 前端全部（221 个）+ 类型检查
 cd frontend && npx vitest run && npx vue-tsc -b
 ```
 

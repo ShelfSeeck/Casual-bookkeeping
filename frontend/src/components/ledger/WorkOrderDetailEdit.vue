@@ -522,6 +522,7 @@ async function handleRevert(operationId: string) {
     </div>
 
     <!-- 底部滑出弹窗 1：客户全量选择抽屉 -->
+    <Transition name="cb-sheet">
     <div
       v-if="showCustomerSheet"
       class="cb-sheet-backdrop"
@@ -567,8 +568,10 @@ async function handleRevert(operationId: string) {
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 底部滑出弹窗 2：小类选择抽屉 (当小类过多时) -->
+    <Transition name="cb-sheet">
     <div
       v-if="showSubcategorySheet && activeCategory"
       class="cb-sheet-backdrop"
@@ -600,8 +603,10 @@ async function handleRevert(operationId: string) {
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 底部滑出弹窗 3：录入日期快捷选择抽屉 -->
+    <Transition name="cb-sheet">
     <div
       v-if="showDatePickerSheet"
       class="cb-sheet-backdrop"
@@ -669,6 +674,7 @@ async function handleRevert(operationId: string) {
         </div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 
@@ -1280,7 +1286,6 @@ async function handleRevert(operationId: string) {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  animation: cb-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .m3-sheet-handle-pill {

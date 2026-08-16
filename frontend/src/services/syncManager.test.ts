@@ -219,6 +219,40 @@ describe('SyncManager', () => {
     expect(pull).toHaveBeenCalledTimes(1)
   })
 
+  it('discardConflict 丢弃整条冲突：移除 outbox 与 operations 镜像', async () => {
+    await commitOrder('sync-a')
+    const realOpId = (await db.outbox.toArray())[0].operationId
+    const api = makeApi({
+      push: vi.fn(async () => ({
+        results: [
+          {
+            operationId: realOpId,
+            status: 'conflict' as const,
+            conflictJson: { theirs: { rowVersion: 5, quantity: 9 } },
+          },
+        ],
+      })),
+    })
+    const manager = buildManager(api)
+    await manager.sync()
+    const entry = (await db.outbox.toArray())[0]
+
+    await manager.discardConflict(entry.queueId)
+
+    expect(await db.outbox.count()).toBe(0)
+    expect(await db.operations.get(realOpId)).toBeUndefined()
+  })
+
+  it('discardConflict 对非 conflict 条目抛错', async () => {
+    await commitOrder('sync-a')
+    const manager = buildManager(makeApi())
+    const entry = (await db.outbox.toArray())[0]
+
+    await expect(manager.discardConflict(entry.queueId)).rejects.toThrow(
+      'not_a_conflict_entry',
+    )
+  })
+
   it('rejected 时保留 outbox 并存错误，仅剩 rejected 仍 Pull', async () => {
     await commitOrder('sync-a')
     const realOpId = (await db.outbox.toArray())[0].operationId

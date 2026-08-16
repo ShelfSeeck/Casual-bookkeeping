@@ -302,6 +302,7 @@ async function confirmBatchPrice() {
     </div>
 
     <!-- 批量设价 Bottom Sheet -->
+    <Transition name="cb-sheet">
     <div
       v-if="showBatchPriceSheet"
       class="cb-batch-sheet-overlay"
@@ -390,6 +391,7 @@ async function confirmBatchPrice() {
         </div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 

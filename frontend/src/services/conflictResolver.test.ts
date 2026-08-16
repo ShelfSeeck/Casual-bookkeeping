@@ -84,6 +84,13 @@ describe('buildMergedPatch', () => {
     expect(patch).toEqual({})
   })
 
+  it('非冲突字段也可手填修改：resolution 中的额外字段进入 patch', () => {
+    const analysis = analyzeConflict(BASE, OURS, THEIRS)
+    // unit_price_cents 不在三方里（无差异），但用户仍可把它加进合并 patch
+    const patch = buildMergedPatch(analysis, { unit_price_cents: { value: 1500 } })
+    expect(patch).toEqual({ quantity: 9, unit_price_cents: 1500 })
+  })
+
   it('theirs-only 字段显式选 Ours → 写 oursValue（用我方值覆盖 Theirs）', () => {
     const analysis = analyzeConflict(BASE, OURS, THEIRS)
     // unit / customer_code 是 theirs-only；用户显式决定采用 Ours（Base 中的值）
