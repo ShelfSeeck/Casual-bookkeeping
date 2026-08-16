@@ -251,10 +251,13 @@ async function handleDelete() {
   if (!confirm(`确定要删除【${props.order.customerDisplayName} - ${props.order.subcategoryName}】这张工单吗？`)) {
     return
   }
+  // 先关闭详情面板再执行删除：删除会立即把工单从列表移除、导致本组件被卸载，
+  // 若等删除完成后再 emit('back')，父组件监听器已解绑，activeOrderId 会残留在
+  // LedgerView，撤回恢复工单后面板会意外自动重开（回归见 UI 冒烟 A3）。
+  emit('back')
   try {
     await appState.deleteWorkOrder(props.order.syncId ?? props.order.orderId)
     showSuccessToast('工单已删除')
-    emit('back')
   } catch (e) {
     showFailToast(toErrorMessage(e))
   }
