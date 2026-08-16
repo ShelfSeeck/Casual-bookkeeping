@@ -123,8 +123,3 @@ def seed_account(test_database):
             conn.close()
 
     return _seed
-
-
-def refresh_cookie(client: TestClient) -> str:
-    """从客户端 cookie jar 里取 refresh token（HttpOnly，响应体里拿不到）。"""
-    return client.cookies["refresh_token"]

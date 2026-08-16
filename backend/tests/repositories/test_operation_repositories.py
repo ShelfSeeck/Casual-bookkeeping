@@ -12,7 +12,6 @@ insert_Operation / get_ByOperationId / list_AfterSeq / get_MaxSeq。
 """
 
 from backend.repositories.operations import OperationsRepository
-from backend.repositories.customers import CustomersRepository
 
 
 def _sample_changes():
@@ -30,7 +29,7 @@ def _sample_changes():
     ]
 
 
-def _insert_op(repo, operation_id="op-a1b2c3d4e5f6", seq_hint=None):
+def _insert_op(repo, operation_id="op-a1b2c3d4e5f6"):
     return repo.insert_Operation(
         account_phone="13800000000",
         device_id="dev-a1b2c3d4e5f6",

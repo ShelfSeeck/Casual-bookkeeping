@@ -7,10 +7,6 @@ HTTP 契约——鉴权、批量保序逐条结果、分页游标、bootstrap �
 期望值来自 docs/sync-protocol.md §4 与 docs/error-codes.md。
 """
 
-import pytest
-
-from backend.repositories.accounts import AccountsRepository
-
 # fixture 由本目录 conftest.py 提供（client / seed_account / test_database）
 
 

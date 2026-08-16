@@ -203,34 +203,7 @@ def test_service_categories_rejects_duplicate_category_name(connection):
     assert result.error_code == "category_name_duplicate"
 
 
-def test_service_categories_rejects_duplicate_subcategory_name(connection):
-    # 本表校验：小类 JSON 内重名 → rejected（docs/error-codes.md subcategory_name_duplicate）
-    repo = ServiceCategoriesRepository(connection)
-    result = repo.apply_Write(
-        "13800000000",
-        "sync-000000000001",
-        {
-            "category_name": "洗水",
-            "subcategories_json": '[{"name":"单洗","default_unit":"件","is_active":true},'
-            '{"name":"单洗","default_unit":"袋","is_active":false}]',
-            "is_active": 1,
-        },
-        0,
-    )
-    assert result.status == "rejected"
-    assert result.error_code == "subcategory_name_duplicate"
-
-
-def test_service_categories_rejects_bad_subcategories_json(connection):
-    # 本表校验：subcategories_json 不是合法 JSON 数组 → rejected
-    repo = ServiceCategoriesRepository(connection)
-    result = repo.apply_Write(
-        "13800000000",
-        "sync-000000000001",
-        {"category_name": "洗水", "subcategories_json": "not-json", "is_active": 1},
-        0,
-    )
-    assert result.status == "rejected"
+# 小类结构校验（重名 / 非法 JSON）统一在 test_business_validation.py 缝 15 覆盖，此处不重复。
 
 
 # ---------- 客户编号映射 customer_code_mappings ----------

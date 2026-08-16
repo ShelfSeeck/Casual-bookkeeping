@@ -4,6 +4,7 @@
 归属校验（session 是否属于某账户）在 service 层做，本仓库只按主键 / 账户读写。
 """
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,9 +12,12 @@ from backend.repositories._base import BaseRepository
 
 
 class ChatSessionsRepository(BaseRepository):
-    def __init__(self, connection) -> None:
+    def __init__(self, connection, now_factory: Callable[[], str] | None = None) -> None:
+        # now_factory 供测试注入确定时钟；默认真实 UTC 时间（ISO 8601）
         super().__init__(connection)
-        self._now_factory = lambda: datetime.now(timezone.utc).isoformat()
+        self._now_factory = now_factory or (
+            lambda: datetime.now(timezone.utc).isoformat()
+        )
 
     def create_Session(
         self, account_phone: str, session_id: str, title: str

@@ -63,20 +63,16 @@ def test_accepts_create_customer(service, connection):
     assert row["row_version"] == 1
 
 
-def test_idempotent_retry_returns_first_result(service):
-    # 幂等：同 operation_id + 同 hash 重试 → 直接返回首次结果，不再写业务表
+def test_idempotent_retry_returns_first_result_and_does_not_bump_version(
+    service, connection
+):
+    # 幂等：同 operation_id + 同 hash 重试 → 直接返回首次结果，不再写业务表、不递增版本
     first = service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", _customer_op())
     second = service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", _customer_op())
 
     assert second.status == "accepted"
     assert second.server_seq == first.server_seq
     assert second.row_versions == first.row_versions
-
-
-def test_idempotent_retry_does_not_bump_version(service, connection):
-    # 幂等重试不改业务表：row_version 不因重试递增
-    service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", _customer_op())
-    service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", _customer_op())
 
     row = connection.execute(
         "SELECT row_version FROM customers WHERE sync_id = 'sync-000000000001'"

@@ -35,7 +35,6 @@ from backend.tools.registry import (
     build_tools,
     get_registered_tool_names,
     is_registered,
-    register_tool,
     requires_approval_for,
 )
 

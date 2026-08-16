@@ -5,11 +5,11 @@
 ## 一键全量
 
 ```bash
-# 后端全部（133 个，跳过 live）
+# 后端全部（238 个，跳过 live）
 cd backend && uv run pytest -q
 
-# 前端全部（72 个）+ 类型检查
-cd frontend && npx vitest run && npx vue-tsc --noEmit
+# 前端全部（218 个）+ 类型检查
+cd frontend && npx vitest run && npx vue-tsc -b
 ```
 
 ## 后端：按测试目标选命令
@@ -51,7 +51,7 @@ uv run pytest -k conflict -q                                        # 按名字�
 | 活跃账户身份（meta 库存取） | `npx vitest run src/services/activeAccount.test.ts` |
 | 四业务 Repository | `npx vitest run src/repositories -q` |
 | Dexie 库工厂 / device_id / schema | `npx vitest run src/db -q` |
-| 类型检查 | `npx vue-tsc --noEmit` |
+| 类型检查 | `npx vue-tsc -b` |
 
 ## marker 说明
 

@@ -5,6 +5,7 @@
 回合按 created_at 升序（同则 turn_id 升序）游标分页，供 GET /chat/sessions/{sid}/turns 用。
 """
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,9 +13,12 @@ from backend.repositories._base import BaseRepository
 
 
 class ChatTurnsRepository(BaseRepository):
-    def __init__(self, connection) -> None:
+    def __init__(self, connection, now_factory: Callable[[], str] | None = None) -> None:
+        # now_factory 供测试注入确定时钟；默认真实 UTC 时间（ISO 8601）
         super().__init__(connection)
-        self._now_factory = lambda: datetime.now(timezone.utc).isoformat()
+        self._now_factory = now_factory or (
+            lambda: datetime.now(timezone.utc).isoformat()
+        )
 
     def upsert_Turn(
         self, turn_id: str, session_id: str, messages_json: str

@@ -6,14 +6,14 @@
   - 构建出的 agent 声明注册表中的 7 个业务工具（5 读 + 2 写草案）
   - 未传 ModelConfig 时走 get_ActiveModelConfig()（默认热读路径）
 - 工具注册表（tools/registry.py）：
-  - register_tool 注册后 get_registered_tool_names 可见
-  - build_tools(allowed) 按白名单过滤
+  - register_tool 注册后 get_registered_tool_names 可见（白名单过滤行为见 test_agent_tools.py）
 """
 
 import pytest
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 
+import backend.tools.registry as tool_registry
 from backend.services.agent import build_Agent
 from backend.services.model_config import ModelConfig
 from backend.tools.registry import (
@@ -72,8 +72,12 @@ async def test_build_Agent_defaults_to_active_config(monkeypatch):
     assert result.output == "success (no tool calls)"
 
 
-def test_register_tool_records_name():
-    # 注册后名字可见；未注册的普通函数不可见
+def test_register_tool_records_name(monkeypatch):
+    # 注册后名字可见；未注册的普通函数不可见。
+    # 在临时注册表副本上注册，避免污染 build_Agent 测试断言的 7 个业务工具。
+    monkeypatch.setattr(tool_registry, "_TOOL_REGISTRY", {})
+    monkeypatch.setattr(tool_registry, "_REGISTERED_TOOL_NAMES", set())
+
     @register_tool
     async def dummy_tool(ctx: RunContext[object]) -> str:
         """dummy tool"""
@@ -82,25 +86,14 @@ def test_register_tool_records_name():
     assert "dummy_tool" in get_registered_tool_names()
 
 
-def test_build_tools_filters_by_allowed():
-    # build_tools(None) 返回全部；build_tools(allowed) 只保留白名单内的
+def test_build_tools_empty_whitelist_returns_no_tools(monkeypatch):
+    # allowed=[] 表示“本轮零工具”，必须返回空列表而不是退化为全部工具
+    monkeypatch.setattr(tool_registry, "_TOOL_REGISTRY", {})
+    monkeypatch.setattr(tool_registry, "_REGISTERED_TOOL_NAMES", set())
+
     @register_tool
     async def tool_a(ctx: RunContext[object]) -> str:
         """tool a"""
         return "a"
 
-    @register_tool
-    async def tool_b(ctx: RunContext[object]) -> str:
-        """tool b"""
-        return "b"
-
-    all_tools = build_tools()
-    assert {t.name for t in all_tools} >= {"tool_a", "tool_b"}
-
-    filtered = build_tools(allowed=["tool_a"])
-    assert [t.name for t in filtered] == ["tool_a"]
-
-
-def test_build_tools_empty_whitelist_returns_no_tools():
-    # allowed=[] 表示“本轮零工具”，必须返回空列表而不是退化为全部工具
     assert build_tools([]) == []

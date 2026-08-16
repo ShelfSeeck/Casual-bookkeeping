@@ -4,8 +4,6 @@
 token 与 cookie 全部由真实端点产生，业务逻辑不做任何 mock。
 """
 
-import pytest
-
 from backend.repositories.account_devices import AccountDevicesRepository
 from backend.repositories.accounts import AccountsRepository
 

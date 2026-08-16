@@ -41,8 +41,10 @@ def test_get_Session_returns_None_when_missing(connection):
 
 def test_create_Session_then_get_returns_full_record(connection):
     # create 后按主键 get 能查到，字段与入参及生成时间一致
-    repo = ChatSessionsRepository(connection)
-    repo._now_factory = _fake_now("2026-08-13T00:00:01.000000+00:00")
+    repo = ChatSessionsRepository(
+        connection,
+        now_factory=_fake_now("2026-08-13T00:00:01.000000+00:00"),
+    )
     repo.create_Session("13800000000", "s-000000000001", "7月对账")
 
     s = repo.get_Session("s-000000000001")
@@ -57,13 +59,15 @@ def test_create_Session_then_get_returns_full_record(connection):
 def test_list_Sessions_orders_by_updated_at_desc(connection):
     # spec §4.2：会话列表按 updated_at 倒序（最近活动在前）；
     # 同时验证 list 返回 turn_count：两会话分别有 2/1 个回合，空会话为 0
-    repo = ChatSessionsRepository(connection)
-    turns = ChatTurnsRepository(connection)
-    repo._now_factory = _fake_now(
-        "2026-08-13T00:00:01.000000+00:00",
-        "2026-08-13T00:00:02.000000+00:00",
-        "2026-08-13T00:00:03.000000+00:00",
+    repo = ChatSessionsRepository(
+        connection,
+        now_factory=_fake_now(
+            "2026-08-13T00:00:01.000000+00:00",
+            "2026-08-13T00:00:02.000000+00:00",
+            "2026-08-13T00:00:03.000000+00:00",
+        ),
     )
+    turns = ChatTurnsRepository(connection)
     repo.create_Session("13800000000", "s-000000000001", "A")
     repo.create_Session("13800000000", "s-000000000002", "B")
     repo.create_Session("13800000000", "s-000000000003", "C")
@@ -103,8 +107,10 @@ def test_get_Turn_returns_None_when_missing(connection):
 
 def test_upsert_Turn_inserts_then_get(connection):
     # 首次 upsert 走插入：created_at == updated_at == 生成时间
-    repo = ChatTurnsRepository(connection)
-    repo._now_factory = _fake_now("2026-08-13T00:00:01.000000+00:00")
+    repo = ChatTurnsRepository(
+        connection,
+        now_factory=_fake_now("2026-08-13T00:00:01.000000+00:00"),
+    )
     repo.upsert_Turn("t-000000000001", "s-000000000001", "[]")
 
     t = repo.get_Turn("t-000000000001")
@@ -119,10 +125,12 @@ def test_upsert_Turn_inserts_then_get(connection):
 def test_upsert_Turn_overwrites_messages_json_and_keeps_created_at(connection):
     # 同 turn_id 二次 upsert 覆盖 messages_json + updated_at，created_at 保留、不新增行
     # （docs/ai-chat-storage.md §4：重试复用同 turn_id，成功后直接替换，不保留旧版本）
-    repo = ChatTurnsRepository(connection)
-    repo._now_factory = _fake_now(
-        "2026-08-13T00:00:01.000000+00:00",
-        "2026-08-13T00:00:02.000000+00:00",
+    repo = ChatTurnsRepository(
+        connection,
+        now_factory=_fake_now(
+            "2026-08-13T00:00:01.000000+00:00",
+            "2026-08-13T00:00:02.000000+00:00",
+        ),
     )
     repo.upsert_Turn("t-000000000001", "s-000000000001", "[]")
     repo.upsert_Turn("t-000000000001", "s-000000000001", '[{"role": "user"}]')
@@ -138,11 +146,13 @@ def test_upsert_Turn_overwrites_messages_json_and_keeps_created_at(connection):
 
 def test_list_Turns_returns_in_ascending_created_at_order(connection):
     # spec §4.3：回合按 created_at 升序（插入顺序≠时间顺序，验证按时间排）
-    repo = ChatTurnsRepository(connection)
-    repo._now_factory = _fake_now(
-        "2026-08-13T00:00:01.000000+00:00",
-        "2026-08-13T00:00:02.000000+00:00",
-        "2026-08-13T00:00:03.000000+00:00",
+    repo = ChatTurnsRepository(
+        connection,
+        now_factory=_fake_now(
+            "2026-08-13T00:00:01.000000+00:00",
+            "2026-08-13T00:00:02.000000+00:00",
+            "2026-08-13T00:00:03.000000+00:00",
+        ),
     )
     repo.upsert_Turn("t-000000000002", "s-000000000001", "second")
     repo.upsert_Turn("t-000000000003", "s-000000000001", "third")
@@ -159,9 +169,14 @@ def test_list_Turns_returns_in_ascending_created_at_order(connection):
 
 def test_list_Turns_orders_by_turn_id_when_created_at_equal(connection):
     # 相同 created_at 时按 turn_id 升序，保证游标顺序稳定（spec §3 / 列表排序）
-    repo = ChatTurnsRepository(connection)
-    same = "2026-08-13T00:00:01.000000+00:00"
-    repo._now_factory = _fake_now(same, same, same)
+    repo = ChatTurnsRepository(
+        connection,
+        now_factory=_fake_now(
+            "2026-08-13T00:00:01.000000+00:00",
+            "2026-08-13T00:00:01.000000+00:00",
+            "2026-08-13T00:00:01.000000+00:00",
+        ),
+    )
     repo.upsert_Turn("t-000000000002", "s-000000000001", "b")
     repo.upsert_Turn("t-000000000001", "s-000000000001", "a")
     repo.upsert_Turn("t-000000000003", "s-000000000001", "c")
@@ -176,11 +191,13 @@ def test_list_Turns_orders_by_turn_id_when_created_at_equal(connection):
 
 def test_list_Turns_after_cursor_excludes_self_and_earlier(connection):
     # 游标排他：after_turn_id 之后（不含自身）的回合（spec §4.3 查询参数语义）
-    repo = ChatTurnsRepository(connection)
-    repo._now_factory = _fake_now(
-        "2026-08-13T00:00:01.000000+00:00",
-        "2026-08-13T00:00:02.000000+00:00",
-        "2026-08-13T00:00:03.000000+00:00",
+    repo = ChatTurnsRepository(
+        connection,
+        now_factory=_fake_now(
+            "2026-08-13T00:00:01.000000+00:00",
+            "2026-08-13T00:00:02.000000+00:00",
+            "2026-08-13T00:00:03.000000+00:00",
+        ),
     )
     repo.upsert_Turn("t-000000000001", "s-000000000001", "a")
     repo.upsert_Turn("t-000000000002", "s-000000000001", "b")
@@ -196,11 +213,13 @@ def test_list_Turns_after_cursor_excludes_self_and_earlier(connection):
 
 def test_list_Turns_limit_and_next_cursor(connection):
     # limit 截断 + 还有更多时 next_cursor = 最后一条返回回合的 turn_id（spec §4.3 分页）
-    repo = ChatTurnsRepository(connection)
-    repo._now_factory = _fake_now(
-        "2026-08-13T00:00:01.000000+00:00",
-        "2026-08-13T00:00:02.000000+00:00",
-        "2026-08-13T00:00:03.000000+00:00",
+    repo = ChatTurnsRepository(
+        connection,
+        now_factory=_fake_now(
+            "2026-08-13T00:00:01.000000+00:00",
+            "2026-08-13T00:00:02.000000+00:00",
+            "2026-08-13T00:00:03.000000+00:00",
+        ),
     )
     repo.upsert_Turn("t-000000000001", "s-000000000001", "a")
     repo.upsert_Turn("t-000000000002", "s-000000000001", "b")
@@ -213,10 +232,12 @@ def test_list_Turns_limit_and_next_cursor(connection):
 
 def test_list_Turns_next_cursor_None_when_no_more(connection):
     # 恰好取完（limit == 总数）时 next_cursor 为 None（spec §4.3）
-    repo = ChatTurnsRepository(connection)
-    repo._now_factory = _fake_now(
-        "2026-08-13T00:00:01.000000+00:00",
-        "2026-08-13T00:00:02.000000+00:00",
+    repo = ChatTurnsRepository(
+        connection,
+        now_factory=_fake_now(
+            "2026-08-13T00:00:01.000000+00:00",
+            "2026-08-13T00:00:02.000000+00:00",
+        ),
     )
     repo.upsert_Turn("t-000000000001", "s-000000000001", "a")
     repo.upsert_Turn("t-000000000002", "s-000000000001", "b")

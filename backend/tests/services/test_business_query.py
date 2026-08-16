@@ -320,17 +320,17 @@ def test_query_Customers_keyword_and_archive_filter(service, connection):
     assert with_archived["total"] == 2
 
 
-def test_query_Customers_invalid_limit_clamped(service, connection):
-    # 验证：limit 超过上限时收窄，不报错（防御性）
+def test_query_Customers_clamps_limit(service, connection):
+    # 验证：limit 超过 100 时收窄到 100，total 不受影响（防御性）
     customers = CustomersRepository(connection)
-    for i in range(3):
+    for i in range(101):
         customers.apply_Write(
-            "13800000000", f"sync-c-{i}",
+            "13800000000", f"sync-c-{i:03d}",
             _make_customer_fields(f"客户{i}"), 0,
         )
     result = service.query_Customers("13800000000", limit=999)
-    assert len(result["items"]) == 3
-    assert result["total"] == 3
+    assert len(result["items"]) == 100
+    assert result["total"] == 101
 
 
 # ---------- 编号映射查询 query_CustomerCodeMappings ----------

@@ -202,7 +202,6 @@ def test_unlocked_after_lock_elapses(limiter, clock):
 
     clock.ts += LOCK_SECONDS
     assert limiter.is_locked("13800000000") is False
-    assert limiter.is_locked("13800000000") is False
 
 
 def test_counter_resets_after_lock_elapses(limiter, clock):

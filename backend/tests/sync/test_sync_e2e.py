@@ -11,8 +11,6 @@
 
 import json
 
-import pytest
-
 # fixture（client / seed_account / test_database）由本目录 conftest.py 自动加载
 
 

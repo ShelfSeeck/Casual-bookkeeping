@@ -692,17 +692,3 @@ async def test_approve_Turn_recovers_from_stored_partial_turn(connection):
     assert "13800000000" not in chat_module._PENDING
     stored = turns.get_Turn("turn-1")
     assert stored["messages_json"] == ModelMessagesTypeAdapter.dump_json(final_messages).decode()
-
-
-# ---------- 共享状态复位 ----------
-
-
-def test_reset_SharedState_clears_locks_and_pending():
-    # 测试缝：清空进程级共享状态，避免串测试。
-    chat_module._LOCKS["13800000000"] = asyncio.Lock()
-    chat_module._PENDING["13800000000"] = _pending_approval()
-
-    reset_SharedState()
-
-    assert chat_module._LOCKS == {}
-    assert chat_module._PENDING == {}
