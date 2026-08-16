@@ -1,3 +1,9 @@
+---
+status: archived
+as_of: 2026-08-16
+reason: headless 冒烟修复已全部落地（前端测试与构建全绿）；仅作历史存档
+---
+
 # 执行计划：UI 冒烟问题修复（2026-08-16 headless 冒烟）
 
 > 任务源。背景：二期 UI 冒烟（headless Chromium + CDP）暴露 9 个真实问题，已逐条核实。

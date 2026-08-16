@@ -1,3 +1,10 @@
+---
+status: partially-outdated
+as_of: 2026-08-16
+outdated_sections:
+  - "『范围-前端：确认 UI 仍未实现』——AiChatView 工具确认卡片已实现并接线 appState.resolveAiApproval，以 AGENTS.md 当前协作状态为准"
+---
+
 # 记账助手对话 Agent（MVP）spec
 
 > 面向开发与前后端联调的接口设计。范围：后端可运行的对话助手 + 业务工具与确认握手（**现状已实现**，见 `docs/spec/agent-tools.md`；MVP 历史描述保留并逐项标注）。

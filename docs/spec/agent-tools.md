@@ -1,3 +1,10 @@
+---
+status: partially-outdated
+as_of: 2026-08-16
+outdated_sections:
+  - "§1.2 明确不做：『前端确认 UI 只提供接口与类型，不实现可视化确认组件』——AiChatView 确认卡片已实现，以 AGENTS.md 当前协作状态为准"
+---
+
 # Agent 业务工具与确认握手实现设计
 
 > 面向开发的实现设计。范围：把一期业务功能接入 Pydantic AI Agent——只读查询工具直接执行，写操作以「草案 + 用户确认」形式生成，后端工具永不写库。
