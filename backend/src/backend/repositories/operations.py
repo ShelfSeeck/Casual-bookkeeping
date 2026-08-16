@@ -110,6 +110,20 @@ class OperationsRepository(BaseRepository):
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def find_RevertOfOperation(
+        self, account_phone: str, operation_id: str
+    ) -> dict[str, Any] | None:
+        """查当前账户下是否已有撤回操作指向目标操作（docs/data-model.md §6.5）。
+
+        用于撤回校验：一个操作只能被撤回一次；查到任意行即视为已撤回。
+        """
+        row = self.connection.execute(
+            "SELECT * FROM database_operations"
+            " WHERE account_phone = ? AND reverts_operation_id = ?",
+            (account_phone, operation_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
     def get_MaxSeq(self, account_phone: str) -> int:
         """bootstrap 的 snapshot_seq：当前账户最新 server_seq；空库为 0。
 

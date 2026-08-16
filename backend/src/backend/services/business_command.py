@@ -15,6 +15,7 @@ create/update 均按「现记录 ∪ patch」合并后的目标状态校验（do
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.repositories._base import BaseRepository
@@ -88,9 +89,22 @@ class BusinessCommandService:
                 ],
             )
 
-        # 2. 事务：逐 change 应用，任一失败整条回滚
+        # 2. 撤回展开（幂等检查之后、changes 循环之前）：把撤回意图展开成
+        # 反向 changes，再继续走普通写入管线（docs/data-model.md §6.5）。
+        effective_operation = operation
+        if operation.get("reverts_operation_id"):
+            expanded_changes, revert_error = self._expand_revert(
+                account_phone, operation
+            )
+            if revert_error is not None:
+                return revert_error
+            effective_operation = {**operation, "changes": expanded_changes}
+
+        # 3. 事务：逐 change 应用，任一失败整条回滚
         try:
-            result = self._apply_in_transaction(account_phone, device_id, operation)
+            result = self._apply_in_transaction(
+                account_phone, device_id, effective_operation, request_hash
+            )
             if result.status != "accepted":
                 # rejected / conflict：本事务内已写入的 change 全部回滚
                 self._connection.rollback()
@@ -103,8 +117,80 @@ class BusinessCommandService:
 
     # ---------- 私有实现 ----------
 
+    def _expand_revert(
+        self, account_phone: str, operation: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]] | None, OperationResult | None]:
+        """撤回展开：校验目标并生成反向 changes（docs/data-model.md §6.5）。
+
+        - 目标不存在 / 不属于当前账户 → revert_target_not_found。
+        - 目标本身是撤回操作、已被其他撤回指向、或含 MVP 不支持的实体 create
+          → revert_target_invalid。
+        - 展开后的 changes 按原操作的 change_id 升序，base_version 取目标
+          after_version，fields 取目标 before_json（create 的工单等价软删）。
+        返回 (changes, error_result)，成功时 error_result 为 None。
+        """
+        operation_id = operation["operation_id"]
+        reverts_operation_id = operation["reverts_operation_id"]
+
+        target = self._operations.get_ByOperationId(reverts_operation_id)
+        if target is None or target["account_phone"] != account_phone:
+            return None, self._revert_error(operation_id, "revert_target_not_found")
+        if target["reverts_operation_id"] or self._operations.find_RevertOfOperation(
+            account_phone, reverts_operation_id
+        ):
+            return None, self._revert_error(operation_id, "revert_target_invalid")
+
+        expanded: list[dict[str, Any]] = []
+        for row in self._operations.get_ChangesByOperationId(reverts_operation_id):
+            if row["before_json"] is None:
+                # 目标是一次 create：MVP 只支持工单 create 的撤回（等价软删）
+                if row["entity_type"] != "work_order":
+                    return None, self._revert_error(
+                        operation_id, "revert_target_invalid"
+                    )
+                expanded.append(
+                    {
+                        "entity_type": row["entity_type"],
+                        "entity_sync_id": row["entity_sync_id"],
+                        "base_version": row["after_version"],
+                        "fields": {
+                            "deleted_at": datetime.now(timezone.utc).isoformat()
+                        },
+                    }
+                )
+            else:
+                import json
+
+                expanded.append(
+                    {
+                        "entity_type": row["entity_type"],
+                        "entity_sync_id": row["entity_sync_id"],
+                        "base_version": row["after_version"],
+                        "fields": json.loads(row["before_json"]),
+                    }
+                )
+        return expanded, None
+
+    def _revert_error(self, operation_id: str, error_code: str) -> OperationResult:
+        """撤回校验失败的逐条结果（errors 形状照抄 docs/sync-protocol.md §4.1）。"""
+        return OperationResult(
+            operation_id=operation_id,
+            status="rejected",
+            errors=[
+                {
+                    "entity_sync_id": "",
+                    "error_code": error_code,
+                    "message": "",
+                }
+            ],
+        )
+
     def _apply_in_transaction(
-        self, account_phone: str, device_id: str | None, operation: dict[str, Any]
+        self,
+        account_phone: str,
+        device_id: str | None,
+        operation: dict[str, Any],
+        request_hash: str,
     ) -> OperationResult:
         operation_id = operation["operation_id"]
         row_versions: dict[str, int] = {}
@@ -201,7 +287,7 @@ class BusinessCommandService:
             account_phone=account_phone,
             device_id=device_id,
             operation_id=operation_id,
-            request_hash=self._compute_hash(operation),
+            request_hash=request_hash,
             actor_type=operation.get("actor_type", "user"),
             operation_type=operation.get("operation_type", ""),
             source_turn_id=operation.get("source_turn_id"),

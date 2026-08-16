@@ -72,6 +72,8 @@ rejected 响应结构（变更级，一条操作可带多条）：
 | --- | --- |
 | `entity_not_found` | 目标记录不存在或已软删（update/delete 引用） |
 | `operation_id_conflict` | operation_id 已存在但 request_hash 不同（拒绝复用） |
+| `revert_target_not_found` | 撤回目标 operation 不存在或不属于当前账户 |
+| `revert_target_invalid` | 撤回目标本身是撤回操作、已被其他撤回指向，或含 MVP 不支持的实体 create 变更 |
 
 #### 工单 `work_orders`
 

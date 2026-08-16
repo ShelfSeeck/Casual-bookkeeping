@@ -125,6 +125,7 @@ def pull(
                 "operation_id": op["operation_id"],
                 "operation_type": op["operation_type"],
                 "reverts_operation_id": op["reverts_operation_id"],
+                "device_id": op["device_id"],
                 "created_at": op["created_at"],
                 "changes": [
                     {
@@ -133,6 +134,8 @@ def pull(
                         "change_type": c["change_type"],
                         "after_json": c["after_json"],
                         "after_version": c["after_version"],
+                        "before_json": c["before_json"],
+                        "changed_fields_json": c["changed_fields_json"],
                     }
                     for c in changes
                 ],

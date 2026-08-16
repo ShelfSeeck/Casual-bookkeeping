@@ -292,52 +292,90 @@ def test_bootstrap_snapshot_seq_anchors_to_account(client, seed_account):
     assert body["snapshot_seq"] == 1
 
 
-def test_push_revert_op_carries_reverts_operation_id(client, seed_account):
-    # 撤回操作：reverts_operation_id 随 Push 进库（database_operations.reverts_operation_id），
-    # Pull 时带出（docs/data-model.md §6.5）。曾因 OperationIn schema 缺字段而恒为 NULL。
-    seed_account()
-    headers = _login(client)
-    # 先建一条正常操作作为"被撤回的原操作"
-    client.post(
-        "/sync/push",
-        headers=headers,
-        json={
-            "operations": [
-                {
-                    "operation_id": "op-revert-001",
-                    "operation_type": "create_customer",
-                    "actor_type": "user",
-                    "source_turn_id": None,
-                    "changes": [
-                        {
-                            "entity_type": "customer",
-                            "entity_sync_id": "sync-revert-001",
-                            "base_version": 0,
-                            "fields": {"canonical_name": "某某厂"},
-                        }
-                    ],
-                }
-            ]
-        },
-    )
-    # 撤回操作：reverts_operation_id 指向原操作
+# ---------- 缝：撤回执行与 Pull 历史载荷 ----------
+
+def _revert_op(operation_id, reverts_operation_id):
+    """构造一条撤回操作：changes 为空数组，反向 changes 由服务端展开。"""
+    return {
+        "operation_id": operation_id,
+        "operation_type": "revert_operation",
+        "actor_type": "user",
+        "source_turn_id": None,
+        "reverts_operation_id": reverts_operation_id,
+        "changes": [],
+    }
+
+
+def _work_order_fields(customer_id, **overrides):
+    """工单 create 的合法字段；service_item 留空以跳过服务品类前置校验。"""
+    fields = {
+        "work_order_date": "2026-08-12",
+        "customer_id": customer_id,
+        "customer_code": "001",
+        "customer_name": "某某厂",
+        "service_category": "洗水",
+        "service_item": None,
+        "quantity": 12,
+        "unit": "件",
+    }
+    fields.update(overrides)
+    return fields
+
+
+def _push_work_order(client, headers, *, operation_id, sync_id, customer_id,
+                     base_version=0, fields=None):
+    """Push 一条工单 create/update 并断言 accepted。"""
+    if fields is None:
+        fields = _work_order_fields(customer_id)
     resp = client.post(
         "/sync/push",
         headers=headers,
         json={
             "operations": [
                 {
-                    "operation_id": "op-revert-002",
-                    "operation_type": "revert_customer",
+                    "operation_id": operation_id,
+                    "operation_type": (
+                        "create_work_order" if base_version == 0 else "update_work_order"
+                    ),
                     "actor_type": "user",
                     "source_turn_id": None,
-                    "reverts_operation_id": "op-revert-001",
+                    "changes": [
+                        {
+                            "entity_type": "work_order",
+                            "entity_sync_id": sync_id,
+                            "base_version": base_version,
+                            "fields": fields,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["results"][0]
+    assert result["status"] == "accepted"
+    return result
+
+
+def _seed_customer_and_mapping(client, headers, test_database, *, customer_sync_id,
+                               mapping_sync_id):
+    """为工单 create 准备跨表校验前置：客户 + 客户编号映射，返回 customer_id。"""
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={
+            "operations": [
+                {
+                    "operation_id": f"op-{customer_sync_id}",
+                    "operation_type": "create_customer",
+                    "actor_type": "user",
+                    "source_turn_id": None,
                     "changes": [
                         {
                             "entity_type": "customer",
-                            "entity_sync_id": "sync-revert-001",
-                            "base_version": 1,
-                            "fields": {"canonical_name": "回退的名字"},
+                            "entity_sync_id": customer_sync_id,
+                            "base_version": 0,
+                            "fields": {"canonical_name": "某某厂"},
                         }
                     ],
                 }
@@ -347,8 +385,324 @@ def test_push_revert_op_carries_reverts_operation_id(client, seed_account):
     assert resp.status_code == 200, resp.text
     assert resp.json()["results"][0]["status"] == "accepted"
 
-    # Pull 带出撤回关系
-    pulled = client.get("/sync/pull", headers=headers, params={"after": 0, "limit": 10}).json()
+    conn = test_database.connect()
+    try:
+        row = conn.execute(
+            "SELECT customer_id FROM customers WHERE sync_id = ?",
+            (customer_sync_id,),
+        ).fetchone()
+        assert row is not None
+        customer_id = int(row["customer_id"])
+    finally:
+        conn.close()
+
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={
+            "operations": [
+                {
+                    "operation_id": f"op-{mapping_sync_id}",
+                    "operation_type": "create_customer_code_mapping",
+                    "actor_type": "user",
+                    "source_turn_id": None,
+                    "changes": [
+                        {
+                            "entity_type": "customer_code_mapping",
+                            "entity_sync_id": mapping_sync_id,
+                            "base_version": 0,
+                            "fields": {
+                                "customer_id": customer_id,
+                                "customer_code": "001",
+                                "customer_name": "某某厂",
+                                "valid_from": "2026-01-01",
+                                "valid_to": None,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["status"] == "accepted"
+    return customer_id
+
+
+def _fetch_work_order(test_database, sync_id):
+    """直接读业务表断言撤回后的字段状态。"""
+    conn = test_database.connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM work_orders WHERE sync_id = ?", (sync_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        conn.close()
+
+
+def _revert_error(code):
+    """撤回拒绝的 errors 形状（docs/sync-protocol.md §4.1）。"""
+    return [{"entity_sync_id": "", "error_code": code, "message": ""}]
+
+
+def test_revert_work_order_create_soft_deletes(client, seed_account, test_database):
+    # 撤回 create 工单：目标 before_json 为 NULL → 等价软删（deleted_at 非空），
+    # MVP 只支持工单 create 的撤回。
+    seed_account()
+    headers = _login(client)
+    customer_id = _seed_customer_and_mapping(
+        client, headers, test_database,
+        customer_sync_id="sync-cust-001",
+        mapping_sync_id="sync-map-001",
+    )
+    _push_work_order(
+        client, headers,
+        operation_id="op-wo-001",
+        sync_id="sync-wo-001",
+        customer_id=customer_id,
+    )
+
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-001", "op-wo-001")]},
+    )
+    assert resp.status_code == 200, resp.text
+    first_result = resp.json()["results"][0]
+    assert first_result["status"] == "accepted"
+
+    # 幂等重试：同 operation_id 同内容 → 返回首次已处理结果，不重复软删
+    retry = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-001", "op-wo-001")]},
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["results"][0] == first_result
+
+    row = _fetch_work_order(test_database, "sync-wo-001")
+    assert row is not None
+    assert row["deleted_at"] is not None
+
+
+def test_revert_work_order_update_restores_before_state(client, seed_account, test_database):
+    # 撤回 update 工单：服务端用 update 操作的 before_json 作为反向 fields，
+    # base_version=after_version，字段恢复到 update 前的状态（quantity 20 → 12）。
+    seed_account()
+    headers = _login(client)
+    customer_id = _seed_customer_and_mapping(
+        client, headers, test_database,
+        customer_sync_id="sync-cust-001",
+        mapping_sync_id="sync-map-001",
+    )
+    _push_work_order(
+        client, headers,
+        operation_id="op-wo-001",
+        sync_id="sync-wo-001",
+        customer_id=customer_id,
+    )
+    _push_work_order(
+        client, headers,
+        operation_id="op-wo-002",
+        sync_id="sync-wo-001",
+        customer_id=customer_id,
+        base_version=1,
+        fields={"quantity": 20},
+    )
+
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-001", "op-wo-002")]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["status"] == "accepted"
+
+    row = _fetch_work_order(test_database, "sync-wo-001")
+    assert row["quantity"] == 12
+    assert row["row_version"] == 3
+
+
+def test_revert_missing_target_rejected(client, seed_account):
+    # 撤回不存在的 operation_id → rejected revert_target_not_found
+    seed_account()
+    headers = _login(client)
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-001", "op-missing")]},
+    )
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["results"][0]
+    assert result["status"] == "rejected"
+    assert result["errors"] == _revert_error("revert_target_not_found")
+
+
+def test_revert_already_reverted_target_rejected(client, seed_account, test_database):
+    # 目标已被其他撤回操作指向（find_RevertOfOperation 命中）→ revert_target_invalid
+    seed_account()
+    headers = _login(client)
+    customer_id = _seed_customer_and_mapping(
+        client, headers, test_database,
+        customer_sync_id="sync-cust-001",
+        mapping_sync_id="sync-map-001",
+    )
+    _push_work_order(
+        client, headers,
+        operation_id="op-wo-001",
+        sync_id="sync-wo-001",
+        customer_id=customer_id,
+    )
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-001", "op-wo-001")]},
+    )
+    assert resp.json()["results"][0]["status"] == "accepted"
+
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-002", "op-wo-001")]},
+    )
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["results"][0]
+    assert result["status"] == "rejected"
+    assert result["errors"] == _revert_error("revert_target_invalid")
+
+
+def test_revert_other_account_operation_rejected(client, seed_account):
+    # 账户隔离：A 撤回 B 的 operation → revert_target_not_found
+    seed_account()
+    seed_account(phone="13900000000")
+    headers_a = _login(client)
+    headers_b = _login(client, phone="13900000000", device_id="dev-000000000000")
+
+    resp = client.post(
+        "/sync/push",
+        headers=headers_b,
+        json={"operations": [_customer_op("op-b-001", "sync-b-001")]},
+    )
+    assert resp.json()["results"][0]["status"] == "accepted"
+
+    resp = client.post(
+        "/sync/push",
+        headers=headers_a,
+        json={"operations": [_revert_op("op-a-001", "op-b-001")]},
+    )
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["results"][0]
+    assert result["status"] == "rejected"
+    assert result["errors"] == _revert_error("revert_target_not_found")
+
+
+def test_pull_includes_history_payload(client, seed_account, test_database):
+    # Pull 响应扩展：operation 级 device_id + change 级 before_json / changed_fields_json
+    # （str | None；旧客户端忽略未知字段保持兼容）。
+    seed_account()
+    headers = _login(client)
+    customer_id = _seed_customer_and_mapping(
+        client, headers, test_database,
+        customer_sync_id="sync-cust-001",
+        mapping_sync_id="sync-map-001",
+    )
+    _push_work_order(
+        client, headers,
+        operation_id="op-wo-001",
+        sync_id="sync-wo-001",
+        customer_id=customer_id,
+    )
+    _push_work_order(
+        client, headers,
+        operation_id="op-wo-002",
+        sync_id="sync-wo-001",
+        customer_id=customer_id,
+        base_version=1,
+        fields={"quantity": 20},
+    )
+
+    body = client.get(
+        "/sync/pull", headers=headers, params={"after": 0, "limit": 10}
+    ).json()
+    ops = {op["operation_id"]: op for op in body["operations"]}
+
+    create_op = ops["op-wo-001"]
+    assert create_op["device_id"] == "dev-a1b2c3d4e5f6"
+    create_change = create_op["changes"][0]
+    assert create_change["before_json"] is None
+    assert create_change["changed_fields_json"] is not None
+
+    update_op = ops["op-wo-002"]
+    assert update_op["device_id"] == "dev-a1b2c3d4e5f6"
+    update_change = update_op["changes"][0]
+    assert update_change["before_json"] is not None
+    assert '"quantity"' in update_change["before_json"]
+    assert update_change["changed_fields_json"] is not None
+    assert '"quantity"' in update_change["changed_fields_json"]
+
+
+def test_revert_of_revert_operation_rejected(client, seed_account, test_database):
+    # 目标本身是撤回操作 → revert_target_invalid
+    seed_account()
+    headers = _login(client)
+    customer_id = _seed_customer_and_mapping(
+        client, headers, test_database,
+        customer_sync_id="sync-cust-001",
+        mapping_sync_id="sync-map-001",
+    )
+    _push_work_order(
+        client, headers,
+        operation_id="op-wo-001",
+        sync_id="sync-wo-001",
+        customer_id=customer_id,
+    )
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-001", "op-wo-001")]},
+    )
+    assert resp.json()["results"][0]["status"] == "accepted"
+
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-002", "op-revert-001")]},
+    )
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["results"][0]
+    assert result["status"] == "rejected"
+    assert result["errors"] == _revert_error("revert_target_invalid")
+
+
+def test_push_revert_op_carries_reverts_operation_id(client, seed_account, test_database):
+    # 撤回操作：reverts_operation_id 随 Push 进库，Pull 时带出。
+    # 撤回展开只支持工单 create → 软删，因此用 work_order 作为撤回目标。
+    seed_account()
+    headers = _login(client)
+    customer_id = _seed_customer_and_mapping(
+        client, headers, test_database,
+        customer_sync_id="sync-cust-001",
+        mapping_sync_id="sync-map-001",
+    )
+    _push_work_order(
+        client, headers,
+        operation_id="op-revert-001",
+        sync_id="sync-revert-001",
+        customer_id=customer_id,
+    )
+
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={"operations": [_revert_op("op-revert-002", "op-revert-001")]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["status"] == "accepted"
+
+    pulled = client.get(
+        "/sync/pull", headers=headers, params={"after": 0, "limit": 10}
+    ).json()
     revert_ops = [o for o in pulled["operations"] if o["operation_id"] == "op-revert-002"]
     assert len(revert_ops) == 1
     assert revert_ops[0]["reverts_operation_id"] == "op-revert-001"
