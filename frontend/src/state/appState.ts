@@ -528,13 +528,13 @@ class AppState {
     unit: string
     unitPriceCents: number | null
     orderDate?: string
-  }): Promise<void> {
+  }): Promise<string> {
     const db = this.db
     if (!db) throw new Error('业务库未打开')
     const customer = this.customers.find((c) => c.customerId === params.customerId)
     if (!customer) throw new Error('customer_not_found')
 
-    await createWorkOrderCommand(db, {
+    const opId = await createWorkOrderCommand(db, {
       workOrderDate: params.orderDate || localToday(),
       customerId: params.customerId,
       customerCode: customer.code,
@@ -545,13 +545,20 @@ class AppState {
       unit: params.unit,
       unitPriceCents: params.unitPriceCents,
     })
+    this.triggerUndo({
+      undoId: newId('undo'),
+      operationId: opId,
+      message: `已保存 ${customer.displayName} ${params.quantity}${params.unit}`,
+      actionType: 'create',
+    })
     await this.reload()
     if (this.syncManager) {
       void this.syncManager.sync().then(() => this.reload())
     }
+    return opId
   }
 
-  async updateWorkOrder(orderId: string, updates: Partial<WorkOrderUi>): Promise<void> {
+  async updateWorkOrder(orderId: string, updates: Partial<WorkOrderUi>): Promise<string> {
     const db = this.db
     if (!db) throw new Error('业务库未打开')
     const patch: Record<string, unknown> = {}
@@ -569,11 +576,18 @@ class AppState {
     if (updates.categoryName !== undefined) patch.serviceCategory = updates.categoryName
     if (updates.subcategoryName !== undefined) patch.serviceItem = updates.subcategoryName
     if (updates.unit !== undefined) patch.unit = updates.unit
-    await updateWorkOrderCommand(db, orderId, patch as never)
+    const opId = await updateWorkOrderCommand(db, orderId, patch as never)
+    this.triggerUndo({
+      undoId: newId('undo'),
+      operationId: opId,
+      message: '已保存修改',
+      actionType: 'update',
+    })
     await this.reload()
     if (this.syncManager) {
       void this.syncManager.sync().then(() => this.reload())
     }
+    return opId
   }
 
   async toggleComplete(orderId: string, isCompleted: boolean): Promise<void> {
@@ -865,7 +879,13 @@ class AppState {
     if (!db) throw new Error('业务库未打开')
     const input = await buildAiOperationFromDraft(db, this.chatSessionId ?? '', toolName, draft)
     if (!input) throw new Error('ai_draft_invalid')
-    await new MutationService(db).commit(input)
+    const opId = await new MutationService(db).commit(input)
+    this.triggerUndo({
+      undoId: newId('undo'),
+      operationId: opId,
+      message: 'AI 修改已保存',
+      actionType: 'update',
+    })
     if (this.syncManager) {
       void this.syncManager.sync().then(() => this.reload())
     }
