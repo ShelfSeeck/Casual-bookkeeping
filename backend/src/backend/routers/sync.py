@@ -124,6 +124,7 @@ def pull(
                 "server_seq": op["server_seq"],
                 "operation_id": op["operation_id"],
                 "operation_type": op["operation_type"],
+                "actor_type": op["actor_type"],
                 "reverts_operation_id": op["reverts_operation_id"],
                 "device_id": op["device_id"],
                 "created_at": op["created_at"],

@@ -629,12 +629,14 @@ def test_pull_includes_history_payload(client, seed_account, test_database):
 
     create_op = ops["op-wo-001"]
     assert create_op["device_id"] == "dev-a1b2c3d4e5f6"
+    assert create_op["actor_type"] == "user"
     create_change = create_op["changes"][0]
     assert create_change["before_json"] is None
     assert create_change["changed_fields_json"] is not None
 
     update_op = ops["op-wo-002"]
     assert update_op["device_id"] == "dev-a1b2c3d4e5f6"
+    assert update_op["actor_type"] == "user"
     update_change = update_op["changes"][0]
     assert update_change["before_json"] is not None
     assert '"quantity"' in update_change["before_json"]
