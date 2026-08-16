@@ -205,6 +205,8 @@
 
 **范围**：`src/components/ledger/LedgerView.vue`、`src/components/ledger/OrderActionSheet.vue`、`src/components/ledger/WorkOrderDetailEdit.vue`、`src/components/common/UndoSnackbar.vue`。只消费 appState 已有方法，不改状态层。
 
+（更新：`OrderActionSheet.vue` 已于 ui-smoke-fixes Task 2 作为死代码删除，LedgerView 详情面板使用 `WorkOrderDetailEdit.vue`。）
+
 ### 4.1 批量定价（查账本多选）
 
 - `LedgerView.vue`：
