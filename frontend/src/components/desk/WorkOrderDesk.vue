@@ -9,6 +9,7 @@ import {
   sanitizeDecimalInput,
   sanitizeIntegerInput,
 } from '../../utils/numericInput'
+import { localDateToday, shiftLocalDate } from '../../utils/localDate'
 
 // 表单状态
 const selectedCustomerId = ref<number | null>(null)
@@ -19,8 +20,10 @@ const quantityStr = ref('')
 const unitPriceStr = ref('')
 const quantityError = ref('')
 const unitPriceError = ref('')
-const _now = new Date()
-const orderDate = ref(`${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`)
+const today = computed(() => localDateToday())
+const yesterday = computed(() => shiftLocalDate(today.value, -1))
+const dayBefore = computed(() => shiftLocalDate(today.value, -2))
+const orderDate = ref(today.value)
 
 // 底部滑出弹窗控制
 const showCustomerSheet = ref(false)
@@ -45,6 +48,11 @@ function onCustomDateChanged(e: Event) {
     orderDate.value = val
     showDatePickerSheet.value = false
   }
+}
+
+function setOrderDate(value: string) {
+  orderDate.value = value
+  showDatePickerSheet.value = false
 }
 
 // 当前选中的客户
@@ -232,8 +240,8 @@ function scrollToTodayFlow() {
         >
           <div class="cb-time-big-group cb-tabular-nums">
             <span class="cb-time-big-date">{{ orderDate }}</span>
-            <span v-if="orderDate === '2026-08-15'" class="cb-time-today-tag">今天</span>
-            <span v-else-if="orderDate === '2026-08-14'" class="cb-time-today-tag">昨天</span>
+            <span v-if="orderDate === today" class="cb-time-today-tag">今天</span>
+            <span v-else-if="orderDate === yesterday" class="cb-time-today-tag">昨天</span>
           </div>
           <span class="cb-time-switch-icon" aria-hidden="true">切换日期 ▾</span>
         </button>
@@ -552,26 +560,26 @@ function scrollToTodayFlow() {
           <button
             type="button"
             class="cb-sheet-option-item cb-pressable"
-            :class="{ 'cb-sheet-option-item--active': orderDate === '2026-08-15' }"
-            @click="orderDate = '2026-08-15'; showDatePickerSheet = false"
+            :class="{ 'cb-sheet-option-item--active': orderDate === today }"
+            @click="setOrderDate(today)"
           >
-            <span class="cb-option-sub-name">2026-08-15 (今天)</span>
+            <span class="cb-option-sub-name">{{ today }} (今天)</span>
           </button>
           <button
             type="button"
             class="cb-sheet-option-item cb-pressable"
-            :class="{ 'cb-sheet-option-item--active': orderDate === '2026-08-14' }"
-            @click="orderDate = '2026-08-14'; showDatePickerSheet = false"
+            :class="{ 'cb-sheet-option-item--active': orderDate === yesterday }"
+            @click="setOrderDate(yesterday)"
           >
-            <span class="cb-option-sub-name">2026-08-14 (昨天)</span>
+            <span class="cb-option-sub-name">{{ yesterday }} (昨天)</span>
           </button>
           <button
             type="button"
             class="cb-sheet-option-item cb-pressable"
-            :class="{ 'cb-sheet-option-item--active': orderDate === '2026-08-13' }"
-            @click="orderDate = '2026-08-13'; showDatePickerSheet = false"
+            :class="{ 'cb-sheet-option-item--active': orderDate === dayBefore }"
+            @click="setOrderDate(dayBefore)"
           >
-            <span class="cb-option-sub-name">2026-08-13 (前天)</span>
+            <span class="cb-option-sub-name">{{ dayBefore }} (前天)</span>
           </button>
 
           <!-- 分隔线 -->

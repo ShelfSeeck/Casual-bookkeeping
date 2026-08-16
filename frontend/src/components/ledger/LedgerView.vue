@@ -15,14 +15,18 @@ import LedgerFilterBar from './LedgerFilterBar.vue'
 import WorkOrderCard from './WorkOrderCard.vue'
 import WorkOrderDetailEdit from './WorkOrderDetailEdit.vue'
 
-const activeOrder = ref<WorkOrderUi | null>(null)
+const activeOrderId = ref<string | null>(null)
+
+const activeOrder = computed(() => {
+  return appState.workOrders.find((o) => o.orderId === activeOrderId.value) ?? null
+})
 
 function openOrderDetail(order: WorkOrderUi) {
-  activeOrder.value = order
+  activeOrderId.value = order.orderId
 }
 
 function closeOrderDetail() {
-  activeOrder.value = null
+  activeOrderId.value = null
 }
 
 // ---------- 批量定价：多选模式 ----------

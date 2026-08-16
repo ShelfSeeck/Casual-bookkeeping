@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { appState } from '../../state/appState'
+import { localDateToday, shiftLocalDate } from '../../utils/localDate'
 
 const showSearchInput = ref(false)
 const showDateRangeModal = ref(false)
 
-const tempStartDate = ref(appState.ledgerFilters.customStartDate)
-const tempEndDate = ref(appState.ledgerFilters.customEndDate)
+const today = computed(() => localDateToday())
+const tempStartDate = ref(today.value)
+const tempEndDate = ref(today.value)
 
 const startDateInputRef = ref<HTMLInputElement | null>(null)
 const endDateInputRef = ref<HTMLInputElement | null>(null)
@@ -32,12 +34,12 @@ const datePresets = [
   { key: 'all', label: '全部' },
 ] as const
 
-const quickRanges = [
-  { label: '近3天', start: '2026-08-13', end: '2026-08-15' },
-  { label: '近7天', start: '2026-08-09', end: '2026-08-15' },
-  { label: '近30天', start: '2026-07-17', end: '2026-08-15' },
-  { label: '8月上旬', start: '2026-08-01', end: '2026-08-10' },
-]
+const quickRanges = computed(() => [
+  { label: '近3天', start: shiftLocalDate(today.value, -2), end: today.value },
+  { label: '近7天', start: shiftLocalDate(today.value, -6), end: today.value },
+  { label: '近30天', start: shiftLocalDate(today.value, -29), end: today.value },
+  { label: '8月上旬', start: `${today.value.slice(0, 7)}-01`, end: `${today.value.slice(0, 7)}-10` },
+])
 
 const customDateLabel = computed(() => {
   if (appState.ledgerFilters.datePreset === 'custom') {
@@ -53,8 +55,13 @@ function selectDate(key: typeof datePresets[number]['key']) {
 }
 
 function openDateRangeModal() {
-  tempStartDate.value = appState.ledgerFilters.customStartDate
-  tempEndDate.value = appState.ledgerFilters.customEndDate
+  if (appState.ledgerFilters.datePreset === 'custom') {
+    tempStartDate.value = appState.ledgerFilters.customStartDate
+    tempEndDate.value = appState.ledgerFilters.customEndDate
+  } else {
+    tempStartDate.value = today.value
+    tempEndDate.value = today.value
+  }
   showDateRangeModal.value = true
 }
 
@@ -279,7 +286,7 @@ function selectCustomer(id: number | null) {
             type="button"
             class="cb-date-reset-btn cb-pressable"
             aria-label="重置为今天"
-            @click="tempStartDate = '2026-08-15'; tempEndDate = '2026-08-15'"
+            @click="applyQuickRange(today, today)"
           >
             设为今日
           </button>
