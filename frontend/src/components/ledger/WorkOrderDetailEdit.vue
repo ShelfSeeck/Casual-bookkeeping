@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { showFailToast, showSuccessToast } from 'vant'
 import type { WorkOrderUi } from '../../types/ui'
 import { appState } from '../../state/appState'
@@ -35,6 +35,25 @@ const orderDate = ref(props.order.orderDate)
 const today = computed(() => localDateToday())
 const yesterday = computed(() => shiftLocalDate(today.value, -1))
 const dayBefore = computed(() => shiftLocalDate(today.value, -2))
+
+// activeOrder 改为 computed 后，reload 会用新对象替换 props.order；表单 refs 需在外部变化时重新初始化，
+// 否则面板仍显示旧值。以 orderId + updatedAt 为触发条件：同单外部更新会刷新，本地编辑不触发。
+function syncFormFromOrder() {
+  selectedCustomerId.value = props.order.customerId
+  selectedCategoryName.value = props.order.categoryName
+  selectedSubcategoryName.value = props.order.subcategoryName
+  unit.value = props.order.unit
+  quantityStr.value = String(props.order.quantity)
+  unitPriceStr.value =
+    props.order.unitPriceCents != null ? (props.order.unitPriceCents / 100).toFixed(2) : ''
+  orderDate.value = props.order.orderDate
+  quantityError.value = ''
+  unitPriceError.value = ''
+}
+
+watch(() => [props.order.orderId, props.order.updatedAt] as const, () => {
+  syncFormFromOrder()
+})
 
 // 弹窗控制
 const showCustomerSheet = ref(false)
