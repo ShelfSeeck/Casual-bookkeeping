@@ -38,7 +38,7 @@ const quickRanges = computed(() => [
   { label: '近3天', start: shiftLocalDate(today.value, -2), end: today.value },
   { label: '近7天', start: shiftLocalDate(today.value, -6), end: today.value },
   { label: '近30天', start: shiftLocalDate(today.value, -29), end: today.value },
-  { label: `${today.value.slice(5, 7)}月上旬`, start: `${today.value.slice(0, 7)}-01`, end: `${today.value.slice(0, 7)}-10` },
+  { label: `${Number(today.value.slice(5, 7))}月上旬`, start: `${today.value.slice(0, 7)}-01`, end: `${today.value.slice(0, 7)}-10` },
 ])
 
 const customDateLabel = computed(() => {

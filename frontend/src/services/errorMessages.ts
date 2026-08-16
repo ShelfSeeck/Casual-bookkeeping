@@ -49,7 +49,7 @@ export const errorMessageMap: Record<string, string> = {
 
   // §4.4 前端本地校验
   invalid_batch_input: '请至少选择一条工单并填写一个修改项',
-  record_gated: '该记录有未解决的冲突，请先到冲突解决中心处理',
+  record_gated: '该记录有未解决的冲突或被拒操作，请先到设置 → 同步处理',
 }
 
 /** message 字符串解析：先整串查表；形如 `code:detail` 时再按 code 查表；都未命中回退原串。 */

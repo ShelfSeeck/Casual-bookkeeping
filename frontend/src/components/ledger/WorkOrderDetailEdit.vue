@@ -239,7 +239,7 @@ async function handleSave() {
 async function toggleComplete() {
   try {
     await appState.toggleComplete(props.order.orderId, !props.order.isCompleted)
-    showSuccessToast(props.order.isCompleted ? '已标记为未完成' : '已标记为完成')
+    showSuccessToast(props.order.isCompleted ? '已标记为完成' : '已标记为未完成')
     await refreshHistory()
   } catch (e) {
     showFailToast(toErrorMessage(e))

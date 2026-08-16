@@ -59,7 +59,7 @@ describe('errorMessageMap', () => {
     for (const code of codes) {
       expect(errorMessageMap[code], `${code} 应有中文文案`).toBeTruthy()
     }
-    expect(errorMessageMap.record_gated).toBe('该记录有未解决的冲突，请先到冲突解决中心处理')
+    expect(errorMessageMap.record_gated).toBe('该记录有未解决的冲突或被拒操作，请先到设置 → 同步处理')
   })
 
   it('关键错误码使用 docs/error-codes.md 的示例文案', () => {
@@ -87,7 +87,7 @@ describe('toErrorMessage', () => {
 
   it('message 形如 code:detail 时先按 code 查表，命中返回中文文案', () => {
     expect(toErrorMessage(new Error('record_gated:sync-abc'))).toBe(
-      '该记录有未解决的冲突，请先到冲突解决中心处理',
+      '该记录有未解决的冲突或被拒操作，请先到设置 → 同步处理',
     )
   })
 
