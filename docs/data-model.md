@@ -634,7 +634,7 @@ MVP 实现语义（2026-08-15）：
 - 服务端在幂等检查之后、changes 循环之前，把撤回意图展开成反向 changes，再走普通写入管线：按 `operation_changes.change_id` 升序，每条 change 取 `before_json` 作为 `fields`、`after_version` 作为 `base_version`。
 - create 的撤回仅支持工单：`before_json` 为空且 `entity_type = "work_order"` 时，展开为等价软删（`fields.deleted_at = 当前时间`）；其他实体的 create 撤回按不支持处理。
 - 目标不存在或不属于当前账户 → `revert_target_not_found`；目标本身是撤回操作、已被其他撤回指向、或含 MVP 不支持的实体 create 变更 → `revert_target_invalid`。
-- 目标后来又被修改时，展开后的反向 changes 因 `base_version` 不匹配，服务端返回 `conflict`（Theirs 为服务端当前状态）。**MVP 已知限制**：前端当前没有撤回冲突的三方合并路径（撤回操作提交时 `changes: []`，outbox.command 无 base_snapshot/patch，冲突中心无法展开/重推），撤回冲突条目保留在 outbox 且计入冲突数；该路径待后续补实现。
+- 目标后来又被修改时，展开后的反向 changes 因 `base_version` 不匹配，服务端返回 `conflict`（Theirs 为服务端当前状态）。**MVP 已知限制**：前端当前没有撤回冲突的三方合并路径（撤回操作提交时 `changes: []`，outbox.command 无 base_snapshot/patch），撤回冲突条目保留在 outbox 且计入冲突数；冲突中心可见（只读提示）、不可展开/重推；该路径待后续补实现。
 
 撤回、用户修改、AI 修改和冲突合并（成功写入时）最终都走同一条业务规则管线。
 

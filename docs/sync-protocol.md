@@ -80,7 +80,7 @@
 - 服务端在幂等检查之后、changes 循环之前把撤回意图展开成反向 changes，再走普通写入管线（`docs/data-model.md` §6.5）：按 `operation_changes.change_id` 升序，每条 change 取 `before_json` 作为 `fields`、`after_version` 作为 `base_version`。
 - create 的撤回仅支持工单，展开为等价软删（`fields.deleted_at = 当前时间`）；其他实体的 create 撤回不支持。
 - 展开前校验目标：目标不存在或不属于当前账户 → `revert_target_not_found`；目标本身是撤回操作、已被其他撤回指向、或含不支持的实体 create 变更 → `revert_target_invalid`。校验失败为单条 `rejected`（变更级 errors）。
-- 展开后的反向 changes 走普通版本校验：目标记录在服务端已被再次修改时返回 `conflict`（Theirs 为服务端当前状态）。**MVP 已知限制**：前端当前没有撤回冲突的三方合并路径（撤回操作提交时 `changes: []`，outbox.command 无 base_snapshot/patch，冲突中心无法展开/重推），撤回冲突条目保留在 outbox 且计入冲突数；该路径待后续补实现。
+- 展开后的反向 changes 走普通版本校验：目标记录在服务端已被再次修改时返回 `conflict`（Theirs 为服务端当前状态）。**MVP 已知限制**：前端当前没有撤回冲突的三方合并路径（撤回操作提交时 `changes: []`，outbox.command 无 base_snapshot/patch），撤回冲突条目保留在 outbox 且计入冲突数；冲突中心可见（只读提示）、不可展开/重推；该路径待后续补实现。
 
 批量上限：单次请求最多 500 条操作、请求体不超过 1MB；超出返回 400 `invalid_request`，由客户端拆批重发（见 §5）。
 
@@ -132,6 +132,7 @@ GET /sync/pull?after=41&limit=200
       "server_seq": 42,
       "operation_id": "op-...",
       "operation_type": "update_work_order",
+      "actor_type": "user",
       "device_id": "dev-a1b2c3d4e5f6",
       "created_at": "2026-08-08T12:00:00+08:00",
       "changes": [
@@ -152,7 +153,7 @@ GET /sync/pull?after=41&limit=200
 ```
 
 - `limit`：默认 200，上限 500。每页同时限操作数量与响应字节数（1MB），单次业务操作也设规模上限；一条操作不会被拆到两个响应中。
-- `device_id`（operation 级）与 `before_json` / `changed_fields_json`（change 级）为**新增可选字段，向后兼容**：旧后端缺省时前端按 `null` 处理。`before_json` 在 create 变更为 `null`；`changed_fields_json` 是变更字段 before/after 差异的 JSON 字符串（create 记全量快照）。
+- `actor_type`（operation 级，`user` / `ai` / `system`）与 `device_id`（operation 级）、`before_json` / `changed_fields_json`（change 级）为**新增可选字段，向后兼容**：旧后端缺省时前端按 `null` / `user` 处理。`before_json` 在 create 变更为 `null`；`changed_fields_json` 是变更字段 before/after 差异的 JSON 字符串（create 记全量快照）。
 - 客户端先在 IndexedDB 事务外完成网络下载与 JSON 解析，再开一个 Dexie 事务一次完成：应用本页所有业务变化（写 `after_json` + `after_version` 到业务表）、写入本地 operations 镜像（含 `deviceId` 与上述两个新字段，供历史载荷展示）、更新 `applied_server_seq` 为本页最后一条 `server_seq`。
 - 事务失败或 PWA 中途退出时，整页回滚，`applied_server_seq` 保持原值，下次从原值继续拉。
 - **写入用 `put`（按 `operationId` 幂等覆盖），不用 `add`**：自己已 push 并被 Pull 拉回的操作，覆盖同一行，天然去重；Pull 不能跳过这些操作，否则 `applied_server_seq` 游标无法推进。
