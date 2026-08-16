@@ -126,11 +126,25 @@ rejected 响应结构（变更级，一条操作可带多条）：
 | `model_network_error` | 502 | 模型服务网络 / 超时 |
 | `model_call_failed` | 500 | 模型调用失败（通用） |
 
+### 4.4 前端本地校验（不进入 Push rejected）
+
+| error_code | 触发 |
+| --- | --- |
+| `invalid_batch_input` | 批量定价 targets 为空，或每条 target 未提供 `quantity` / `unit_price_cents` 任一修改项 |
+
 ## 5. 前端映射与展示
 
 - 前端维护 `error_code → 中文文案` 映射表，收到错误后解析并展示（如 `invalid_quantity` → "数量必须是正整数"）。
 - rejected 为变更级：前端遍历 `errors[]`，结合 `entity_sync_id` 定位具体记录，把用户引导到出错的那条修正。
 - 未在映射表中的错误码：展示 `message` 兜底。
+
+前端文案对照（`frontend/src/services/errorMessages.ts`）：
+
+| error_code | 中文文案 | 来源 |
+| --- | --- | --- |
+| `revert_target_not_found` | 未找到可撤回的操作 | 后端 rejected（§4.2）+ 前端本地撤回入口守卫 |
+| `revert_target_invalid` | 该操作不能撤回（可能已被撤回） | 后端 rejected（§4.2）+ 前端本地撤回入口守卫 |
+| `invalid_batch_input` | 请至少选择一条工单并填写一个修改项 | 前端本地校验（§4.4） |
 
 ## 6. 维护规则
 

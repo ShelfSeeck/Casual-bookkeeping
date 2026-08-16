@@ -319,7 +319,29 @@ CREATE TABLE work_orders (
 - `sync_status`
 - `changes_json`
 - `reverts_operation_id`（可空）：撤回操作指向被撤回的原操作；历史页面据此展示撤回关系并判断"能否撤回"（已被撤回的操作不再提供入口）
+- `device_id`（可空）：产生该操作的 PWA 安装实例；本地新建来自 meta 库 `device_id`，Pull 下发的来自服务端 `database_operations.device_id`
 - 时间字段
+
+`changes_json` 新形状（Pull 写入镜像时生成，供历史载荷展示；本地新建时只有 `entitySyncIds`，Pull 拉回后补全 `changes`）：
+
+```json
+{
+  "entitySyncIds": ["sync-0001"],
+  "changes": [
+    {
+      "entityType": "work_order",
+      "entitySyncId": "sync-0001",
+      "changeType": "update",
+      "beforeJson": "{\"customer_code\":\"001\",\"quantity\":12,\"unit_price_cents\":null}",
+      "afterJson": "{\"customer_code\":\"001\",\"quantity\":12,\"unit_price_cents\":1250}",
+      "afterVersion": 5,
+      "changedFieldsJson": "{\"unit_price_cents\":{\"before\":null,\"after\":1250}}"
+    }
+  ]
+}
+```
+
+> `beforeJson` / `afterJson` / `changedFieldsJson` 在镜像里是 JSON 字符串（与 Pull wire 形状一致）；`beforeJson` 在 create 变更为 `null`。
 
 #### `outbox`
 
@@ -609,7 +631,23 @@ AI 分析期间不锁定本地数据，用户此时仍可修改：
 - 用户确认合并结果后，生成新的撤回操作，以当前服务端版本作为 `base_version`，再经过业务写入服务、业务校验和 SQLite 事务。
 - 批量撤回也必须整体确认和整体提交。
 
+MVP 实现语义（2026-08-15）：
+
+- 前端只提交撤回意图：`operation_type = "revert_operation"`、`changes = []`、`reverts_operation_id` 指向目标操作；**本地业务表不立即回滚**，Push→Pull 后由 `after_json` 快照覆盖生效。
+- 服务端在幂等检查之后、changes 循环之前，把撤回意图展开成反向 changes，再走普通写入管线：按 `operation_changes.change_id` 升序，每条 change 取 `before_json` 作为 `fields`、`after_version` 作为 `base_version`。
+- create 的撤回仅支持工单：`before_json` 为空且 `entity_type = "work_order"` 时，展开为等价软删（`fields.deleted_at = 当前时间`）；其他实体的 create 撤回按不支持处理。
+- 目标不存在或不属于当前账户 → `revert_target_not_found`；目标本身是撤回操作、已被其他撤回指向、或含 MVP 不支持的实体 create 变更 → `revert_target_invalid`。
+- 目标后来又被修改时，展开后的反向 changes 会因 `base_version` 不匹配进入普通冲突处理（§6.4），与普通写入同一管线。
+
 撤回、用户修改、AI 修改和冲突合并最终都走同一条业务规则管线。
+
+### 6.6 批量定价
+
+`operation_type = "batch_price_work_orders"`：一条操作包含多条 `change`，按 targets 顺序逐单 patch 工单的 `quantity` / `unit_price_cents`（也可只改其一）。
+
+- 每条 change 实体类型为 `work_order`，`base_version` 取本地该单 `rowVersion`，`base_snapshot` 保存修改前快照供冲突对比。
+- 前端校验：targets 非空且每条至少提供 `quantity` 或 `unitPriceCents` 之一（否则 `invalid_batch_input`）；数量正整数、单价非负沿用工单校验。
+- 操作内多条 change 原子：任一单版本冲突或校验失败，整条操作按 §6.4 处理（rejected / conflict）。
 
 ## 7. 完整调用流程
 
