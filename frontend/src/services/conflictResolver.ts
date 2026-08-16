@@ -55,8 +55,10 @@ export function analyzeConflict(
  * 生成合并 patch（相对 Theirs）：ours-only 字段取 Ours，theirs-only 不写
  * （Theirs 已包含），both 字段按 resolution 决策。both 字段缺决策 → 抛错。
  * 逐字段显式决策（docs/sync-protocol.md §7）：
- * - ours-only：resolution 显式选 Theirs → 不写（保持 Theirs）；否则照旧写 Ours。
- * - theirs-only：resolution 显式选 Ours → 写 oursValue（覆盖 Theirs）；否则照旧跳过。
+ * - ours-only：resolution 显式选 Theirs → 不写（保持 Theirs）；{value} 手填 → 写手填值；
+ *   缺省或 {source:'ours'} → 照旧写 oursValue。
+ * - theirs-only：resolution 显式选 Ours → 写 oursValue（覆盖 Theirs）；{value} 手填 → 写手填值；
+ *   缺省或 {source:'theirs'} → 照旧跳过。
  */
 export function buildMergedPatch(
   analysis: ConflictAnalysis,
@@ -66,13 +68,18 @@ export function buildMergedPatch(
   for (const diff of analysis.diffs) {
     const pick = resolution[diff.field]
     if (diff.state === 'theirs-only') {
-      if (pick && 'source' in pick && pick.source === 'ours') {
-        patch[diff.field] = diff.oursValue
+      if (pick && 'source' in pick) {
+        if (pick.source === 'ours') patch[diff.field] = diff.oursValue
+      } else if (pick) {
+        patch[diff.field] = pick.value
       }
       continue
     }
     if (diff.state === 'ours-only') {
-      if (pick && 'source' in pick && pick.source === 'theirs') {
+      if (pick && 'source' in pick) {
+        if (pick.source === 'theirs') continue
+      } else if (pick) {
+        patch[diff.field] = pick.value
         continue
       }
       patch[diff.field] = diff.oursValue

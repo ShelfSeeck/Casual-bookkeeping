@@ -94,6 +94,20 @@ describe('buildMergedPatch', () => {
     expect(patch).toEqual({ quantity: 9, unit: '件', customer_code: '001' })
   })
 
+  it('ours-only 字段手填 {value} → 写入手填值', () => {
+    const analysis = analyzeConflict(BASE, OURS, THEIRS)
+    // quantity 是 ours-only；用户手填 10 应覆盖默认的 oursValue=9
+    const patch = buildMergedPatch(analysis, { quantity: { value: 10 } })
+    expect(patch).toEqual({ quantity: 10 })
+  })
+
+  it('theirs-only 字段手填 {value} → 写入手填值', () => {
+    const analysis = analyzeConflict(BASE, OURS, THEIRS)
+    // unit / customer_code 是 theirs-only；用户手填 unit=袋 应写入 patch 覆盖 Theirs
+    const patch = buildMergedPatch(analysis, { unit: { value: '袋' } })
+    expect(patch).toEqual({ quantity: 9, unit: '袋' })
+  })
+
   it('ours-only / theirs-only 未显式决策时保持默认行为', () => {
     const analysis = analyzeConflict(BASE, OURS, THEIRS)
     expect(buildMergedPatch(analysis, {})).toEqual({ quantity: 9 })
