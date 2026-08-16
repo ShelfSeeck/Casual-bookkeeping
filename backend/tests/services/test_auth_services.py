@@ -225,3 +225,48 @@ def test_reset_clears_failures(limiter):
         limiter.record_failure("13800000000")
     limiter.reset("13800000000")
     assert limiter.is_locked("13800000000") is False
+
+# ---------- AuthService 登录持久化（登录响应与业务端点之间的竞态） ----------
+
+def test_login_persists_device_before_returning(database, clock):
+    # 验证什么：登录成功返回时设备登记必须已提交，客户端拿到 200 后立即
+    # 请求业务端点（bootstrap）不会读到“会话不存在”而 403。
+    # 为什么：AuthService 用请求级连接，统一 commit 在响应发送之后；若登录
+    # 不显式提交，新连接在响应刚到达时看不到设备行。
+    from backend.services.auth import AuthService
+    from backend.repositories.account_devices import AccountDevicesRepository
+    from backend.repositories.accounts import AccountsRepository
+
+    tokens = TokenService(
+        secret="test-secret-0123456789abcdef0123456789abcdef",
+        access_ttl=ACCESS_TTL,
+        refresh_ttl=REFRESH_TTL,
+        now_factory=clock,
+    )
+    limiter = RateLimiter(MAX_FAILURES, LOCK_SECONDS, now_factory=clock)
+    conn = database.connect()
+    try:
+        AccountsRepository(conn).create_Account(
+            "13800000000", PasswordService().hash("secret-password"), "active"
+        )
+        conn.commit()
+        auth = AuthService(
+            AccountsRepository(conn),
+            AccountDevicesRepository(conn),
+            PasswordService(),
+            tokens,
+            limiter,
+            now_factory=clock,
+        )
+        auth.login("13800000000", "secret-password", "dev-a1b2c3d4e5f6")
+    finally:
+        conn.close()
+
+    # 登录返回后用另一条连接验证：设备组合已可见且 active
+    fresh = database.connect()
+    try:
+        assert AccountDevicesRepository(fresh).get_ActiveSession(
+            "13800000000", "dev-a1b2c3d4e5f6"
+        ) is True
+    finally:
+        fresh.close()

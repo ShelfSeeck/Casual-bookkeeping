@@ -71,6 +71,11 @@ class AuthService:
             raise AuthError(ERROR_ACCOUNT_DISABLED, "账户已停用，无法登录", 403)
         self._limiter.reset(phone)
         self._register_device(phone, device_id)
+        # 登录成功返回前必须落库：客户端拿到 200 后会立即携带新 access 请求
+        # 业务端点（如 /sync/bootstrap）。请求级连接的统一 commit 发生在响应
+        # 发送之后（deps.get_Connection 的 yield 退出），若不在此提交，
+        # 会形成“设备行尚不可见 → session_revoked”的竞态（见测试缝 6）。
+        self._devices.connection.commit()
         return self._tokens.issue_pair(phone, device_id)
 
     def refresh(self, refresh_token: str) -> TokenPair:
