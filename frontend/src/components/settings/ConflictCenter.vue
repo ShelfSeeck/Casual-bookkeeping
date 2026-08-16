@@ -4,6 +4,7 @@ import { showFailToast, showSuccessToast } from 'vant'
 import { appState, type ConflictEntry } from '../../state/appState'
 import type { ConflictResolution, FieldDiff } from '../../services/conflictResolver'
 import { toErrorMessage } from '../../services/errorMessages'
+import { formatConflictCell } from '../../utils/conflictFormat'
 
 // 冲突解决中心（推入式子页面，由 SettingsView 以 currentSubPage 切换进入）。
 // 每条冲突：摘要行 + 展开后的 Base/Ours/Theirs 完整三方对比表；
@@ -222,26 +223,7 @@ function diffBadgeLabel(entry: ConflictEntry, field: string): string {
 }
 
 function formatCell(field: string, value: unknown): string {
-  if (value === null || value === undefined) return '—'
-  if (isMoneyField(field)) {
-    const n =
-      typeof value === 'number'
-        ? value
-        : typeof value === 'string'
-          ? Number.parseFloat(value)
-          : Number.NaN
-    if (Number.isFinite(n)) return (n / 100).toFixed(2)
-    return String(value)
-  }
-  if (typeof value === 'boolean') return value ? '是' : '否'
-  if (typeof value === 'object') {
-    try {
-      return JSON.stringify(value)
-    } catch {
-      return String(value)
-    }
-  }
-  return String(value)
+  return formatConflictCell(field, value)
 }
 
 function cellClass(
