@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  WIRE_META_FIELDS,
   analyzeConflict,
   autoMergePatch,
   buildMergedPatch,
+  stripWireMetaFields,
 } from './conflictResolver'
 
 // 被测缝：冲突解析（docs/sync-protocol.md §7 三方对比）
@@ -112,6 +114,36 @@ describe('buildMergedPatch', () => {
     const analysis = analyzeConflict(BASE, OURS, THEIRS)
     expect(buildMergedPatch(analysis, {})).toEqual({ quantity: 9 })
     expect(buildMergedPatch(analysis, { unit: { source: 'theirs' } })).toEqual({ quantity: 9 })
+  })
+})
+
+describe('stripWireMetaFields', () => {
+  it('浅拷贝剔除账本元字段且不修改入参', () => {
+    const record = {
+      sync_id: 'sync-1',
+      row_version: 5,
+      updated_at: '2026-08-08T00:00:00Z',
+      created_at: '2026-08-08T00:00:00Z',
+      account_phone: '13800000000',
+      quantity: 9,
+      unit: '件',
+    }
+    const stripped = stripWireMetaFields(record)
+
+    expect(stripped).toEqual({ quantity: 9, unit: '件' })
+    // 不修改入参
+    expect(record.row_version).toBe(5)
+    expect(record).toHaveProperty('sync_id')
+  })
+
+  it('WIRE_META_FIELDS 为精确字面量', () => {
+    expect(WIRE_META_FIELDS).toEqual([
+      'row_version',
+      'updated_at',
+      'created_at',
+      'account_phone',
+      'sync_id',
+    ])
   })
 })
 

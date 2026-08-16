@@ -26,6 +26,26 @@ export type FieldResolution = { source: 'ours' | 'theirs' } | { value: unknown }
 
 export type ConflictResolution = Record<string, FieldResolution>
 
+/** 冲突比对时排除的账本元字段（docs/data-model.md §5.3 的“非业务字段”）。 */
+export const WIRE_META_FIELDS = [
+  'row_version',
+  'updated_at',
+  'created_at',
+  'account_phone',
+  'sync_id',
+] as const
+
+/** 浅拷贝剔除账本元字段，不修改入参（供冲突中心与合并 patch 使用）。 */
+export function stripWireMetaFields(record: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  const meta = WIRE_META_FIELDS as readonly string[]
+  for (const [key, value] of Object.entries(record)) {
+    if (meta.includes(key)) continue
+    out[key] = value
+  }
+  return out
+}
+
 /** 三方比对：输出字段级差异（docs/sync-protocol.md §7）。 */
 export function analyzeConflict(
   base: Record<string, unknown>,

@@ -70,6 +70,7 @@ export class HttpSyncApi implements SyncApi {
         server_seq: number
         operation_id: string
         operation_type: string
+        actor_type?: string | null
         device_id?: string | null
         reverts_operation_id: string | null
         created_at: string
@@ -90,6 +91,7 @@ export class HttpSyncApi implements SyncApi {
         serverSeq: op.server_seq,
         operationId: op.operation_id,
         operationType: op.operation_type,
+        actorType: op.actor_type === 'ai' || op.actor_type === 'system' ? op.actor_type : 'user',
         deviceId: op.device_id ?? null,
         revertsOperationId: op.reverts_operation_id,
         createdAt: op.created_at,

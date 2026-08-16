@@ -166,6 +166,33 @@ describe('SyncManager', () => {
     expect(ops[0].revertsOperationId).toBe('op-100')
   })
 
+  it('真实 revert_operation 通过 Push 预检并推送空 changes（changes 由后端展开）', async () => {
+    // 验证：revert_operation 在 entityTypeFor 无映射，但不能被 Push 前预检拦截，
+    // 否则撤回永远 pending 并阻塞后续 Push。其 command.changes 为空数组，
+    // PushOperation 应保留 revertsOperationId 且 changes 为 []。
+    await mutation.commit({
+      operationType: 'revert_operation',
+      entitySyncIds: ['sync-a'],
+      changes: [],
+      revertsOperationId: 'op-100',
+      apply: () => undefined,
+      actorType: 'user',
+    })
+    const realOpId = (await db.outbox.toArray())[0].operationId
+    const push = vi.fn(async () => ({
+      results: [{ operationId: realOpId, status: 'accepted' as const, serverSeq: 9 }],
+    }))
+    const api = makeApi({ push })
+    await buildManager(api).sync()
+
+    expect(push).toHaveBeenCalledTimes(1)
+    const pushed = ((push.mock.calls[0] as unknown) as [PushOperation[]])[0][0]
+    expect(pushed.operationType).toBe('revert_operation')
+    expect(pushed.revertsOperationId).toBe('op-100')
+    expect(pushed.changes).toEqual([])
+    expect(await db.outbox.count()).toBe(0)
+  })
+
   it('conflict 时保留 outbox 并存 conflictJson，不 Pull', async () => {
     await commitOrder('sync-a')
     const realOpId = (await db.outbox.toArray())[0].operationId
@@ -225,6 +252,7 @@ describe('SyncManager', () => {
             serverSeq: 42,
             operationId: 'op-remote',
             operationType: 'create_customer',
+            actorType: 'user' as const,
             deviceId: 'dev-remote',
             revertsOperationId: null,
             createdAt: '2026-08-08T00:00:00Z',
@@ -273,6 +301,7 @@ describe('SyncManager', () => {
             serverSeq: 7,
             operationId: 'op-revert-remote',
             operationType: 'revert_work_order',
+            actorType: 'user' as const,
             deviceId: 'dev-remote',
             revertsOperationId: 'op-original-remote',
             createdAt: '2026-08-08T00:00:00Z',
@@ -426,6 +455,53 @@ describe('SyncManager', () => {
     expect(ops).toHaveLength(1)
     expect(ops[0].operationId).toBe(entries[0].operationId)
     expect(ops[0].syncStatus).toBe('pending')
+  })
+
+  it('冲突合并 patch 剔除 row_version/updated_at 等账本元字段', async () => {
+    await mutation.commit({
+      operationType: 'update_work_order',
+      entitySyncIds: ['sync-a'],
+      changes: [
+        {
+          entitySyncId: 'sync-a',
+          baseVersion: 2,
+          baseSnapshot: {
+            sync_id: 'sync-a',
+            row_version: 2,
+            updated_at: '2026-08-08T00:00:00Z',
+            quantity: 5,
+            unit: '件',
+          },
+          patch: { quantity: 9 },
+        },
+      ],
+      apply: (tx) => tx.workOrders.put({ ...makeOrder('sync-a'), rowVersion: 2 }),
+      actorType: 'user',
+    })
+    const entry = (await db.outbox.toArray())[0]
+    await db.outbox.update(entry.queueId, {
+      status: 'conflict' as const,
+      conflictJson: {
+        entity_type: 'work_order',
+        entity_sync_id: 'sync-a',
+        theirs: {
+          sync_id: 'sync-a',
+          row_version: 5,
+          updated_at: '2026-08-09T00:00:00Z',
+          quantity: 5,
+          unit: '套',
+        },
+      },
+    })
+    await buildManager(makeApi()).resolveConflict(entry.queueId, { quantity: { source: 'ours' } })
+
+    const cmd = (await db.outbox.toArray())[0].command as {
+      changes: { baseVersion: number; patch: Record<string, unknown> }[]
+    }
+    expect(cmd.changes[0].baseVersion).toBe(5)
+    expect(cmd.changes[0].patch).toEqual({ quantity: 9 })
+    expect(cmd.changes[0].patch).not.toHaveProperty('row_version')
+    expect(cmd.changes[0].patch).not.toHaveProperty('updated_at')
   })
 
   it('多 change 冲突：仅冲突 change 重建 base_version，其余保留', async () => {

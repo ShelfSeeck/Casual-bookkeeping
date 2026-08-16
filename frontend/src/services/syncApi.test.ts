@@ -180,6 +180,7 @@ describe('HttpSyncApi.pull / bootstrap', () => {
             server_seq: 43,
             operation_id: 'op-r2',
             operation_type: 'update_work_order',
+            actor_type: 'ai',
             device_id: 'dev-000000000001',
             reverts_operation_id: null,
             created_at: '2026-08-08T00:00:00Z',
@@ -205,6 +206,7 @@ describe('HttpSyncApi.pull / bootstrap', () => {
       serverSeq: 43,
       operationId: 'op-r2',
       deviceId: 'dev-000000000001',
+      actorType: 'ai',
     })
     expect(result.operations[0].changes[0]).toMatchObject({
       entityType: 'work_order',
@@ -225,6 +227,7 @@ describe('HttpSyncApi.pull / bootstrap', () => {
             server_seq: 44,
             operation_id: 'op-r3',
             operation_type: 'create_customer',
+            actor_type: 'robot',
             reverts_operation_id: null,
             created_at: '2026-08-08T00:00:00Z',
             changes: [],
@@ -236,6 +239,7 @@ describe('HttpSyncApi.pull / bootstrap', () => {
     const result = await api.pull(0)
 
     expect(result.operations[0].deviceId).toBeNull()
+    expect(result.operations[0].actorType).toBe('user')
     expect(result.operations[0].changes).toEqual([])
   })
 

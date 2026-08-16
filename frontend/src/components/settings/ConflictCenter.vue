@@ -133,6 +133,10 @@ function toggleExpanded(entry: ConflictEntry) {
   expandedQueueId.value = isExpanded(entry) ? null : entry.queueId
 }
 
+function isRevertConflictReadonly(entry: ConflictEntry): boolean {
+  return entry.operationType === 'revert_operation' && entry.diffs.length === 0
+}
+
 function stashEntry() {
   // 只收起详情、不写任何数据；条目保持 conflict（SyncManager 不会自动重试）。
   expandedQueueId.value = null
@@ -315,7 +319,7 @@ function deleteDecisions(queueId: number) {
 }
 
 async function confirmResolve(entry: ConflictEntry) {
-  if (!allDecided(entry) || submitting.value) return
+  if (!allDecided(entry) || entry.diffs.length === 0 || submitting.value) return
   submitting.value = true
   try {
     await appState.resolveConflict(entry.queueId, buildResolution(entry))
@@ -522,7 +526,12 @@ onMounted(async () => {
                 </div>
               </div>
             </div>
-            <div v-else class="cb-no-diff-tip">该冲突没有需要决策的差异字段。</div>
+            <div v-else class="cb-no-diff-tip">
+              <template v-if="isRevertConflictReadonly(entry)">
+                该冲突是撤回冲突，当前版本无三方合并路径，请先解决该记录的其他冲突或重新提交撤回
+              </template>
+              <template v-else>该冲突没有需要决策的差异字段。</template>
+            </div>
 
             <!-- 操作区 -->
             <div class="cb-conflict-actions">
@@ -545,7 +554,7 @@ onMounted(async () => {
               <button
                 type="button"
                 class="md3-filled-button-small cb-confirm-btn cb-pressable"
-                :disabled="!allDecided(entry) || submitting"
+                :disabled="!allDecided(entry) || entry.diffs.length === 0 || submitting"
                 @click="confirmResolve(entry)"
               >
                 {{ submitting ? '提交中…' : '确认并重推' }}

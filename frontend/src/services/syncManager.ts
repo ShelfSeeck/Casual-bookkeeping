@@ -6,6 +6,7 @@ import { backoff } from './backoff'
 import {
   analyzeConflict,
   buildMergedPatch,
+  stripWireMetaFields,
   type ConflictResolution,
 } from './conflictResolver'
 
@@ -62,6 +63,8 @@ export interface PullOperation {
   serverSeq: number
   operationId: string
   operationType: string
+  /** 操作来源：user / ai / system；旧后端缺省或非法值由 syncApi 回退为 user */
+  actorType: 'user' | 'ai' | 'system'
   /** 产生该操作的设备 ID；旧后端可能缺省 → null */
   deviceId: string | null
   revertsOperationId: string | null
@@ -242,18 +245,20 @@ export class SyncManager {
             patch: c.patch,
           }
         }
-        const base = c.baseSnapshot ?? {}
-        const ours = { ...base, ...(c.patch ?? {}) }
-        const theirs = conflictJson.theirs
+        const base = stripWireMetaFields(c.baseSnapshot ?? {})
+        const ours = stripWireMetaFields({ ...(c.baseSnapshot ?? {}), ...(c.patch ?? {}) })
+        const theirs = stripWireMetaFields(conflictJson.theirs)
         const analysis = analyzeConflict(base, ours, theirs)
         const mergedPatch = buildMergedPatch(analysis, resolution)
         const rowVersion =
-          typeof theirs.row_version === 'number' ? theirs.row_version : 0
+          typeof conflictJson.theirs.row_version === 'number'
+            ? conflictJson.theirs.row_version
+            : 0
         return {
           entitySyncId: c.entitySyncId,
           ...(c.entityType !== undefined ? { entityType: c.entityType } : {}),
           baseVersion: rowVersion,
-          patch: mergedPatch,
+          patch: stripWireMetaFields(mergedPatch),
         }
       })
 
@@ -343,8 +348,12 @@ export class SyncManager {
     // status 索引只取 pending；queueId 排序复用主键顺序。
     const pending = await this.db.outbox.where('status').equals('pending').sortBy('queueId')
     if (pending.length > 0) {
-      // Push 前校验 operationType 可映射，未知类型直接抛错、不静默写错表
-      const unknown = pending.find((e) => entityTypeFor(e.operationType) === null)
+      // Push 前校验 operationType 可映射，未知类型直接抛错、不静默写错表。
+      // revert_operation 的 command.changes 为空、由后端按 reverts_operation_id 展开，
+      // 不参与 entityTypeFor 映射，预检放行（否则撤回永远 pending 并阻塞后续 Push）。
+      const unknown = pending.find(
+        (e) => e.operationType !== 'revert_operation' && entityTypeFor(e.operationType) === null,
+      )
       if (unknown) {
         throw new Error(`unknown_operation_type:${unknown.operationType}`)
       }
@@ -574,7 +583,7 @@ export class SyncManager {
         await this.db.operations.put({
           operationId: op.operationId,
           serverSeq: op.serverSeq,
-          actorType: 'user',
+          actorType: op.actorType,
           operationType: op.operationType,
           syncStatus: 'synced',
           revertsOperationId: op.revertsOperationId,

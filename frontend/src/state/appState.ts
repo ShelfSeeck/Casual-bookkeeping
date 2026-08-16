@@ -21,7 +21,13 @@ import {
 } from '../services/businessCommands'
 import { MutationService } from '../services/mutation'
 import { getRecordSyncStatus, getSyncCounts } from '../services/syncStatus'
-import { analyzeConflict, type ConflictAnalysis, type ConflictResolution } from '../services/conflictResolver'
+import {
+  WIRE_META_FIELDS,
+  analyzeConflict,
+  stripWireMetaFields,
+  type ConflictAnalysis,
+  type ConflictResolution,
+} from '../services/conflictResolver'
 import type { SyncManager } from '../services/syncManager'
 import type { Subcategory } from '../db/schema/business/serviceCategories'
 import { ChatApi, type ChatSession, type ChatSseEvent } from '../services/chatApi'
@@ -318,10 +324,29 @@ class AppState {
       const changes = command.changes ?? []
       const change =
         changes.find((c) => c.entitySyncId === conflictJson?.entity_sync_id) ?? changes[0]
-      if (!change || !conflictJson?.theirs) continue
-      const base = change.baseSnapshot ?? {}
-      const ours = { ...base, ...(change.patch ?? {}) }
-      const theirs = conflictJson.theirs
+      if (!conflictJson?.theirs) continue
+      // 撤回冲突：command.changes 为空，无三方合并路径，但仍要在冲突中心可见（只读提示）
+      if (!change) {
+        if (entry.operationType === 'revert_operation') {
+          result.push({
+            queueId: entry.queueId,
+            operationId: entry.operationId,
+            operationType: entry.operationType,
+            actorType: entry.actorType,
+            createdAt: entry.createdAt,
+            conflictJson: entry.conflictJson,
+            base: {},
+            ours: {},
+            theirs: stripWireMetaFields(conflictJson.theirs),
+            diffs: [],
+          })
+        }
+        continue
+      }
+      // 三方比对前先剔除账本元字段，避免 row_version/updated_at 被当成业务差异
+      const base = stripWireMetaFields(change.baseSnapshot ?? {})
+      const ours = stripWireMetaFields({ ...(change.baseSnapshot ?? {}), ...(change.patch ?? {}) })
+      const theirs = stripWireMetaFields(conflictJson.theirs)
       result.push({
         queueId: entry.queueId,
         operationId: entry.operationId,
@@ -498,7 +523,7 @@ class AppState {
       this.activeUndo.value = null
       await this.reload()
       if (this.syncManager) {
-        void this.syncManager.sync().then(() => this.reload())
+        void this.syncManager.sync().then(() => this.reload()).catch((e) => showFailToast(toErrorMessage(e)))
       }
     } catch (e) {
       showFailToast(toErrorMessage(e))
@@ -514,7 +539,7 @@ class AppState {
     showSuccessToast('撤回已提交，待同步生效')
     await this.reload()
     if (this.syncManager) {
-      void this.syncManager.sync().then(() => this.reload())
+      void this.syncManager.sync().then(() => this.reload()).catch((e) => showFailToast(toErrorMessage(e)))
     }
   }
 
@@ -934,7 +959,8 @@ function changedFieldNames(changes: unknown): string[] {
     if (raw === null || raw === undefined) continue
     const parsed = normalizeFieldNames(raw)
     for (const name of parsed) {
-      if (!names.includes(name)) names.push(name)
+      const meta = WIRE_META_FIELDS as readonly string[]
+      if (!meta.includes(name) && !names.includes(name)) names.push(name)
     }
   }
   return names
