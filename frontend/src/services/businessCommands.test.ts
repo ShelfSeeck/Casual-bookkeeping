@@ -4,17 +4,22 @@ import type { CbDatabase } from '../db/schema'
 import type { Customer } from '../db/schema/business/customers'
 import type { CustomerCodeMapping } from '../db/schema/business/customerCodeMappings'
 import type { ServiceCategory } from '../db/schema/business/serviceCategories'
+import type { WorkOrder } from '../db/schema/business/workOrders'
 import { MutationService } from './mutation'
 import {
   BusinessRuleError,
   accountPhoneFromDb,
   addCustomerCodeMapping,
   archiveCustomerWithMappings,
+  batchPriceWorkOrders,
   buildCustomerWithMapping,
   createServiceCategory,
   createWorkOrder,
+  deleteWorkOrder,
+  revertOperation,
   updateCustomerCodeMapping,
   updateServiceCategory,
+  updateWorkOrder,
   validateServiceCategoryInput,
   validateWorkOrderInput,
   type WorkOrderFields,
@@ -77,6 +82,31 @@ function makeCategory(syncId: string, categoryName = '洗水'): ServiceCategory 
     rowVersion: 1,
     createdAt: '2026-08-08T00:00:00Z',
     updatedAt: '2026-08-08T00:00:00Z',
+  }
+}
+
+function makeWorkOrder(
+  syncId: string,
+  overrides: Partial<WorkOrder> = {},
+): WorkOrder {
+  return {
+    syncId,
+    accountPhone: PHONE,
+    workOrderDate: '2026-06-15',
+    customerId: 42,
+    customerCode: '001',
+    customerName: '张三',
+    serviceCategory: '洗水',
+    serviceItem: '单洗',
+    quantity: 5,
+    unit: '件',
+    unitPriceCents: null,
+    isCompleted: false,
+    rowVersion: 1,
+    createdAt: '2026-08-08T00:00:00Z',
+    updatedAt: '2026-08-08T00:00:00Z',
+    deletedAt: null,
+    ...overrides,
   }
 }
 
@@ -311,9 +341,11 @@ describe('createWorkOrder', () => {
   })
 
   it('commit 后业务表 / operations / outbox 一致，outbox 保存 snake_case wire patch', async () => {
-    await createWorkOrder(db, validFields)
+    const operationId = await createWorkOrder(db, validFields)
 
     const order = (await db.workOrders.toArray())[0]
+    expect(operationId).toMatch(/^op-[0-9a-f]{12}$/)
+    expect(operationId).toBe((await db.operations.toArray())[0].operationId)
     expect(order).toBeDefined()
     expect(order.accountPhone).toBe(PHONE)
     expect(order.rowVersion).toBe(1)
@@ -429,7 +461,9 @@ describe('archiveCustomerWithMappings', () => {
 
     const customer = await db.customers.get('sync-cust')
     expect(customer?.archivedAt).toBeTruthy()
-    const today = new Date().toISOString().slice(0, 10)
+    // 本地日期（终审前置项①）：不能再用 UTC toISOString().slice(0,10)
+    const d = new Date()
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     expect(customer?.archivedAt).toBe(today)
 
     expect((await db.customerCodeMappings.get('sync-map-open1'))?.validTo).toBe(today)
@@ -543,5 +577,161 @@ describe('createServiceCategory / updateServiceCategory（subcategoriesJson 序�
         ],
       }),
     ).rejects.toMatchObject({ errorCode: 'subcategory_name_duplicate' })
+  })
+})
+
+describe('updateWorkOrder 返回 operationId', () => {
+  beforeEach(async () => {
+    await seedBase()
+    await db.workOrders.put(makeWorkOrder('sync-order'))
+  })
+
+  it('返回 operationId 且与 operations / outbox 一致', async () => {
+    const operationId = await updateWorkOrder(db, 'sync-order', { quantity: 8 })
+
+    expect(operationId).toMatch(/^op-[0-9a-f]{12}$/)
+    const ops = await db.operations.toArray()
+    expect(ops).toHaveLength(1)
+    expect(operationId).toBe(ops[0].operationId)
+    expect(operationId).toBe((await db.outbox.toArray())[0].operationId)
+    expect((await db.workOrders.get('sync-order'))?.quantity).toBe(8)
+  })
+})
+
+describe('deleteWorkOrder', () => {
+  beforeEach(async () => {
+    await db.workOrders.put(makeWorkOrder('sync-order'))
+  })
+
+  it('软删本地行、写 update_work_order 撤回意图链，并返回 operationId', async () => {
+    const operationId = await deleteWorkOrder(db, 'sync-order')
+
+    const order = await db.workOrders.get('sync-order')
+    expect(order?.deletedAt).toBeTruthy()
+    expect(operationId).toMatch(/^op-[0-9a-f]{12}$/)
+
+    const outbox = (await db.outbox.toArray())[0]
+    expect(outbox.operationId).toBe(operationId)
+    expect(outbox.operationType).toBe('update_work_order')
+    const cmd = outbox.command as {
+      changes: { entitySyncId: string; entityType?: string; baseVersion: number; patch?: Record<string, unknown> }[]
+    }
+    expect(cmd.changes[0]).toMatchObject({
+      entitySyncId: 'sync-order',
+      entityType: 'work_order',
+      baseVersion: 1,
+    })
+    expect(cmd.changes[0].patch).toEqual({ deleted_at: expect.any(String) as string })
+  })
+
+  it('记录不存在 → entity_not_found', async () => {
+    await expect(deleteWorkOrder(db, 'sync-nope')).rejects
+      .toMatchObject({ errorCode: 'entity_not_found' })
+  })
+})
+
+describe('revertOperation', () => {
+  it('提交 revert_operation：本地业务表不动，changes 为空数组，返回 operationId', async () => {
+    await seedBase()
+    await db.workOrders.put(makeWorkOrder('sync-order'))
+    const targetId = await createWorkOrder(db, validFields)
+    const operationId = await revertOperation(db, targetId)
+
+    expect(operationId).toMatch(/^op-[0-9a-f]{12}$/)
+    // 本地业务表不动（反向 patch 由服务端生成）
+    expect((await db.workOrders.toArray()).length).toBe(2)
+
+    const outbox = (await db.outbox.toArray()).find((e) => e.operationId === operationId)
+    expect(outbox).toBeDefined()
+    expect(outbox?.operationType).toBe('revert_operation')
+    const target = await db.operations.get(targetId)
+    const targetEntitySyncIds = (JSON.parse(target!.changesJson) as { entitySyncIds: string[] }).entitySyncIds
+    expect(outbox?.entitySyncIds).toEqual(targetEntitySyncIds)
+    const cmd = outbox?.command as { changes: unknown[]; reverts_operation_id: string }
+    expect(cmd.changes).toEqual([])
+    expect(cmd.reverts_operation_id).toBe(targetId)
+
+    const mirror = await db.operations.get(operationId)
+    expect(mirror?.revertsOperationId).toBe(targetId)
+  })
+
+  it('目标操作不存在 → revert_target_not_found', async () => {
+    await expect(revertOperation(db, 'op-nope')).rejects
+      .toMatchObject({ errorCode: 'revert_target_not_found' })
+  })
+
+  it('已有镜像行撤回同一目标 → revert_target_invalid', async () => {
+    await seedBase()
+    await db.workOrders.put(makeWorkOrder('sync-order'))
+    const targetId = await createWorkOrder(db, validFields)
+    await revertOperation(db, targetId)
+    await expect(revertOperation(db, targetId)).rejects
+      .toMatchObject({ errorCode: 'revert_target_invalid' })
+  })
+
+  it('目标 changesJson 无 entitySyncIds → revert_target_invalid', async () => {
+    await db.operations.put({
+      operationId: 'op-bad',
+      serverSeq: 1,
+      actorType: 'user',
+      operationType: 'create_work_order',
+      syncStatus: 'synced',
+      revertsOperationId: null,
+      deviceId: null,
+      changesJson: JSON.stringify({ serverSeq: 1 }),
+      createdAt: '2026-08-08T00:00:00Z',
+      updatedAt: '2026-08-08T00:00:00Z',
+    })
+    await expect(revertOperation(db, 'op-bad')).rejects
+      .toMatchObject({ errorCode: 'revert_target_invalid' })
+  })
+})
+
+describe('batchPriceWorkOrders', () => {
+  beforeEach(async () => {
+    await db.workOrders.bulkPut([
+      makeWorkOrder('sync-a', { quantity: 5, unitPriceCents: null }),
+      makeWorkOrder('sync-b', { quantity: 3, unitPriceCents: 200 }),
+    ])
+  })
+
+  it('按 targets 顺序生成 changes，apply 后本地更新，返回 operationId', async () => {
+    const operationId = await batchPriceWorkOrders(db, [
+      { syncId: 'sync-a', quantity: 7 },
+      { syncId: 'sync-b', unitPriceCents: 300 },
+    ])
+
+    expect(operationId).toMatch(/^op-[0-9a-f]{12}$/)
+    expect((await db.workOrders.get('sync-a'))?.quantity).toBe(7)
+    expect((await db.workOrders.get('sync-b'))?.unitPriceCents).toBe(300)
+
+    const outbox = (await db.outbox.toArray())[0]
+    expect(outbox.operationType).toBe('batch_price_work_orders')
+    expect(outbox.entitySyncIds).toEqual(['sync-a', 'sync-b'])
+    const cmd = outbox.command as {
+      changes: { entitySyncId: string; baseVersion: number; patch?: Record<string, unknown> }[]
+    }
+    expect(cmd.changes).toHaveLength(2)
+    expect(cmd.changes[0].patch).toEqual({ quantity: 7 })
+    expect(cmd.changes[1].patch).toEqual({ unit_price_cents: 300 })
+  })
+
+  it('targets 为空或每条未提供任一修改项 → invalid_batch_input', async () => {
+    await expect(batchPriceWorkOrders(db, [])).rejects
+      .toMatchObject({ errorCode: 'invalid_batch_input' })
+    await expect(batchPriceWorkOrders(db, [{ syncId: 'sync-a' }])).rejects
+      .toMatchObject({ errorCode: 'invalid_batch_input' })
+  })
+
+  it('quantity 非正整数 / unitPriceCents 非法 → 对应错误码', async () => {
+    await expect(batchPriceWorkOrders(db, [{ syncId: 'sync-a', quantity: 0 }])).rejects
+      .toMatchObject({ errorCode: 'invalid_quantity' })
+    await expect(batchPriceWorkOrders(db, [{ syncId: 'sync-a', unitPriceCents: -1 }])).rejects
+      .toMatchObject({ errorCode: 'invalid_unit_price' })
+  })
+
+  it('本地行不存在 → entity_not_found', async () => {
+    await expect(batchPriceWorkOrders(db, [{ syncId: 'sync-nope', quantity: 1 }])).rejects
+      .toMatchObject({ errorCode: 'entity_not_found' })
   })
 })

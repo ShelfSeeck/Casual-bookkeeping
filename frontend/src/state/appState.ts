@@ -10,19 +10,24 @@ import { CustomerCodeMappingsRepository } from '../repositories/customerCodeMapp
 import { ServiceCategoriesRepository } from '../repositories/serviceCategories'
 import { WorkOrdersRepository } from '../repositories/workOrders'
 import {
+  batchPriceWorkOrders,
   buildCustomerWithMapping,
   createWorkOrder as createWorkOrderCommand,
   createServiceCategory,
+  deleteWorkOrder as deleteWorkOrderCommand,
+  revertOperation,
   updateServiceCategory,
   updateWorkOrder as updateWorkOrderCommand,
 } from '../services/businessCommands'
 import { MutationService } from '../services/mutation'
 import { getRecordSyncStatus, getSyncCounts } from '../services/syncStatus'
+import { analyzeConflict, type ConflictAnalysis, type ConflictResolution } from '../services/conflictResolver'
 import type { SyncManager } from '../services/syncManager'
 import type { Subcategory } from '../db/schema/business/serviceCategories'
 import { ChatApi, type ChatSession, type ChatSseEvent } from '../services/chatApi'
 import { buildAiOperationFromDraft } from '../services/chatApproval'
 import { newId } from '../utils/id'
+import { toErrorMessage } from '../services/errorMessages'
 import { showFailToast } from 'vant'
 
 // appState：正式前端的全局视图状态。
@@ -33,11 +38,37 @@ export type TabKey = 'desk' | 'ledger' | 'chat' | 'settings'
 
 export interface UndoItem {
   undoId: string
+  operationId: string
   message: string
   actionType: 'create' | 'update' | 'delete'
   previousSnapshot?: WorkOrderUi
   createdOrderId?: string
   expiresAt: number
+}
+
+/** 工单历史条目（appState.loadOrderHistory 组装，供查账本历史面板展示）。 */
+export interface HistoryItem {
+  operationId: string
+  summary: string
+  timestamp: string
+  device: string | null
+  actorType: 'user' | 'ai' | 'system'
+  operationType: string
+  canRevert: boolean
+}
+
+/** 冲突队列条目（appState.refreshConflicts 组装，供冲突解决 UI 逐项显式决策）。 */
+export interface ConflictEntry {
+  queueId: number
+  operationId: string
+  operationType: string
+  actorType: 'user' | 'ai' | 'system'
+  createdAt: string
+  conflictJson: unknown
+  base: Record<string, unknown>
+  ours: Record<string, unknown>
+  theirs: Record<string, unknown>
+  diffs: ConflictAnalysis['diffs']
 }
 
 export interface ChatMessage {
@@ -111,6 +142,8 @@ class AppState {
   })
 
   activeUndo = ref<UndoItem | null>(null)
+  conflictEntries = ref<ConflictEntry[]>([])
+  private undoTimer: ReturnType<typeof setTimeout> | null = null
 
   chatMessages = reactive<ChatMessage[]>([{ ...WELCOME_MESSAGE }])
 
@@ -208,6 +241,101 @@ class AppState {
       })
     }
     this.workOrders.splice(0, this.workOrders.length, ...uiOrders)
+    await this.refreshConflicts()
+  }
+
+  /**
+   * 加载指定工单的历史操作（docs/data-model.md §5.2 operations 镜像）。
+   * changesJson 新形状 {entitySyncIds, changes}；旧形状只有 serverSeq 时兼容跳过。
+   * 结果写回 reactive workOrders 数组内对应 order 的 history。
+   */
+  async loadOrderHistory(orderId: string): Promise<void> {
+    const db = this.db
+    if (!db) return
+    const rows = await db.operations.toArray()
+    const items: HistoryItem[] = []
+    for (const op of rows) {
+      let parsed: { entitySyncIds?: unknown; changes?: unknown }
+      try {
+        parsed = JSON.parse(op.changesJson) as { entitySyncIds?: unknown; changes?: unknown }
+      } catch {
+        continue
+      }
+      // 兼容旧形状（如 {serverSeq} 无 entitySyncIds）→ 跳过，不抛错
+      if (!Array.isArray(parsed.entitySyncIds) || !parsed.entitySyncIds.includes(orderId)) {
+        continue
+      }
+
+      let summary = operationSummary(op.operationType)
+      const fieldNames = changedFieldNames(parsed.changes).slice(0, 4)
+      if (fieldNames.length > 0) {
+        summary = `${summary}（${fieldNames.join(', ')}）`
+      }
+      const canRevert =
+        op.operationType !== 'revert_operation' &&
+        op.revertsOperationId === null &&
+        !rows.some((other) => other.revertsOperationId === op.operationId)
+      items.push({
+        operationId: op.operationId,
+        summary,
+        timestamp: op.createdAt,
+        device: op.deviceId,
+        actorType: op.actorType,
+        operationType: op.operationType,
+        canRevert,
+      })
+    }
+    items.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+
+    // 经 reactive 数组内的 proxy 更新，避免直接改局部原始对象不触发视图更新
+    const order = this.workOrders.find((o) => o.orderId === orderId)
+    if (order) order.history = items
+  }
+
+  /** 遍历 outbox 中 conflict 条目，组装冲突分析结果供 UI 逐字段显式决策。 */
+  private async refreshConflicts(): Promise<void> {
+    const db = this.db
+    if (!db) {
+      this.conflictEntries.value = []
+      return
+    }
+    const entries = await db.outbox.where('status').equals('conflict').sortBy('queueId')
+    const result: ConflictEntry[] = []
+    for (const entry of entries) {
+      const conflictJson = entry.conflictJson as {
+        entity_sync_id?: string
+        theirs?: Record<string, unknown>
+      } | null
+      const command = entry.command as {
+        changes?: Array<{
+          entitySyncId: string
+          entityType?: string
+          baseVersion: number
+          baseSnapshot?: Record<string, unknown>
+          patch?: Record<string, unknown>
+        }>
+      }
+      const changes = command.changes ?? []
+      const change =
+        changes.find((c) => c.entitySyncId === conflictJson?.entity_sync_id) ?? changes[0]
+      if (!change || !conflictJson?.theirs) continue
+      const base = change.baseSnapshot ?? {}
+      const ours = { ...base, ...(change.patch ?? {}) }
+      const theirs = conflictJson.theirs
+      result.push({
+        queueId: entry.queueId,
+        operationId: entry.operationId,
+        operationType: entry.operationType,
+        actorType: entry.actorType,
+        createdAt: entry.createdAt,
+        conflictJson: entry.conflictJson,
+        base,
+        ours,
+        theirs,
+        diffs: analyzeConflict(base, ours, theirs).diffs,
+      })
+    }
+    this.conflictEntries.value = result
   }
 
   // ---------- 查账本计算属性 ----------
@@ -345,14 +473,53 @@ class AppState {
     }
   }
 
-  // ---------- 撤销（真实撤回链路未接 UI，保留占位） ----------
+  // ---------- 撤销（真实撤回链路） ----------
 
-  triggerUndo(_item: Omit<UndoItem, 'expiresAt'>) {
-    // 真实撤回需要生成 reverts_operation_id 命令，UI 未接，暂不触发
+  triggerUndo(item: Omit<UndoItem, 'expiresAt'>) {
+    if (this.undoTimer !== null) clearTimeout(this.undoTimer)
+    this.activeUndo.value = { ...item, expiresAt: Date.now() + 5000 }
+    // 保留最后一个 timer 引用，过期自动清空，避免重复 set 泄漏
+    this.undoTimer = setTimeout(() => {
+      this.activeUndo.value = null
+      this.undoTimer = null
+    }, 5000)
   }
 
-  performUndo() {
-    // 占位
+  async performUndo(): Promise<void> {
+    const db = this.db
+    const undo = this.activeUndo.value
+    if (!db || !undo) return
+    try {
+      await revertOperation(db, undo.operationId)
+      if (this.undoTimer !== null) {
+        clearTimeout(this.undoTimer)
+        this.undoTimer = null
+      }
+      this.activeUndo.value = null
+      await this.reload()
+      if (this.syncManager) {
+        void this.syncManager.sync().then(() => this.reload())
+      }
+    } catch (e) {
+      showFailToast(toErrorMessage(e))
+    }
+  }
+
+  /** 从历史面板撤回指定操作：成功后触发同步并弹即时撤回浮条。失败抛给调用方展示。 */
+  async revertOrderOperation(operationId: string): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    await revertOperation(db, operationId)
+    this.triggerUndo({
+      undoId: newId('undo'),
+      operationId,
+      message: '已提交撤回，待同步生效',
+      actionType: 'update',
+    })
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
   }
 
   // ---------- 工单写操作（真实业务命令） ----------
@@ -417,8 +584,42 @@ class AppState {
     await this.updateWorkOrder(orderId, { isCompleted })
   }
 
-  deleteWorkOrder(_orderId: string): void {
-    // 软删是二期功能（docs/spec/business-p0p1.md §1.2），UI 已禁用入口
+  async deleteWorkOrder(orderId: string): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    const order = this.workOrders.find((o) => o.orderId === orderId)
+    const operationId = await deleteWorkOrderCommand(db, orderId)
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+    this.triggerUndo({
+      undoId: newId('undo'),
+      operationId,
+      message: `已删除 ${order?.customerDisplayName ?? ''} 工单`,
+      actionType: 'delete',
+    })
+  }
+
+  /** 批量定价：一条操作改多条工单；失败抛出由调用方展示。 */
+  async batchPrice(
+    targets: Array<{ syncId: string; quantity?: number; unitPriceCents?: number | null }>,
+  ): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    await batchPriceWorkOrders(db, targets)
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+  }
+
+  /** 解决冲突：合并操作重推后刷新本地视图并触发同步。 */
+  async resolveConflict(queueId: number, resolution: ConflictResolution): Promise<void> {
+    if (!this.syncManager) throw new Error('同步未初始化')
+    await this.syncManager.resolveConflict(queueId, resolution)
+    await this.reload()
+    void this.syncManager.sync().then(() => this.reload())
   }
 
   // ---------- 客户 / 编号映射（真实业务命令） ----------
@@ -666,7 +867,7 @@ class AppState {
   private async commitAiDraft(toolName: string, draft: unknown): Promise<void> {
     const db = this.db
     if (!db) throw new Error('业务库未打开')
-    const input = buildAiOperationFromDraft(this.chatSessionId ?? '', toolName, draft)
+    const input = await buildAiOperationFromDraft(db, this.chatSessionId ?? '', toolName, draft)
     if (!input) throw new Error('ai_draft_invalid')
     await new MutationService(db).commit(input)
     if (this.syncManager) {
@@ -695,6 +896,49 @@ class AppState {
     }
     return `修改工单：${Object.keys(f).join(', ')}`
   }
+}
+
+function operationSummary(operationType: string): string {
+  const map: Record<string, string> = {
+    create_work_order: '新建工单',
+    update_work_order: '修改工单',
+    batch_price_work_orders: '批量定价',
+    revert_operation: '撤回操作',
+  }
+  return map[operationType] ?? operationType
+}
+
+/** 从 Pull changes 里提取 changedFieldsJson 的字段名（snake_case 原样）。 */
+function changedFieldNames(changes: unknown): string[] {
+  if (!Array.isArray(changes)) return []
+  const names: string[] = []
+  for (const change of changes) {
+    if (typeof change !== 'object' || change === null) continue
+    const raw = (change as Record<string, unknown>).changedFieldsJson
+    if (raw === null || raw === undefined) continue
+    const parsed = normalizeFieldNames(raw)
+    for (const name of parsed) {
+      if (!names.includes(name)) names.push(name)
+    }
+  }
+  return names
+}
+
+function normalizeFieldNames(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((x): x is string => typeof x === 'string')
+  }
+  if (typeof raw === 'string') {
+    try {
+      return normalizeFieldNames(JSON.parse(raw))
+    } catch {
+      return []
+    }
+  }
+  if (typeof raw === 'object' && raw !== null) {
+    return Object.keys(raw as Record<string, unknown>)
+  }
+  return []
 }
 
 export const appState = new AppState()

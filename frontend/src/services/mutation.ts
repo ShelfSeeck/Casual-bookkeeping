@@ -1,4 +1,5 @@
 import type { Table } from 'dexie'
+import { getOrCreateDeviceId } from '../db/device'
 import { newId } from '../utils/id'
 import type { CbDatabase } from '../db/schema'
 import type { Operation } from '../db/schema/operations/operations'
@@ -56,8 +57,10 @@ export class MutationService {
     this.db = db
   }
 
-  async commit(input: MutationInput): Promise<void> {
+  async commit(input: MutationInput): Promise<string> {
     const operationId = newId('op')
+    // meta 库访问在事务外（避免跨库事务）；先取 deviceId 再开业务库事务
+    const deviceId = await getOrCreateDeviceId()
     const now = new Date().toISOString()
     const operation: Operation = {
       operationId,
@@ -66,6 +69,7 @@ export class MutationService {
       operationType: input.operationType,
       syncStatus: 'pending',
       revertsOperationId: input.revertsOperationId ?? null,
+      deviceId,
       changesJson: JSON.stringify({ entitySyncIds: input.entitySyncIds }),
       createdAt: now,
       updatedAt: now,
@@ -132,5 +136,6 @@ export class MutationService {
       await tx.table('operations').add(operation)
       await tx.table('outbox').add(outbox)
     })
+    return operationId
   }
 }

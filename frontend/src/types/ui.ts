@@ -46,8 +46,11 @@ export interface WorkOrderUi {
   updatedAt: string
   history?: Array<{
     operationId: string
-    timestamp: string
     summary: string
-    device: string
+    timestamp: string
+    device: string | null
+    actorType: 'user' | 'ai' | 'system'
+    operationType: string
+    canRevert: boolean
   }>
 }

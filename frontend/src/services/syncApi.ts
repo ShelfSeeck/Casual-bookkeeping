@@ -70,6 +70,7 @@ export class HttpSyncApi implements SyncApi {
         server_seq: number
         operation_id: string
         operation_type: string
+        device_id?: string | null
         reverts_operation_id: string | null
         created_at: string
         changes: {
@@ -78,6 +79,8 @@ export class HttpSyncApi implements SyncApi {
           change_type: string
           after_json: string | null
           after_version: number
+          before_json?: string | null
+          changed_fields_json?: string | null
         }[]
       }[]
       has_more: boolean
@@ -87,6 +90,7 @@ export class HttpSyncApi implements SyncApi {
         serverSeq: op.server_seq,
         operationId: op.operation_id,
         operationType: op.operation_type,
+        deviceId: op.device_id ?? null,
         revertsOperationId: op.reverts_operation_id,
         createdAt: op.created_at,
         changes: op.changes.map((c) => ({
@@ -95,6 +99,8 @@ export class HttpSyncApi implements SyncApi {
           changeType: c.change_type,
           afterJson: c.after_json ?? '',
           afterVersion: c.after_version,
+          beforeJson: c.before_json ?? null,
+          changedFieldsJson: c.changed_fields_json ?? null,
         })),
       })),
       hasMore: body.has_more,

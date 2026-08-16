@@ -9,6 +9,8 @@ export interface Operation {
   syncStatus: 'pending' | 'synced'
   /** 撤回操作指向被撤回的原操作；非撤回为 null（docs/data-model.md §5.2） */
   revertsOperationId: string | null
+  /** 产生该操作的设备（Pull 下发时来自服务端；本地新建时来自 getOrCreateDeviceId） */
+  deviceId: string | null
   changesJson: string
   createdAt: string
   updatedAt: string

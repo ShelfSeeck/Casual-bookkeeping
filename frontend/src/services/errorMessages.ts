@@ -29,6 +29,11 @@ export const errorMessageMap: Record<string, string> = {
   invalid_subcategories: '小类格式不合法',
   subcategory_name_duplicate: '小类名称重复',
 
+  // §4.2 撤回 / 批量定价
+  revert_target_not_found: '未找到可撤回的操作',
+  revert_target_invalid: '该操作不能撤回（可能已被撤回）',
+  invalid_batch_input: '请至少选择一条工单并填写一个修改项',
+
   // §4.3 聊天域
   session_busy: '当前会话正在处理中，请稍候',
   session_not_found: '会话不存在',

@@ -52,12 +52,18 @@ export interface PullChange {
   changeType: string
   afterJson: string
   afterVersion: number
+  /** 变更前快照（create 为 null）；Pull 新字段，旧后端可能缺省 */
+  beforeJson?: string | null
+  /** 变更字段展示 JSON（对象或数组的 JSON 字符串）；Pull 新字段，旧后端可能缺省 */
+  changedFieldsJson?: string | null
 }
 
 export interface PullOperation {
   serverSeq: number
   operationId: string
   operationType: string
+  /** 产生该操作的设备 ID；旧后端可能缺省 → null */
+  deviceId: string | null
   revertsOperationId: string | null
   createdAt: string
   changes: PullChange[]
@@ -275,6 +281,7 @@ export class SyncManager {
         conflictJson: null,
         createdAt: now,
       })
+      const oldMirror = await this.db.operations.get(entry.operationId)
       await this.db.operations.add({
         operationId: newOperationId,
         serverSeq: null,
@@ -282,6 +289,7 @@ export class SyncManager {
         operationType: entry.operationType,
         syncStatus: 'pending',
         revertsOperationId,
+        deviceId: oldMirror?.deviceId ?? null,
         changesJson: JSON.stringify({ entitySyncIds: entry.entitySyncIds }),
         createdAt: now,
         updatedAt: now,
@@ -447,6 +455,7 @@ export class SyncManager {
           // 回写服务端确认的 rowVersion（docs/spec/business-p0p1.md §5.7），
           // 与删 outbox、operations 标 synced 同事务，避免本地版本停留在旧值导致假冲突。
           await this.writeBackRowVersions(entry, result.rowVersions ?? {})
+          const mirror = await this.db.operations.get(entry.operationId)
           await this.db.outbox.delete(entry.queueId)
           await this.db.operations.put({
             operationId: entry.operationId,
@@ -456,6 +465,7 @@ export class SyncManager {
             syncStatus: 'synced',
             // 保留撤回关系（撤回操作 command 里带 reverts_operation_id，见 OutboxCommand）
             revertsOperationId: this.revertsOf(entry),
+            deviceId: mirror?.deviceId ?? null,
             changesJson: JSON.stringify({ entitySyncIds: entry.entitySyncIds }),
             createdAt: entry.createdAt,
             updatedAt: now,
@@ -557,7 +567,10 @@ export class SyncManager {
             await this.putToTable(change.entityType, record)
           }
         }
-        // operations 镜像用 put（按 operationId 幂等覆盖），不跳过自己已 push 的操作
+        // operations 镜像用 put（按 operationId 幂等覆盖），不跳过自己已 push 的操作。
+        // changesJson 新形状：{ entitySyncIds, changes }；changes 为 Pull 解析后的数组
+        // （含 afterJson / beforeJson / changedFieldsJson 等，供历史载荷展示）。
+        const entitySyncIds = [...new Set(op.changes.map((c) => c.entitySyncId))]
         await this.db.operations.put({
           operationId: op.operationId,
           serverSeq: op.serverSeq,
@@ -565,7 +578,8 @@ export class SyncManager {
           operationType: op.operationType,
           syncStatus: 'synced',
           revertsOperationId: op.revertsOperationId,
-          changesJson: JSON.stringify({ serverSeq: op.serverSeq }),
+          deviceId: op.deviceId,
+          changesJson: JSON.stringify({ entitySyncIds, changes: op.changes }),
           createdAt: op.createdAt,
           updatedAt: new Date().toISOString(),
         })

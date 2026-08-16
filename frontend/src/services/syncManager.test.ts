@@ -225,6 +225,7 @@ describe('SyncManager', () => {
             serverSeq: 42,
             operationId: 'op-remote',
             operationType: 'create_customer',
+            deviceId: 'dev-remote',
             revertsOperationId: null,
             createdAt: '2026-08-08T00:00:00Z',
             changes: [
@@ -250,6 +251,16 @@ describe('SyncManager', () => {
     // appliedServerSeq 推进
     const state = await db.syncState.get(PHONE)
     expect(state?.appliedServerSeq).toBe(42)
+    // operations 镜像：deviceId 来自 Pull，changesJson 为新形状 {entitySyncIds, changes}
+    const mirror = await db.operations.get('op-remote')
+    expect(mirror?.deviceId).toBe('dev-remote')
+    const changesJson = JSON.parse(mirror!.changesJson) as {
+      entitySyncIds: string[]
+      changes: { entitySyncId: string; afterJson: string }[]
+    }
+    expect(changesJson.entitySyncIds).toEqual(['sync-remote'])
+    expect(changesJson.changes).toHaveLength(1)
+    expect(changesJson.changes[0].afterJson).toBe(JSON.stringify(makeCustomer('sync-remote', 3)))
   })
 
   it('Pull 拉回撤回操作时，operations 镜像保留 revertsOperationId（跨设备撤回关系）', async () => {
@@ -262,6 +273,7 @@ describe('SyncManager', () => {
             serverSeq: 7,
             operationId: 'op-revert-remote',
             operationType: 'revert_work_order',
+            deviceId: 'dev-remote',
             revertsOperationId: 'op-original-remote',
             createdAt: '2026-08-08T00:00:00Z',
             changes: [],
@@ -579,6 +591,7 @@ describe('SyncManager.pruneLocalHistory（docs/sync-protocol.md §10）', () => 
       operationType: 'create_customer',
       syncStatus: (synced ? 'synced' : 'pending') as 'synced' | 'pending',
       revertsOperationId: null,
+      deviceId: null,
       changesJson: '{}',
       createdAt: new Date(Date.now() - daysAgo * 86_400_000).toISOString(),
       updatedAt: '',

@@ -1,6 +1,7 @@
-import { applyWorkOrderPatch } from './businessCommands'
+import { applyWorkOrderPatch, toWireRecord } from './businessCommands'
 import type { MutationChange, MutationInput } from './mutation'
 import { newId } from '../utils/id'
+import type { CbDatabase } from '../db/schema'
 
 // chatApproval：草案转 MutationInput（docs/spec/agent-tools.md §8）。
 // 真实确认 UI 在 AiChatView 的 tool_confirm_request 卡片 → appState.resolveAiApproval：
@@ -8,6 +9,8 @@ import { newId } from '../utils/id'
 // 按 toolName 补齐为 MutationService.commit 的输入；operationId 由 commit 时生成，
 // 这里补齐 entitySyncIds、actorType='ai'、sourceTurnId=turnId，apply 复用
 // businessCommands.applyWorkOrderPatch。
+// update 分支从本地库读行补 baseSnapshot（终审前置项②）；本地行不存在返回 null，
+// 避免冲突合并时退化为空 Base。
 // notConnectedApprovalUi 仅作测试替身（requestApproval 恒 false），业务代码不再使用。
 
 export interface ChatApprovalUi {
@@ -19,11 +22,12 @@ export const notConnectedApprovalUi: ChatApprovalUi = {
   requestApproval: async (_draft: unknown): Promise<boolean> => false,
 }
 
-export function buildAiOperationFromDraft(
+export async function buildAiOperationFromDraft(
+  db: CbDatabase,
   turnId: string,
   toolName: string,
   draft: unknown,
-): MutationInput | null {
+): Promise<MutationInput | null> {
   if (typeof draft !== 'object' || draft === null) return null
   const d = draft as { entity_sync_id?: unknown; base_version?: unknown; fields?: unknown }
 
@@ -68,6 +72,10 @@ export function buildAiOperationFromDraft(
   }
   if (toolName === 'create_work_order') {
     change.baseSnapshot = {}
+  } else {
+    const existing = await db.workOrders.get(entitySyncId)
+    if (!existing) return null
+    change.baseSnapshot = toWireRecord(existing as unknown as Record<string, unknown>)
   }
 
   return {

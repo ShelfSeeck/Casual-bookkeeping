@@ -54,6 +54,9 @@ export function analyzeConflict(
 /**
  * 生成合并 patch（相对 Theirs）：ours-only 字段取 Ours，theirs-only 不写
  * （Theirs 已包含），both 字段按 resolution 决策。both 字段缺决策 → 抛错。
+ * 逐字段显式决策（docs/sync-protocol.md §7）：
+ * - ours-only：resolution 显式选 Theirs → 不写（保持 Theirs）；否则照旧写 Ours。
+ * - theirs-only：resolution 显式选 Ours → 写 oursValue（覆盖 Theirs）；否则照旧跳过。
  */
 export function buildMergedPatch(
   analysis: ConflictAnalysis,
@@ -61,13 +64,21 @@ export function buildMergedPatch(
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {}
   for (const diff of analysis.diffs) {
-    if (diff.state === 'theirs-only') continue
+    const pick = resolution[diff.field]
+    if (diff.state === 'theirs-only') {
+      if (pick && 'source' in pick && pick.source === 'ours') {
+        patch[diff.field] = diff.oursValue
+      }
+      continue
+    }
     if (diff.state === 'ours-only') {
+      if (pick && 'source' in pick && pick.source === 'theirs') {
+        continue
+      }
       patch[diff.field] = diff.oursValue
       continue
     }
     // both：必须由调用方决策（UI 用户选择或手填）
-    const pick = resolution[diff.field]
     if (!pick) throw new Error(`conflict_field_unresolved:${diff.field}`)
     if ('source' in pick) {
       patch[diff.field] = pick.source === 'ours' ? diff.oursValue : diff.theirsValue

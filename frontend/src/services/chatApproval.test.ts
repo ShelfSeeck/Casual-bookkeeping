@@ -8,12 +8,13 @@ import { MutationService } from './mutation'
 // 被测缝：chatApproval（docs/spec/agent-tools.md §8）
 // 验证：
 // 1. notConnectedApprovalUi.requestApproval 恒为 false（没有确认 UI 就没有任何写操作）。
-// 2. buildAiOperationFromDraft(turnId, toolName, draft) 把后端工具原始参数 draft（§5.6）
+// 2. buildAiOperationFromDraft(db, turnId, toolName, draft) 把后端工具原始参数 draft（§5.6）
 //    补齐为可直接喂给 MutationService.commit 的 MutationInput：
 //    toolName 推导 operationType；entityType='work_order'；actorType='ai'；sourceTurnId=turnId；
 //    create 的 entity_sync_id 为 null 时生成 sync-<12hex> 且 baseVersion=0；
 //    update 要求 entity_sync_id 为字符串、base_version 为正整数；形状不合法返回 null。
-// 3. apply 闭包复用 businessCommands.applyWorkOrderPatch：create 落新行、update 合并字段。
+// 3. update 分支从本地库读行补 baseSnapshot（终审前置项②）；行不存在返回 null。
+// 4. apply 闭包复用 businessCommands.applyWorkOrderPatch：create 落新行、update 合并字段。
 
 const PHONE = '13800000000'
 
@@ -70,7 +71,7 @@ describe('notConnectedApprovalUi', () => {
 
 describe('buildAiOperationFromDraft', () => {
   it('create：补齐 actorType/sourceTurnId，entity_sync_id 为 null 时生成 sync-<12hex> 且 baseVersion=0', async () => {
-    const input = buildAiOperationFromDraft('turn-000000000001', 'create_work_order', createDraft)
+    const input = await buildAiOperationFromDraft(db, 'turn-000000000001', 'create_work_order', createDraft)
 
     expect(input).not.toBeNull()
     expect(input?.operationType).toBe('create_work_order')
@@ -101,12 +102,12 @@ describe('buildAiOperationFromDraft', () => {
     expect(outbox[0].sourceTurnId).toBe('turn-000000000001')
   })
 
-  it('create：entity_sync_id 为字符串时直接使用，不重新生成', () => {
+  it('create：entity_sync_id 为字符串时直接使用，不重新生成', async () => {
     const draft = {
       entity_sync_id: 'sync-provided0001',
       fields: { quantity: 5 },
     }
-    const input = buildAiOperationFromDraft('turn-1', 'create_work_order', draft)
+    const input = await buildAiOperationFromDraft(db, 'turn-1', 'create_work_order', draft)
 
     expect(input?.entitySyncIds).toEqual(['sync-provided0001'])
     expect(input?.changes?.[0]).toMatchObject({
@@ -115,15 +116,15 @@ describe('buildAiOperationFromDraft', () => {
     })
   })
 
-  it('create：entity_sync_id 非 null/字符串 → null', () => {
+  it('create：entity_sync_id 非 null/字符串 → null', async () => {
     expect(
-      buildAiOperationFromDraft('turn-1', 'create_work_order', {
+      await buildAiOperationFromDraft(db, 'turn-1', 'create_work_order', {
         entity_sync_id: 123,
         fields: {},
       }),
     ).toBeNull()
     expect(
-      buildAiOperationFromDraft('turn-1', 'create_work_order', { fields: {} }),
+      await buildAiOperationFromDraft(db, 'turn-1', 'create_work_order', { fields: {} }),
     ).toBeNull()
   })
 
@@ -135,7 +136,7 @@ describe('buildAiOperationFromDraft', () => {
       fields: { quantity: 12 },
     }
 
-    const input = buildAiOperationFromDraft('turn-000000000002', 'update_work_order', draft)
+    const input = await buildAiOperationFromDraft(db, 'turn-000000000002', 'update_work_order', draft)
 
     expect(input).not.toBeNull()
     expect(input?.operationType).toBe('update_work_order')
@@ -153,7 +154,36 @@ describe('buildAiOperationFromDraft', () => {
     expect((await db.outbox.toArray())[0].actorType).toBe('ai')
   })
 
-  it('update：base_version 非正整数（NaN/Infinity/0/1.5/-1/字符串/缺失）→ null', () => {
+  it('update：本地行存在时 change 带完整 baseSnapshot（wire snake_case）', async () => {
+    await db.workOrders.put(makeWorkOrder('sync-existing'))
+    const draft = {
+      entity_sync_id: 'sync-existing',
+      base_version: 1,
+      fields: { quantity: 12 },
+    }
+
+    const input = await buildAiOperationFromDraft(db, 'turn-1', 'update_work_order', draft)
+
+    expect(input?.changes?.[0].baseSnapshot).toMatchObject({
+      sync_id: 'sync-existing',
+      quantity: 5,
+      unit: '件',
+      row_version: 1,
+      customer_id: 1,
+    })
+  })
+
+  it('update：本地行不存在 → null（不允许对不存在记录补空 Base）', async () => {
+    const draft = {
+      entity_sync_id: 'sync-missing',
+      base_version: 1,
+      fields: { quantity: 12 },
+    }
+    expect(await buildAiOperationFromDraft(db, 'turn-1', 'update_work_order', draft)).toBeNull()
+  })
+
+  it('update：base_version 非正整数（NaN/Infinity/0/1.5/-1/字符串/缺失）→ null', async () => {
+    await db.workOrders.put(makeWorkOrder('sync-existing'))
     const valid = {
       entity_sync_id: 'sync-existing',
       base_version: 1,
@@ -161,23 +191,23 @@ describe('buildAiOperationFromDraft', () => {
     }
     for (const bad of [NaN, Infinity, 0, 1.5, -1, '1', null, undefined]) {
       expect(
-        buildAiOperationFromDraft('turn-1', 'update_work_order', {
+        await buildAiOperationFromDraft(db, 'turn-1', 'update_work_order', {
           ...valid,
           base_version: bad,
         }),
       ).toBeNull()
     }
     expect(
-      buildAiOperationFromDraft('turn-1', 'update_work_order', {
+      await buildAiOperationFromDraft(db, 'turn-1', 'update_work_order', {
         entity_sync_id: 'sync-existing',
         fields: { quantity: 12 },
       }),
     ).toBeNull()
   })
 
-  it('update：entity_sync_id 非字符串 → null', () => {
+  it('update：entity_sync_id 非字符串 → null', async () => {
     expect(
-      buildAiOperationFromDraft('turn-1', 'update_work_order', {
+      await buildAiOperationFromDraft(db, 'turn-1', 'update_work_order', {
         entity_sync_id: 123,
         base_version: 1,
         fields: {},
@@ -185,31 +215,31 @@ describe('buildAiOperationFromDraft', () => {
     ).toBeNull()
   })
 
-  it('缺 fields / fields 非对象 / 错误 toolName / 非对象 draft → null', () => {
+  it('缺 fields / fields 非对象 / 错误 toolName / 非对象 draft → null', async () => {
     expect(
-      buildAiOperationFromDraft('turn-1', 'create_work_order', {
+      await buildAiOperationFromDraft(db, 'turn-1', 'create_work_order', {
         entity_sync_id: null,
       }),
     ).toBeNull()
     expect(
-      buildAiOperationFromDraft('turn-1', 'create_work_order', {
+      await buildAiOperationFromDraft(db, 'turn-1', 'create_work_order', {
         entity_sync_id: null,
         fields: 'bad',
       }),
     ).toBeNull()
     expect(
-      buildAiOperationFromDraft('turn-1', 'create_work_order', {
+      await buildAiOperationFromDraft(db, 'turn-1', 'create_work_order', {
         entity_sync_id: null,
         fields: [],
       }),
     ).toBeNull()
     expect(
-      buildAiOperationFromDraft('turn-1', 'delete_work_order', {
+      await buildAiOperationFromDraft(db, 'turn-1', 'delete_work_order', {
         entity_sync_id: null,
         fields: {},
       }),
     ).toBeNull()
-    expect(buildAiOperationFromDraft('turn-1', 'create_work_order', null)).toBeNull()
-    expect(buildAiOperationFromDraft('turn-1', 'create_work_order', 'draft')).toBeNull()
+    expect(await buildAiOperationFromDraft(db, 'turn-1', 'create_work_order', null)).toBeNull()
+    expect(await buildAiOperationFromDraft(db, 'turn-1', 'create_work_order', 'draft')).toBeNull()
   })
 })

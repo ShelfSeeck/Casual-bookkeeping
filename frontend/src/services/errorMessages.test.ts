@@ -25,6 +25,9 @@ describe('errorMessageMap', () => {
       'category_name_duplicate',
       'invalid_subcategories',
       'subcategory_name_duplicate',
+      'revert_target_not_found',
+      'revert_target_invalid',
+      'invalid_batch_input',
     ]
     for (const code of codes) {
       expect(errorMessageMap[code], `${code} 应有中文文案`).toBeTruthy()

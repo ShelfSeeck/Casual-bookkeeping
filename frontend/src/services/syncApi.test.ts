@@ -172,6 +172,73 @@ describe('HttpSyncApi.pull / bootstrap', () => {
     })
   })
 
+  it('pull 响应解析 device_id / before_json / changed_fields_json（snake→camel）', async () => {
+    requestMock.mockResolvedValue(
+      okResponse({
+        operations: [
+          {
+            server_seq: 43,
+            operation_id: 'op-r2',
+            operation_type: 'update_work_order',
+            device_id: 'dev-000000000001',
+            reverts_operation_id: null,
+            created_at: '2026-08-08T00:00:00Z',
+            changes: [
+              {
+                entity_type: 'work_order',
+                entity_sync_id: 'sync-r2',
+                change_type: 'update',
+                after_json: '{"sync_id":"sync-r2","quantity":9}',
+                after_version: 2,
+                before_json: '{"sync_id":"sync-r2","quantity":5}',
+                changed_fields_json: '{"quantity":{"before":5,"after":9}}',
+              },
+            ],
+          },
+        ],
+        has_more: true,
+      }),
+    )
+    const result = await api.pull(0)
+
+    expect(result.operations[0]).toMatchObject({
+      serverSeq: 43,
+      operationId: 'op-r2',
+      deviceId: 'dev-000000000001',
+    })
+    expect(result.operations[0].changes[0]).toMatchObject({
+      entityType: 'work_order',
+      entitySyncId: 'sync-r2',
+      changeType: 'update',
+      afterVersion: 2,
+      beforeJson: '{"sync_id":"sync-r2","quantity":5}',
+      changedFieldsJson: '{"quantity":{"before":5,"after":9}}',
+    })
+    expect(result.hasMore).toBe(true)
+  })
+
+  it('pull 响应缺省新字段时解析为 null（兼容旧后端形状）', async () => {
+    requestMock.mockResolvedValue(
+      okResponse({
+        operations: [
+          {
+            server_seq: 44,
+            operation_id: 'op-r3',
+            operation_type: 'create_customer',
+            reverts_operation_id: null,
+            created_at: '2026-08-08T00:00:00Z',
+            changes: [],
+          },
+        ],
+        has_more: false,
+      }),
+    )
+    const result = await api.pull(0)
+
+    expect(result.operations[0].deviceId).toBeNull()
+    expect(result.operations[0].changes).toEqual([])
+  })
+
   it('bootstrap 响应 snake→camel 映射', async () => {
     requestMock.mockResolvedValue(
       okResponse({

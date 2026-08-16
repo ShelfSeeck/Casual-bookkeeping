@@ -99,6 +99,22 @@ describe('MutationService.commit', () => {
     expect(ops[0].operationId).toMatch(/^op-[0-9a-f]{12}$/)
   })
 
+  it('commit 返回 operationId，且与 operations / outbox 中的 operationId 一致', async () => {
+    const input: MutationInput = {
+      operationType: 'create_work_order',
+      entitySyncIds: ['sync-a'],
+      apply: (tx) => tx.workOrders.put(makeOrder('sync-a')),
+      actorType: 'user',
+    }
+    const operationId = await svc.commit(input)
+
+    expect(operationId).toMatch(/^op-[0-9a-f]{12}$/)
+    const ops = await db.operations.toArray()
+    expect(operationId).toBe(ops[0].operationId)
+    const outbox = await db.outbox.toArray()
+    expect(operationId).toBe(outbox[0].operationId)
+  })
+
   it('apply 抛错时三表全部回滚，无部分写入', async () => {
     const input: MutationInput = {
       operationType: 'create_work_order',

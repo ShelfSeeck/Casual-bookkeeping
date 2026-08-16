@@ -76,6 +76,29 @@ describe('buildMergedPatch', () => {
     const analysis = analyzeConflict(BASE, OURS, theirs)
     expect(() => buildMergedPatch(analysis, {})).toThrow(/quantity/)
   })
+
+  it('ours-only 字段显式选 Theirs → 不写该字段（保持 Theirs）', () => {
+    const analysis = analyzeConflict(BASE, OURS, THEIRS)
+    // quantity 是 ours-only；用户显式决定采用 Theirs（即放弃我方改动）
+    const patch = buildMergedPatch(analysis, { quantity: { source: 'theirs' } })
+    expect(patch).toEqual({})
+  })
+
+  it('theirs-only 字段显式选 Ours → 写 oursValue（用我方值覆盖 Theirs）', () => {
+    const analysis = analyzeConflict(BASE, OURS, THEIRS)
+    // unit / customer_code 是 theirs-only；用户显式决定采用 Ours（Base 中的值）
+    const patch = buildMergedPatch(analysis, {
+      unit: { source: 'ours' },
+      customer_code: { source: 'ours' },
+    })
+    expect(patch).toEqual({ quantity: 9, unit: '件', customer_code: '001' })
+  })
+
+  it('ours-only / theirs-only 未显式决策时保持默认行为', () => {
+    const analysis = analyzeConflict(BASE, OURS, THEIRS)
+    expect(buildMergedPatch(analysis, {})).toEqual({ quantity: 9 })
+    expect(buildMergedPatch(analysis, { unit: { source: 'theirs' } })).toEqual({ quantity: 9 })
+  })
 })
 
 describe('autoMergePatch', () => {

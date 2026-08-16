@@ -7,6 +7,7 @@ import { CustomersRepository } from '../repositories/customers'
 import { CustomerCodeMappingsRepository } from '../repositories/customerCodeMappings'
 import { ServiceCategoriesRepository } from '../repositories/serviceCategories'
 import { newId } from '../utils/id'
+import { localDateToday } from '../utils/localDate'
 import { MutationService, type MutationChange, type MutationTx } from './mutation'
 
 // businessCommands：业务命令层（docs/spec/business-p0p1.md §5.8.2）。
@@ -188,10 +189,10 @@ export function buildCreateWorkOrderChange(fields: WorkOrderFields): MutationCha
   }
 }
 
-export async function createWorkOrder(db: CbDatabase, fields: WorkOrderFields): Promise<void> {
+export async function createWorkOrder(db: CbDatabase, fields: WorkOrderFields): Promise<string> {
   await validateWorkOrderInput(fields, db)
   const change = buildCreateWorkOrderChange(fields)
-  await new MutationService(db).commit({
+  return new MutationService(db).commit({
     operationType: 'create_work_order',
     entitySyncIds: [change.entitySyncId],
     changes: [change],
@@ -204,7 +205,7 @@ export async function updateWorkOrder(
   db: CbDatabase,
   syncId: string,
   patch: Partial<WorkOrderFields> & { isCompleted?: boolean },
-): Promise<void> {
+): Promise<string> {
   const existing = await db.workOrders.get(syncId)
   if (!existing) throw new BusinessRuleError('entity_not_found')
   await validateWorkOrderPatch(db, existing, patch)
@@ -216,11 +217,116 @@ export async function updateWorkOrder(
     baseSnapshot: toWireRecord(existing as unknown as Record<string, unknown>),
     patch: toWirePatch(patch as Record<string, unknown>),
   }
-  await new MutationService(db).commit({
+  return new MutationService(db).commit({
     operationType: 'update_work_order',
     entitySyncIds: [syncId],
     changes: [change],
     apply: (tx) => applyWorkOrderPatch(tx, change),
+    actorType: 'user',
+  })
+}
+
+/** 软删工单（终审/二期）：本地行 deletedAt 置为当前时间，change 为 update_work_order。 */
+export async function deleteWorkOrder(db: CbDatabase, syncId: string): Promise<string> {
+  const row = await db.workOrders.get(syncId)
+  if (!row) throw new BusinessRuleError('entity_not_found')
+
+  const change: MutationChange = {
+    entitySyncId: syncId,
+    entityType: 'work_order',
+    baseVersion: row.rowVersion,
+    baseSnapshot: toWireRecord(row as unknown as Record<string, unknown>),
+    patch: { deleted_at: new Date().toISOString() },
+  }
+  return new MutationService(db).commit({
+    operationType: 'update_work_order',
+    entitySyncIds: [syncId],
+    changes: [change],
+    apply: (tx) => applyWorkOrderPatch(tx, change),
+    actorType: 'user',
+  })
+}
+
+/**
+ * 撤回操作：前端只提交撤回意图（docs/data-model.md §6.5），
+ * 反向 patch 由服务端根据 operation_changes.before_json 生成；本地业务表不动。
+ */
+export async function revertOperation(
+  db: CbDatabase,
+  targetOperationId: string,
+): Promise<string> {
+  const target = await db.operations.get(targetOperationId)
+  if (!target) throw new BusinessRuleError('revert_target_not_found')
+
+  const alreadyReverted = await db.operations
+    .filter((o) => o.revertsOperationId === targetOperationId)
+    .toArray()
+  if (alreadyReverted.length > 0) throw new BusinessRuleError('revert_target_invalid')
+
+  let parsed: { entitySyncIds?: unknown }
+  try {
+    parsed = JSON.parse(target.changesJson) as { entitySyncIds?: unknown }
+  } catch {
+    throw new BusinessRuleError('revert_target_invalid')
+  }
+  const entitySyncIds = Array.isArray(parsed.entitySyncIds)
+    ? parsed.entitySyncIds.filter((id): id is string => typeof id === 'string')
+    : []
+  if (entitySyncIds.length === 0) throw new BusinessRuleError('revert_target_invalid')
+
+  return new MutationService(db).commit({
+    operationType: 'revert_operation',
+    entitySyncIds,
+    changes: [],
+    revertsOperationId: targetOperationId,
+    apply: () => undefined,
+    actorType: 'user',
+  })
+}
+
+/** 批量定价：一次操作按 targets 顺序改多条工单 quantity / unitPriceCents。 */
+export async function batchPriceWorkOrders(
+  db: CbDatabase,
+  targets: Array<{ syncId: string; quantity?: number; unitPriceCents?: number | null }>,
+): Promise<string> {
+  if (targets.length === 0) throw new BusinessRuleError('invalid_batch_input')
+
+  const changes: MutationChange[] = []
+  const entitySyncIds: string[] = []
+  for (const target of targets) {
+    const hasQuantity = target.quantity !== undefined
+    const hasPrice = target.unitPriceCents !== undefined
+    if (!hasQuantity && !hasPrice) throw new BusinessRuleError('invalid_batch_input')
+    if (hasQuantity) validateQuantity(target.quantity!)
+    if (hasPrice) validateUnitPrice(target.unitPriceCents!)
+
+    const row = await db.workOrders.get(target.syncId)
+    if (!row) throw new BusinessRuleError('entity_not_found')
+
+    const patch: Record<string, unknown> = {}
+    if (hasQuantity) patch.quantity = target.quantity
+    if (hasPrice) patch.unit_price_cents = target.unitPriceCents
+
+    const change: MutationChange = {
+      entitySyncId: target.syncId,
+      entityType: 'work_order',
+      baseVersion: row.rowVersion,
+      baseSnapshot: toWireRecord(row as unknown as Record<string, unknown>),
+      patch,
+    }
+    changes.push(change)
+    entitySyncIds.push(target.syncId)
+  }
+
+  return new MutationService(db).commit({
+    operationType: 'batch_price_work_orders',
+    entitySyncIds,
+    changes,
+    apply: async (tx) => {
+      for (const change of changes) {
+        await applyWorkOrderPatch(tx, change)
+      }
+    },
     actorType: 'user',
   })
 }
@@ -370,7 +476,7 @@ export async function archiveCustomerWithMappings(
     customerId: customer.customerId,
   })
   const openMappings = mappings.filter((m) => m.validTo === null)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDateToday()
   const now = new Date().toISOString()
 
   const changes: MutationChange[] = [
@@ -745,7 +851,7 @@ function snakeToCamel(name: string): string {
 
 /** 本地 camelCase patch/record → wire snake_case；subcategoriesJson 序列化为 JSON 字符串，
  *  且元素字段一并转 snake_case（与 patch 生成共用 toWireSubcategories，避免 Base 与 Theirs 形状不一致）。 */
-function toWireRecord(record: Record<string, unknown>): Record<string, unknown> {
+export function toWireRecord(record: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(record)) {
     if (key === 'subcategoriesJson' || key === 'subcategories') {
