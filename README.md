@@ -52,11 +52,104 @@ cd frontend
 npm run build      # vue-tsc -b + vite build; emits dist/ with PWA files
 ```
 
-Deploy `frontend/dist/` behind the same domain as the backend so relative API
-paths and the refresh cookie work as designed. HTTPS is required for the
-service worker.
+## Deployment
 
-### 4. Tests
+### 1. Build and serve
+
+```bash
+cd frontend
+npm install
+npm run build      # emits dist/ (index.html, assets, sw.js, manifest)
+```
+
+Serve `frontend/dist/` as static files and run the backend with the same
+stack, e.g.:
+
+```bash
+cd backend
+PYTHONPATH=src .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+### 2. Backend configuration
+
+```bash
+cd backend
+cp config.example.toml config.toml   # edit as needed; config.toml is git-ignored
+```
+
+- `[database] path` — SQLite file location; `busy_timeout_ms` for write-lock queueing.
+- `CB_JWT_SECRET` environment variable is required at startup (or set
+  `[auth] jwt_secret` in `config.toml`, but never commit a real secret).
+- `[auth] secure_cookie` must be `true` in production (HTTPS).
+- `[model]` is only needed when the AI chat feature is enabled.
+
+### 3. Same-origin reverse proxy (required)
+
+The frontend calls `/auth`, `/sync`, and `/chat` with relative paths, and the
+refresh token is an HttpOnly cookie. Serve the SPA and the API from the same
+origin, proxying those three prefixes to the backend:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name app.example.com;
+    # ssl_certificate / ssl_certificate_key ...
+
+    root /var/www/cb/frontend/dist;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /auth/ { proxy_pass http://127.0.0.1:8000; }
+    location /sync/ { proxy_pass http://127.0.0.1:8000; }
+    location /chat/ { proxy_pass http://127.0.0.1:8000; }
+}
+```
+
+### 4. HTTPS and PWA
+
+HTTPS is mandatory: the service worker only registers in a secure context.
+The PWA uses auto-update (`registerSW({ immediate: true })`), so users get the
+new version after the next reload.
+
+### 5. Database
+
+The default path is `backend/data/app.db` (WAL mode). Back up the file plus
+`-wal`/`-shm` consistently, e.g. with `sqlite3 app.db ".backup app-backup.db"`,
+or back up the whole `backend/data/` directory while the server is stopped.
+
+### 6. Create the first account
+
+The backend has an admin CLI that talks to SQLite directly (no HTTP auth):
+
+```bash
+cd backend
+.venv/bin/python -m backend.scripts.manage add-account 13800000000 --password 'a-strong-password'
+```
+
+Useful commands: `list-accounts`, `list-devices <phone>`,
+`revoke-device <phone> <device_id>`, `set-password`, `set-account-status`.
+See `docs/manage-cli.md` for the full manual.
+
+### 7. Post-deploy smoke test
+
+1. Open the site over HTTPS and log in with the account created above.
+2. Record one work order on the desk page.
+3. Check the ledger: the order shows 已同步 (synced) after push + pull.
+
+## Deployment caveats
+
+- Same-origin proxy is not optional: cookies and relative API paths break otherwise.
+- HTTPS is required for PWA installation and sync.
+- Production build must be `npm run build`; `npx vue-tsc --noEmit` alone is a
+  false signal (see `frontend/README` note in AGENTS.md).
+- Never put `CB_JWT_SECRET` or `[model] api_key` into tracked files; use
+  environment variables or git-ignored `config.toml`.
+- Order dates use the device's local date; keep device clocks/time zones sane.
+- Deploy frontend and backend from matching versions — the sync protocol,
+  error codes, and field names evolve together.
+
+## Tests
 
 ```bash
 cd backend && .venv/bin/python -m pytest -m "not live"   # backend tests
