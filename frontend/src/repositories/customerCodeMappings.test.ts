@@ -6,7 +6,7 @@ import { CustomerCodeMappingsRepository } from './customerCodeMappings'
 
 // 被测缝：CustomerCodeMappingsRepository 公共读写接口
 // 验证：put/get、list 过滤与排序（customerCode 升序、validFrom 升序）、
-// findValid 按 customerCode + 业务日期返回有效映射、findActiveByDate 兼容旧接口。
+// findValid 按 customerCode + 业务日期返回有效映射。
 // 为什么测这里：工单录入按业务日期选择客户编号映射，日期区间判断是核心业务语义。
 
 const PHONE = '13800000000'
@@ -44,20 +44,6 @@ describe('CustomerCodeMappingsRepository', () => {
   it('put 后可 get 到该映射', async () => {
     await repo.put(makeMapping('map-a'))
     expect((await repo.get('map-a'))?.customerName).toBe('张三')
-  })
-
-  it('findActiveByDate 返回业务日期落在区间内的映射', async () => {
-    await repo.put(makeMapping('map-early', { validFrom: '2026-01-01', validTo: '2026-06-30' }))
-    await repo.put(makeMapping('map-late', { validFrom: '2026-07-01', validTo: null }))
-    const inRange = await repo.findActiveByDate('2026-06-15')
-    expect(inRange.map((m) => m.syncId)).toEqual(['map-early'])
-    const after = await repo.findActiveByDate('2026-07-15')
-    expect(after.map((m) => m.syncId)).toEqual(['map-late'])
-  })
-
-  it('findActiveByDate 返回空数组当无有效映射', async () => {
-    await repo.put(makeMapping('map-early', { validFrom: '2026-01-01', validTo: '2026-06-30' }))
-    expect(await repo.findActiveByDate('2026-07-15')).toEqual([])
   })
 
   it('list 按 customerCode 升序、validFrom 升序', async () => {

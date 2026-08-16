@@ -11,16 +11,6 @@ import type { CbDatabase } from '../db/schema'
 // businessCommands.applyWorkOrderPatch。
 // update 分支从本地库读行补 baseSnapshot（终审前置项②）；本地行不存在返回 null，
 // 避免冲突合并时退化为空 Base。
-// notConnectedApprovalUi 仅作测试替身（requestApproval 恒 false），业务代码不再使用。
-
-export interface ChatApprovalUi {
-  /** 收到写草案时调用；resolve true 才继续 approve + 本地提交。 */
-  requestApproval(draft: unknown): Promise<boolean>
-}
-
-export const notConnectedApprovalUi: ChatApprovalUi = {
-  requestApproval: async (_draft: unknown): Promise<boolean> => false,
-}
 
 export async function buildAiOperationFromDraft(
   db: CbDatabase,

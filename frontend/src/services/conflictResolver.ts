@@ -121,15 +121,6 @@ export function buildMergedPatch(
   return patch
 }
 
-/** 自动合并（仅 autoMergable 时可用）：both 字段缺省按 Ours 优先。 */
-export function autoMergePatch(analysis: ConflictAnalysis): Record<string, unknown> {
-  const both: ConflictResolution = {}
-  for (const diff of analysis.diffs) {
-    if (diff.state === 'both') both[diff.field] = { source: 'ours' }
-  }
-  return buildMergedPatch(analysis, both)
-}
-
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (typeof a !== typeof b) return false

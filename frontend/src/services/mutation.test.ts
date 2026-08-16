@@ -87,19 +87,7 @@ describe('MutationService.commit', () => {
     expect(outbox[0].status).toBe('pending')
   })
 
-  it('operationId 生成格式 op- + 12 位十六进制', async () => {
-    const input: MutationInput = {
-      operationType: 'create_work_order',
-      entitySyncIds: ['sync-a'],
-      apply: (tx) => tx.workOrders.put(makeOrder('sync-a')),
-      actorType: 'user',
-    }
-    await svc.commit(input)
-    const ops = await db.operations.toArray()
-    expect(ops[0].operationId).toMatch(/^op-[0-9a-f]{12}$/)
-  })
-
-  it('commit 返回 operationId，且与 operations / outbox 中的 operationId 一致', async () => {
+  it('commit 返回 op-<12hex> 格式 operationId，且与 operations / outbox 中的一致', async () => {
     const input: MutationInput = {
       operationType: 'create_work_order',
       entitySyncIds: ['sync-a'],

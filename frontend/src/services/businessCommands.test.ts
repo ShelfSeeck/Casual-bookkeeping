@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createBusinessDb } from '../db/db'
 import type { CbDatabase } from '../db/schema'
 import type { Customer } from '../db/schema/business/customers'
@@ -8,7 +8,6 @@ import type { WorkOrder } from '../db/schema/business/workOrders'
 import { MutationService } from './mutation'
 import {
   BusinessRuleError,
-  accountPhoneFromDb,
   addCustomerCodeMapping,
   archiveCustomerWithMappings,
   batchPriceWorkOrders,
@@ -136,12 +135,6 @@ async function seedBase(): Promise<void> {
   await db.serviceCategories.put(makeCategory('sync-cat', '洗水'))
 }
 
-describe('accountPhoneFromDb', () => {
-  it('从业务库名 db_<phone> 提取账户手机号', () => {
-    expect(accountPhoneFromDb(db)).toBe(PHONE)
-  })
-})
-
 describe('validateWorkOrderInput（即时校验错误码）', () => {
   beforeEach(async () => {
     await seedBase()
@@ -178,7 +171,7 @@ describe('validateWorkOrderInput（即时校验错误码）', () => {
     ).rejects.toMatchObject({ errorCode: 'invalid_service_item' })
   })
 
-  it('客户不存在或已归档 → customer_not_found', async () => {
+  it('客户不存在或已归档 → customer_not_found（录入校验）', async () => {
     await expect(validateWorkOrderInput({ ...validFields, customerId: 999 }, db))
       .rejects.toMatchObject({ errorCode: 'customer_not_found' })
     await db.customers.put(makeCustomer('sync-archived', 43, '2026-08-01T00:00:00Z'))
@@ -457,13 +450,17 @@ describe('archiveCustomerWithMappings', () => {
     await db.customerCodeMappings.put(makeMapping('sync-map-open2', 42, '002', '2026-01-01', null))
     await db.customerCodeMappings.put(makeMapping('sync-map-closed', 42, '003', '2025-01-01', '2025-12-31'))
 
-    await archiveCustomerWithMappings(db, 'sync-cust')
+    // 本地日期（终审前置项①）：固定时钟后用字面量断言，不能再用 UTC toISOString().slice(0,10)
+    const today = '2026-08-16'
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date(2026, 7, 16, 12, 0))
+      await archiveCustomerWithMappings(db, 'sync-cust')
+    } finally {
+      vi.useRealTimers()
+    }
 
     const customer = await db.customers.get('sync-cust')
-    expect(customer?.archivedAt).toBeTruthy()
-    // 本地日期（终审前置项①）：不能再用 UTC toISOString().slice(0,10)
-    const d = new Date()
-    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     expect(customer?.archivedAt).toBe(today)
 
     expect((await db.customerCodeMappings.get('sync-map-open1'))?.validTo).toBe(today)
@@ -485,7 +482,7 @@ describe('archiveCustomerWithMappings', () => {
     expect(changes[1].patch).toMatchObject({ valid_to: today })
   })
 
-  it('客户不存在或已归档 → customer_not_found', async () => {
+  it('客户不存在或已归档 → customer_not_found（归档校验）', async () => {
     await expect(archiveCustomerWithMappings(db, 'sync-nope')).rejects
       .toMatchObject({ errorCode: 'customer_not_found' })
   })

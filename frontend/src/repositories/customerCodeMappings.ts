@@ -47,10 +47,6 @@ export class CustomerCodeMappingsRepository {
     return rows[0]
   }
 
-  async findActiveByDate(date: string): Promise<CustomerCodeMapping[]> {
-    return this.list({ onDate: date })
-  }
-
   async put(mapping: CustomerCodeMapping): Promise<void> {
     await this.db.customerCodeMappings.put(mapping)
   }

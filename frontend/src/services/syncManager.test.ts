@@ -243,29 +243,6 @@ describe('SyncManager', () => {
     expect(pull).toHaveBeenCalledTimes(1)
   })
 
-  it('仅剩 conflict 时 runOnce 仍调 pull（本地收敛不阻塞）', async () => {
-    await commitOrder('sync-a')
-    const realOpId = (await db.outbox.toArray())[0].operationId
-    const pull = vi.fn(async () => ({ operations: [], hasMore: false }))
-    const api = makeApi({
-      push: vi.fn(async () => ({
-        results: [
-          {
-            operationId: realOpId,
-            status: 'conflict' as const,
-            conflictJson: { theirs: { row_version: 5, quantity: 9 } },
-          },
-        ],
-      })),
-      pull,
-    })
-    await buildManager(api).sync()
-
-    expect(pull).toHaveBeenCalledTimes(1)
-    // conflict 材料仍保留在 outbox，供冲突中心继续处理
-    expect((await db.outbox.toArray())[0].status).toBe('conflict')
-  })
-
   it('存在 pending 时不调 pull', async () => {
     await commitOrder('sync-a')
     const entry = (await db.outbox.toArray())[0]

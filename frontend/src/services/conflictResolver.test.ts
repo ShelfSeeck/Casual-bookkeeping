@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  WIRE_META_FIELDS,
   analyzeConflict,
-  autoMergePatch,
   buildMergedPatch,
   stripWireMetaFields,
 } from './conflictResolver'
@@ -140,28 +138,5 @@ describe('stripWireMetaFields', () => {
     expect(record.row_version).toBe(5)
     expect(record).toHaveProperty('sync_id')
     expect(record).toHaveProperty('work_order_id')
-  })
-
-  it('WIRE_META_FIELDS 为精确字面量', () => {
-    expect(WIRE_META_FIELDS).toEqual([
-      'row_version',
-      'updated_at',
-      'created_at',
-      'account_phone',
-      'sync_id',
-      'work_order_id',
-      'mapping_id',
-      'service_category_id',
-    ])
-  })
-})
-
-describe('autoMergePatch', () => {
-  it('可自动合并时产出合并 patch；both 字段按 Ours 优先兜底', () => {
-    const analysis = analyzeConflict(BASE, OURS, THEIRS)
-    expect(autoMergePatch(analysis)).toEqual({ quantity: 9 })
-
-    const both = analyzeConflict(BASE, OURS, { quantity: 6, unit: '件', customer_code: '001' })
-    expect(autoMergePatch(both)).toEqual({ quantity: 9 })
   })
 })

@@ -2,19 +2,18 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createBusinessDb } from '../db/db'
 import type { CbDatabase } from '../db/schema'
 import type { WorkOrder } from '../db/schema/business/workOrders'
-import { buildAiOperationFromDraft, notConnectedApprovalUi } from './chatApproval'
+import { buildAiOperationFromDraft } from './chatApproval'
 import { MutationService } from './mutation'
 
 // 被测缝：chatApproval（docs/spec/agent-tools.md §8）
 // 验证：
-// 1. notConnectedApprovalUi.requestApproval 恒为 false（没有确认 UI 就没有任何写操作）。
-// 2. buildAiOperationFromDraft(db, turnId, toolName, draft) 把后端工具原始参数 draft（§5.6）
+// 1. buildAiOperationFromDraft(db, turnId, toolName, draft) 把后端工具原始参数 draft（§5.6）
 //    补齐为可直接喂给 MutationService.commit 的 MutationInput：
 //    toolName 推导 operationType；entityType='work_order'；actorType='ai'；sourceTurnId=turnId；
 //    create 的 entity_sync_id 为 null 时生成 sync-<12hex> 且 baseVersion=0；
 //    update 要求 entity_sync_id 为字符串、base_version 为正整数；形状不合法返回 null。
-// 3. update 分支从本地库读行补 baseSnapshot（终审前置项②）；行不存在返回 null。
-// 4. apply 闭包复用 businessCommands.applyWorkOrderPatch：create 落新行、update 合并字段。
+// 2. update 分支从本地库读行补 baseSnapshot（终审前置项②）；行不存在返回 null。
+// 3. apply 闭包复用 businessCommands.applyWorkOrderPatch：create 落新行、update 合并字段。
 
 const PHONE = '13800000000'
 
@@ -60,13 +59,6 @@ beforeEach(async () => {
   db = createBusinessDb(PHONE)
   await db.delete()
   await db.open()
-})
-
-describe('notConnectedApprovalUi', () => {
-  it('requestApproval 恒为 false（拒绝草案，不提交、不发 approve）', async () => {
-    await expect(notConnectedApprovalUi.requestApproval(createDraft)).resolves.toBe(false)
-    await expect(notConnectedApprovalUi.requestApproval(null)).resolves.toBe(false)
-  })
 })
 
 describe('buildAiOperationFromDraft', () => {
