@@ -201,8 +201,8 @@ GET /sync/bootstrap?cursor=...
 ```text
 1. Push 全部 outbox（保序，逐条结果）
 2. Push 后仍有 pending / sending（如网络错误回退、拆批未清）→ 本轮只 Push，不 Pull
-3. 若某条 conflict → 停下，进三方对比（§7）；用户解决后生成新合并操作重新 Push
-4. 仅剩 conflict / rejected 或 outbox 清空时 → 统一 Pull：拉 applied_seq 之后所有变更，一次性收敛业务表 + 写 operations 镜像 + 推进 applied_server_seq
+3. 若某条 conflict / rejected → 记录在 outbox，状态进入冲突提示，本轮继续处理后续操作
+4. 无 pending / sending 时 → 统一 Pull：拉 applied_seq 之后所有变更，一次性收敛业务表 + 写 operations 镜像 + 推进 applied_server_seq
 ```
 
 **存在 pending / sending 不 Pull**：只要还有 `pending` / `sending`，这一轮只 Push。仅剩 `conflict` / `rejected` 时允许 Pull。理由：Pull 应用的是服务端结果快照，若本地还有未推送成功的修改，覆盖会让未决修改丢失；conflict / rejected 的 Base / Ours / Theirs 材料只存在 outbox，不进入业务表，因此业务表可被 Pull 结果快照覆盖（见 §8 单记录 gate）。
