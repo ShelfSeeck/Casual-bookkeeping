@@ -610,7 +610,7 @@ AI 分析期间不锁定本地数据，用户此时仍可修改：
 
 ### 6.5 撤回
 
-撤回不直接用 `before_json` 覆盖业务表，而是生成一条反向业务操作草案：
+撤回不直接用 `before_json` 覆盖业务表，而是生成一条新的反向操作（`reverts_operation_id` 指向原操作）。
 
 ```text
 原操作 op-100
@@ -626,10 +626,7 @@ AI 分析期间不锁定本地数据，用户此时仍可修改：
 - `outbox.command.reverts_operation_id`：前端发起撤回时随命令提交，服务端写入 `database_operations.reverts_operation_id`。
 - 反向 patch 由服务端根据 `operation_changes.before_json` 生成；前端不自行计算反向值，只提交"撤回哪条操作"的意图。
 
-- 如果目标记录当前版本仍等于原操作的 `after_version`，反向草案可以直接按普通操作提交。
-- 如果目标后来又被修改，撤回进入与普通写入相同的三方对比：Base 为原操作完成后的 `after_json`，Ours 为希望恢复到的 `before_json`，Theirs 为服务端当前业务状态。
-- 用户确认合并结果后，生成新的撤回操作，以当前服务端版本作为 `base_version`，再经过业务写入服务、业务校验和 SQLite 事务。
-- 批量撤回也必须整体确认和整体提交。
+> 早期计划（存档，与 MVP 冲突的部分不再执行）：如果目标记录当前版本仍等于原操作的 `after_version`，反向草案可以直接按普通操作提交；如果目标后来又被修改，撤回进入与普通写入相同的三方对比（Base 为原操作完成后的 `after_json`，Ours 为希望恢复到的 `before_json`，Theirs 为服务端当前业务状态）；用户确认合并结果后生成新的撤回操作，以当前服务端版本作为 `base_version` 重新提交；批量撤回也必须整体确认和整体提交。**该三方对比路径未实现，已被下方 MVP 实现语义取代。**
 
 MVP 实现语义（2026-08-15）：
 
@@ -637,9 +634,9 @@ MVP 实现语义（2026-08-15）：
 - 服务端在幂等检查之后、changes 循环之前，把撤回意图展开成反向 changes，再走普通写入管线：按 `operation_changes.change_id` 升序，每条 change 取 `before_json` 作为 `fields`、`after_version` 作为 `base_version`。
 - create 的撤回仅支持工单：`before_json` 为空且 `entity_type = "work_order"` 时，展开为等价软删（`fields.deleted_at = 当前时间`）；其他实体的 create 撤回按不支持处理。
 - 目标不存在或不属于当前账户 → `revert_target_not_found`；目标本身是撤回操作、已被其他撤回指向、或含 MVP 不支持的实体 create 变更 → `revert_target_invalid`。
-- 目标后来又被修改时，展开后的反向 changes 会因 `base_version` 不匹配进入普通冲突处理（§6.4），与普通写入同一管线。
+- 目标后来又被修改时，展开后的反向 changes 因 `base_version` 不匹配，服务端返回 `conflict`（Theirs 为服务端当前状态）。**MVP 已知限制**：前端当前没有撤回冲突的三方合并路径（撤回操作提交时 `changes: []`，outbox.command 无 base_snapshot/patch，冲突中心无法展开/重推），撤回冲突条目保留在 outbox 且计入冲突数；该路径待后续补实现。
 
-撤回、用户修改、AI 修改和冲突合并最终都走同一条业务规则管线。
+撤回、用户修改、AI 修改和冲突合并（成功写入时）最终都走同一条业务规则管线。
 
 ### 6.6 批量定价
 

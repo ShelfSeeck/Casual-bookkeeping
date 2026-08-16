@@ -80,7 +80,7 @@
 - 服务端在幂等检查之后、changes 循环之前把撤回意图展开成反向 changes，再走普通写入管线（`docs/data-model.md` §6.5）：按 `operation_changes.change_id` 升序，每条 change 取 `before_json` 作为 `fields`、`after_version` 作为 `base_version`。
 - create 的撤回仅支持工单，展开为等价软删（`fields.deleted_at = 当前时间`）；其他实体的 create 撤回不支持。
 - 展开前校验目标：目标不存在或不属于当前账户 → `revert_target_not_found`；目标本身是撤回操作、已被其他撤回指向、或含不支持的实体 create 变更 → `revert_target_invalid`。校验失败为单条 `rejected`（变更级 errors）。
-- 展开后的反向 changes 走普通版本校验：目标记录在服务端已被再次修改时返回 `conflict`（Theirs 为服务端当前状态），由前端三方对比处理。
+- 展开后的反向 changes 走普通版本校验：目标记录在服务端已被再次修改时返回 `conflict`（Theirs 为服务端当前状态）。**MVP 已知限制**：前端当前没有撤回冲突的三方合并路径（撤回操作提交时 `changes: []`，outbox.command 无 base_snapshot/patch，冲突中心无法展开/重推），撤回冲突条目保留在 outbox 且计入冲突数；该路径待后续补实现。
 
 批量上限：单次请求最多 500 条操作、请求体不超过 1MB；超出返回 400 `invalid_request`，由客户端拆批重发（见 §5）。
 
