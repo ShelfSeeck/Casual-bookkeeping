@@ -7,8 +7,17 @@ import { getActiveAccount } from '../../services/apiClient'
 import { getOrCreateDeviceId } from '../../db/device'
 import { applyTheme, getThemePreference, type ThemePreference } from '../../utils/theme'
 import type { ServiceCategoryUi } from '../../types/ui'
+import ConflictCenter from './ConflictCenter.vue'
 
-type SubPageKey = 'main' | 'appearance' | 'customers' | 'customer_new' | 'categories' | 'category_new' | 'sync'
+type SubPageKey =
+  | 'main'
+  | 'appearance'
+  | 'customers'
+  | 'customer_new'
+  | 'categories'
+  | 'category_new'
+  | 'sync'
+  | 'conflicts'
 
 const currentSubPage = ref<SubPageKey>('main')
 
@@ -211,6 +220,17 @@ async function runRetryRejected() {
   }
 }
 
+// ==================== 4. 冲突解决中心 ====================
+const conflictCount = computed(() => appState.conflictEntries.value.length)
+
+function openConflictCenter() {
+  if (conflictCount.value === 0) {
+    showFailToast('暂无冲突')
+    return
+  }
+  currentSubPage.value = 'conflicts'
+}
+
 onMounted(async () => {
   void loadSyncInfo()
   activePhone.value = (await getActiveAccount()) ?? ''
@@ -331,6 +351,39 @@ onMounted(async () => {
               </div>
               <div class="md3-list-item-trailing">
                 <span class="md3-badge-success">{{ syncCounts.pending > 0 || syncCounts.conflict > 0 || syncCounts.rejected > 0 ? '待同步' : '已同步' }}</span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
+              </div>
+            </button>
+
+            <div class="md3-list-divider" aria-hidden="true"></div>
+
+            <button
+              type="button"
+              class="md3-list-item cb-pressable"
+              aria-label="进入冲突解决中心"
+              @click="openConflictCenter"
+            >
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3v12"></path>
+                  <path d="M5.6 5.6l8.4 8.4"></path>
+                  <path d="M18.4 5.6l-8.4 8.4"></path>
+                  <circle cx="12" cy="18" r="1"></circle>
+                </svg>
+              </div>
+              <div class="md3-list-item-content">
+                <span class="md3-list-item-headline">冲突解决中心</span>
+                <span class="md3-list-item-supporting">逐字段显式决策后重新提交同步</span>
+              </div>
+              <div class="md3-list-item-trailing">
+                <span
+                  class="cb-conflict-badge"
+                  :class="{ 'cb-conflict-badge--zero': conflictCount === 0 }"
+                >
+                  {{ conflictCount }}
+                </span>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M9 18l6-6-6-6"/>
                 </svg>
@@ -928,6 +981,14 @@ onMounted(async () => {
         </button>
       </main>
     </div>
+
+    <!-- ====================================================================
+         页面 7：冲突解决中心独立页（推入式子页面）
+         ==================================================================== -->
+    <ConflictCenter
+      v-else-if="currentSubPage === 'conflicts'"
+      @back="currentSubPage = 'main'"
+    />
   </div>
 </template>
 
@@ -1149,6 +1210,28 @@ onMounted(async () => {
   font-weight: 700;
   padding: 3px 8px;
   border-radius: var(--md-sys-shape-corner-full);
+}
+
+.cb-conflict-badge {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cb-status-danger-bg);
+  color: var(--cb-status-danger-text);
+  font-family: var(--cb-font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 800;
+  border-radius: var(--md-sys-shape-corner-full);
+  box-sizing: border-box;
+}
+
+.cb-conflict-badge--zero {
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-outline);
 }
 
 .md3-mono-text {
