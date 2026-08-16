@@ -223,7 +223,13 @@ async function runRetryRejected() {
 // ==================== 4. 冲突解决中心 ====================
 const conflictCount = computed(() => appState.conflictEntries.value.length)
 
-function openConflictCenter() {
+async function openConflictCenter() {
+  try {
+    await appState.reload()
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+    return
+  }
   if (conflictCount.value === 0) {
     showFailToast('暂无冲突')
     return
