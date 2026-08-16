@@ -14,8 +14,8 @@
 ## 2. 核心原则
 
 1. **每轮先 Push、后 Pull**：先把本地待确认操作交给服务端检查版本，再拉取所有变更。
-2. **outbox 未清空不 Pull**：只要 outbox 里还有 `pending` / `conflict` / `rejected` 条目，这一轮只 Push、不 Pull（见 §6）。
-3. **先本地后同步**：本地写入立即生效进本地业务表；服务端确认才是最终权威。未决修改（尚未被服务端确认的本地更改）不因同步丢失——靠“outbox 未清空不 Pull”保证 Pull 不会覆盖它们；conflict 期间业务表保留 Ours，解决后由 Pull 收敛。冲突材料（Base / Ours / Theirs）只在 outbox，不进入业务表。
+2. **存在 pending / sending 不 Pull**：只要 outbox 里还有 `pending` / `sending` 条目，这一轮只 Push、不 Pull；仅剩 `conflict` / `rejected` 时允许 Pull（见 §6）。
+3. **先本地后同步**：本地写入立即生效进本地业务表；服务端确认才是最终权威。未决修改（尚未被服务端确认的本地更改）不因同步丢失——靠“存在 pending / sending 不 Pull”保证 Pull 不会覆盖它们；conflict / rejected 期间业务表可被 Pull 结果快照覆盖，冲突材料（Base / Ours / Theirs）只在 outbox，不进入业务表。
 4. **Pull 应用的是结果快照，不是重放 patch**：客户端不需要理解每种 operation 的语义，只把记录的最终快照写进去（delete/restore 也只是带软删标记的快照）。
 5. **幂等按 `operation_id`**：网络重试不重复写业务表。
 6. **冲突的具体内容由前端算**：服务端只给“当前状态”（Theirs），前端用 Base / Ours / Theirs 三方对比出差异。
@@ -200,12 +200,12 @@ GET /sync/bootstrap?cursor=...
 
 ```text
 1. Push 全部 outbox（保序，逐条结果）
-2. 若某条 conflict → 停下，进三方对比（§6.4）；用户解决后生成新合并操作重新 Push
-3. 直到 outbox 全部 accepted（清空）
-4. 最后统一 Pull：拉 applied_seq 之后所有变更，一次性收敛业务表 + 写 operations 镜像 + 推进 applied_server_seq
+2. Push 后仍有 pending / sending（如网络错误回退、拆批未清）→ 本轮只 Push，不 Pull
+3. 若某条 conflict → 停下，进三方对比（§7）；用户解决后生成新合并操作重新 Push
+4. 仅剩 conflict / rejected 或 outbox 清空时 → 统一 Pull：拉 applied_seq 之后所有变更，一次性收敛业务表 + 写 operations 镜像 + 推进 applied_server_seq
 ```
 
-**outbox 未清空不 Pull**：只要还有 `pending` / `conflict` / `rejected`，这一轮只 Push。理由：Pull 应用的是服务端结果快照，若本地还有未决修改，覆盖会让未决修改丢失（见 §8 单记录 gate）。
+**存在 pending / sending 不 Pull**：只要还有 `pending` / `sending`，这一轮只 Push。仅剩 `conflict` / `rejected` 时允许 Pull。理由：Pull 应用的是服务端结果快照，若本地还有未推送成功的修改，覆盖会让未决修改丢失；conflict / rejected 的 Base / Ours / Theirs 材料只存在 outbox，不进入业务表，因此业务表可被 Pull 结果快照覆盖（见 §8 单记录 gate）。
 
 ## 7. 冲突处理
 

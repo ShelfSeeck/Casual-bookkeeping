@@ -131,6 +131,7 @@ rejected 响应结构（变更级，一条操作可带多条）：
 | error_code | 触发 |
 | --- | --- |
 | `invalid_batch_input` | 批量定价 targets 为空，或每条 target 未提供 `quantity` / `unit_price_cents` 任一修改项 |
+| `record_gated` | 单记录 gate：记录在 outbox 有 conflict/rejected 未决条目时禁止再写（docs/sync-protocol.md §8） |
 
 ## 5. 前端映射与展示
 
@@ -145,6 +146,7 @@ rejected 响应结构（变更级，一条操作可带多条）：
 | `revert_target_not_found` | 未找到可撤回的操作 | 后端 rejected（§4.2）+ 前端本地撤回入口守卫 |
 | `revert_target_invalid` | 该操作不能撤回（可能已被撤回） | 后端 rejected（§4.2）+ 前端本地撤回入口守卫 |
 | `invalid_batch_input` | 请至少选择一条工单并填写一个修改项 | 前端本地校验（§4.4） |
+| `record_gated` | 该记录有未解决的冲突，请先到冲突解决中心处理 | 前端本地校验（§4.4） |
 
 ## 6. 维护规则
 
