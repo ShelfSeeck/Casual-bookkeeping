@@ -125,15 +125,21 @@ describe('stripWireMetaFields', () => {
       updated_at: '2026-08-08T00:00:00Z',
       created_at: '2026-08-08T00:00:00Z',
       account_phone: '13800000000',
+      work_order_id: 1,
+      mapping_id: 2,
+      service_category_id: 3,
+      customer_id: 9,
       quantity: 9,
       unit: '件',
     }
     const stripped = stripWireMetaFields(record)
 
-    expect(stripped).toEqual({ quantity: 9, unit: '件' })
+    // 内部主键列剔除；customer_id 是业务身份，保留
+    expect(stripped).toEqual({ customer_id: 9, quantity: 9, unit: '件' })
     // 不修改入参
     expect(record.row_version).toBe(5)
     expect(record).toHaveProperty('sync_id')
+    expect(record).toHaveProperty('work_order_id')
   })
 
   it('WIRE_META_FIELDS 为精确字面量', () => {
@@ -143,6 +149,9 @@ describe('stripWireMetaFields', () => {
       'created_at',
       'account_phone',
       'sync_id',
+      'work_order_id',
+      'mapping_id',
+      'service_category_id',
     ])
   })
 })

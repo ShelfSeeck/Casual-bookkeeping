@@ -224,6 +224,8 @@ class AppState {
     )
 
     const uiOrders: WorkOrderUi[] = []
+    // reload 前同 syncId 的旧元素：自动 reload 不清空已加载的 history（只保留该字段）
+    const previousBySyncId = new Map(this.workOrders.map((o) => [o.syncId, o]))
     for (const o of orders) {
       const st = await getRecordSyncStatus(db, o.syncId)
       uiOrders.push({
@@ -243,7 +245,7 @@ class AppState {
         isCompleted: o.isCompleted,
         createdAt: o.createdAt,
         updatedAt: o.updatedAt,
-        history: [],
+        history: previousBySyncId.get(o.syncId)?.history ?? [],
       })
     }
     this.workOrders.splice(0, this.workOrders.length, ...uiOrders)
@@ -949,6 +951,10 @@ function operationSummary(operationType: string): string {
   return map[operationType] ?? operationType
 }
 
+/** 摘要展示时排除的字段：账本元字段 + 软删标记（deleted_at/archived_at 只表示删除状态，
+ *  不作为“修改了哪些字段”展示）。只用于摘要，不加入冲突 strip 集合。 */
+const SUMMARY_EXCLUDED_FIELDS = new Set<string>([...WIRE_META_FIELDS, 'deleted_at', 'archived_at'])
+
 /** 从 Pull changes 里提取 changedFieldsJson 的字段名（snake_case 原样）。 */
 function changedFieldNames(changes: unknown): string[] {
   if (!Array.isArray(changes)) return []
@@ -959,8 +965,7 @@ function changedFieldNames(changes: unknown): string[] {
     if (raw === null || raw === undefined) continue
     const parsed = normalizeFieldNames(raw)
     for (const name of parsed) {
-      const meta = WIRE_META_FIELDS as readonly string[]
-      if (!meta.includes(name) && !names.includes(name)) names.push(name)
+      if (!SUMMARY_EXCLUDED_FIELDS.has(name) && !names.includes(name)) names.push(name)
     }
   }
   return names

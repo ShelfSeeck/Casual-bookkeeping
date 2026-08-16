@@ -11,9 +11,9 @@ import {
 } from './conflictResolver'
 
 // SyncManager：同步循环（docs/sync-protocol.md §3.3 / §6 / §7 / §8 / §9 / §10）
-// 每轮：Push 全部 outbox（保序、逐条结果）→ outbox 全部 accepted 后 Pull → 清理历史。
+// 每轮：Push 全部 outbox（保序、逐条结果）→ 无 pending/sending 后 Pull → 清理历史。
 // 约束：
-// - outbox 未清空（含 conflict / rejected）不 Pull
+// - 存在 pending / sending 不 Pull；仅剩 conflict / rejected 允许 Pull（材料保留在 outbox）
 // - 同步循环单飞：并发调用只跑一轮
 // - Pull 应用用 put（按 operationId 幂等覆盖），不跳过自己已 push 的操作
 // - conflict / rejected 不自动重试（等用户 resolveConflict）
@@ -195,7 +195,9 @@ export class SyncManager {
         )
       }
       for (const o of data.workOrders) {
-        await this.db.workOrders.put(toCamelRecord(o as Record<string, unknown>) as never)
+        await this.db.workOrders.put(
+          normalizeWorkOrder(toCamelRecord(o as Record<string, unknown>)) as never,
+        )
       }
       for (const m of data.customerCodeMappings) {
         await this.db.customerCodeMappings.put(toCamelRecord(m as Record<string, unknown>) as never)
@@ -378,9 +380,11 @@ export class SyncManager {
       }
     }
 
-    // 2. outbox 全部 accepted（清空）后才 Pull；同步成功后清理历史
-    const remaining = await this.db.outbox.count()
-    if (remaining === 0) {
+    // 2. 仍存在 pending / sending（未决待推）不 Pull；
+    //    仅剩 conflict / rejected 时允许 Pull：材料保留在 outbox，业务表可被 Pull 快照覆盖。
+    const inFlight = await this.db.outbox
+      .where('status').anyOf('pending', 'sending').count()
+    if (inFlight === 0) {
       await this.pullAll()
       await this.pruneLocalHistory()
     }
@@ -611,7 +615,7 @@ export class SyncManager {
     record: Record<string, unknown>,
   ): Promise<void> {
     if (entityType === 'work_order') {
-      await this.db.workOrders.put(record as never)
+      await this.db.workOrders.put(normalizeWorkOrder(record) as never)
     } else if (entityType === 'customer') {
       await this.db.customers.put(record as never)
     } else if (entityType === 'service_category') {
@@ -696,6 +700,13 @@ function toCamelRecord(row: Record<string, unknown>): Record<string, unknown> {
     out[snakeToCamel(key)] = value
   }
   return out
+}
+
+/** 工单布尔字段归一化：SQLite 快照里 is_completed 为 0/1，转 camelCase 后
+ *  boolean 化，避免 UI 把 1/0 当数字渲染；其余字段原样。 */
+function normalizeWorkOrder(record: Record<string, unknown>): Record<string, unknown> {
+  record.isCompleted = Boolean(record.isCompleted)
+  return record
 }
 
 /** 服务选项本地表 subcategoriesJson 是数组；后端快照里是 JSON 字符串，

@@ -17,7 +17,7 @@ import {
 
 // 被测缝：SyncManager 同步循环（docs/sync-protocol.md §3.3 / §6）
 // 验证：
-// 1. 每轮先 Push 后 Pull；outbox 未清空（含 conflict/rejected）不 Pull
+// 1. 每轮先 Push 后 Pull；存在 pending/sending 不 Pull，仅剩 conflict/rejected 仍 Pull
 // 2. Push accepted → 删 outbox、operations 标 synced
 // 3. conflict → 保留 outbox + 存 conflictJson；不自动重试
 // 4. Pull 应用 after_json + after_version、推进 appliedServerSeq
@@ -193,7 +193,7 @@ describe('SyncManager', () => {
     expect(await db.outbox.count()).toBe(0)
   })
 
-  it('conflict 时保留 outbox 并存 conflictJson，不 Pull', async () => {
+  it('conflict 时保留 outbox 并存 conflictJson，仅剩 conflict 仍 Pull', async () => {
     await commitOrder('sync-a')
     const realOpId = (await db.outbox.toArray())[0].operationId
     const pull = vi.fn(async () => ({ operations: [], hasMore: false }))
@@ -215,11 +215,11 @@ describe('SyncManager', () => {
     const entries = await db.outbox.toArray()
     expect(entries[0].status).toBe('conflict')
     expect(entries[0].conflictJson).toEqual({ theirs: { rowVersion: 5, quantity: 9 } })
-    // 不 Pull
-    expect(pull).not.toHaveBeenCalled()
+    // 仅剩 conflict（无 pending/sending）→ 仍 Pull 收敛业务表
+    expect(pull).toHaveBeenCalledTimes(1)
   })
 
-  it('rejected 时保留 outbox 并存错误，不 Pull', async () => {
+  it('rejected 时保留 outbox 并存错误，仅剩 rejected 仍 Pull', async () => {
     await commitOrder('sync-a')
     const realOpId = (await db.outbox.toArray())[0].operationId
     const pull = vi.fn(async () => ({ operations: [], hasMore: false }))
@@ -240,7 +240,46 @@ describe('SyncManager', () => {
     const entries = await db.outbox.toArray()
     expect(entries[0].status).toBe('rejected')
     expect(entries[0].lastErrorJson).toContain('invalid_quantity')
+    expect(pull).toHaveBeenCalledTimes(1)
+  })
+
+  it('仅剩 conflict 时 runOnce 仍调 pull（本地收敛不阻塞）', async () => {
+    await commitOrder('sync-a')
+    const realOpId = (await db.outbox.toArray())[0].operationId
+    const pull = vi.fn(async () => ({ operations: [], hasMore: false }))
+    const api = makeApi({
+      push: vi.fn(async () => ({
+        results: [
+          {
+            operationId: realOpId,
+            status: 'conflict' as const,
+            conflictJson: { theirs: { row_version: 5, quantity: 9 } },
+          },
+        ],
+      })),
+      pull,
+    })
+    await buildManager(api).sync()
+
+    expect(pull).toHaveBeenCalledTimes(1)
+    // conflict 材料仍保留在 outbox，供冲突中心继续处理
+    expect((await db.outbox.toArray())[0].status).toBe('conflict')
+  })
+
+  it('存在 pending 时不调 pull', async () => {
+    await commitOrder('sync-a')
+    const entry = (await db.outbox.toArray())[0]
+    const pull = vi.fn(async () => ({ operations: [], hasMore: false }))
+    const push = vi.fn(async () => {
+      // 模拟 Push 后该条目仍未获服务端确认（网络层只重试不回执），回到 pending
+      await db.outbox.update(entry.queueId, { status: 'pending' })
+      return { results: [] }
+    })
+    await buildManager(makeApi({ push, pull })).sync()
+
+    // 存在 pending 未决 → 不 Pull；条目保留在 outbox 等待下一轮
     expect(pull).not.toHaveBeenCalled()
+    expect((await db.outbox.get(entry.queueId))?.status).toBe('pending')
   })
 
   it('Pull 应用 after_json + after_version 到业务表并推进 appliedServerSeq', async () => {
@@ -289,6 +328,92 @@ describe('SyncManager', () => {
     expect(changesJson.entitySyncIds).toEqual(['sync-remote'])
     expect(changesJson.changes).toHaveLength(1)
     expect(changesJson.changes[0].afterJson).toBe(JSON.stringify(makeCustomer('sync-remote', 3)))
+  })
+
+  it('Pull 工单 after_json 的 is_completed 1 归一化为本地 boolean true', async () => {
+    const api = makeApi({
+      push: vi.fn(async () => ({ results: [] })),
+      pull: vi.fn(async () => ({
+        operations: [
+          {
+            serverSeq: 43,
+            operationId: 'op-remote-wo',
+            operationType: 'create_work_order',
+            actorType: 'user' as const,
+            deviceId: 'dev-remote',
+            revertsOperationId: null,
+            createdAt: '2026-08-08T00:00:00Z',
+            changes: [
+              {
+                entityType: 'work_order',
+                entitySyncId: 'sync-wo',
+                changeType: 'create',
+                afterJson: JSON.stringify({
+                  sync_id: 'sync-wo',
+                  account_phone: PHONE,
+                  work_order_date: '2026-08-08',
+                  customer_id: 1,
+                  customer_code: '001',
+                  customer_name: '张三',
+                  service_category: '洗水',
+                  service_item: '单洗',
+                  quantity: 5,
+                  unit: '件',
+                  unit_price_cents: null,
+                  is_completed: 1,
+                  row_version: 2,
+                  created_at: '2026-08-08T00:00:00Z',
+                  updated_at: '2026-08-08T00:00:00Z',
+                  deleted_at: null,
+                }),
+                afterVersion: 2,
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+      })),
+    })
+    await buildManager(api).sync()
+
+    const order = await db.workOrders.get('sync-wo')
+    expect(order?.isCompleted).toBe(true)
+    expect(order?.rowVersion).toBe(2)
+  })
+
+  it('bootstrap 工单快照 is_completed 1 归一化为本地 boolean true', async () => {
+    const bootstrap = vi.fn(async () => ({
+      snapshotSeq: 3,
+      hasMore: false,
+      customers: [],
+      serviceCategories: [],
+      workOrders: [
+        {
+          sync_id: 'sync-wo',
+          account_phone: PHONE,
+          work_order_date: '2026-08-08',
+          customer_id: 1,
+          customer_code: '001',
+          customer_name: '张三',
+          service_category: '洗水',
+          service_item: '单洗',
+          quantity: 5,
+          unit: '件',
+          unit_price_cents: null,
+          is_completed: 1,
+          row_version: 2,
+          created_at: '2026-08-08T00:00:00Z',
+          updated_at: '2026-08-08T00:00:00Z',
+          deleted_at: null,
+        },
+      ],
+      customerCodeMappings: [],
+    }))
+    const api = makeApi({ bootstrap })
+    await buildManager(api).bootstrap()
+
+    const order = await db.workOrders.get('sync-wo')
+    expect(order?.isCompleted).toBe(true)
   })
 
   it('Pull 拉回撤回操作时，operations 镜像保留 revertsOperationId（跨设备撤回关系）', async () => {

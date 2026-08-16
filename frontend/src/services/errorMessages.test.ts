@@ -54,6 +54,14 @@ describe('errorMessageMap', () => {
     }
   })
 
+  it('覆盖 docs/error-codes.md §4.4 全部前端本地校验码', () => {
+    const codes = ['invalid_batch_input', 'record_gated']
+    for (const code of codes) {
+      expect(errorMessageMap[code], `${code} 应有中文文案`).toBeTruthy()
+    }
+    expect(errorMessageMap.record_gated).toBe('该记录有未解决的冲突，请先到冲突解决中心处理')
+  })
+
   it('关键错误码使用 docs/error-codes.md 的示例文案', () => {
     expect(errorMessageMap.invalid_quantity).toBe('数量必须是正整数')
   })
@@ -75,6 +83,16 @@ describe('toErrorMessage', () => {
 
   it('未映射 Error 返回其 message', () => {
     expect(toErrorMessage(new Error('boom'))).toBe('boom')
+  })
+
+  it('message 形如 code:detail 时先按 code 查表，命中返回中文文案', () => {
+    expect(toErrorMessage(new Error('record_gated:sync-abc'))).toBe(
+      '该记录有未解决的冲突，请先到冲突解决中心处理',
+    )
+  })
+
+  it('message 形如 code:detail 但 code 未命中时回退原 message', () => {
+    expect(toErrorMessage(new Error('unknown_code:sync-abc'))).toBe('unknown_code:sync-abc')
   })
 
   it('null/undefined 返回通用兜底文案', () => {

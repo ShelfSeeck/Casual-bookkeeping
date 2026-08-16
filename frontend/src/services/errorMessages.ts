@@ -29,10 +29,9 @@ export const errorMessageMap: Record<string, string> = {
   invalid_subcategories: '小类格式不合法',
   subcategory_name_duplicate: '小类名称重复',
 
-  // §4.2 撤回 / 批量定价
+  // §4.2 撤回
   revert_target_not_found: '未找到可撤回的操作',
   revert_target_invalid: '该操作不能撤回（可能已被撤回）',
-  invalid_batch_input: '请至少选择一条工单并填写一个修改项',
 
   // §4.3 聊天域
   session_busy: '当前会话正在处理中，请稍候',
@@ -47,12 +46,28 @@ export const errorMessageMap: Record<string, string> = {
   model_quota_limit_error: '模型额度不足或频率受限',
   model_network_error: '模型服务网络异常',
   model_call_failed: '模型调用失败',
+
+  // §4.4 前端本地校验
+  invalid_batch_input: '请至少选择一条工单并填写一个修改项',
+  record_gated: '该记录有未解决的冲突，请先到冲突解决中心处理',
+}
+
+/** message 字符串解析：先整串查表；形如 `code:detail` 时再按 code 查表；都未命中回退原串。 */
+function resolveMessage(message: string): string {
+  const direct = errorMessageMap[message]
+  if (direct) return direct
+  const colon = message.indexOf(':')
+  if (colon > 0) {
+    const code = message.slice(0, colon)
+    if (errorMessageMap[code]) return errorMessageMap[code]
+  }
+  return message
 }
 
 /** 解析任意错误为可展示中文文案；未命中映射时回退 message / 原始字符串。 */
 export function toErrorMessage(err: unknown): string {
   if (err === null || err === undefined) return '操作失败，请稍后重试'
-  if (typeof err === 'string') return errorMessageMap[err] ?? err
+  if (typeof err === 'string') return resolveMessage(err)
 
   const obj = err as {
     errorCode?: unknown
@@ -67,7 +82,7 @@ export function toErrorMessage(err: unknown): string {
         : undefined
   if (code && errorMessageMap[code]) return errorMessageMap[code]
   if (typeof obj.message === 'string' && obj.message) {
-    return errorMessageMap[obj.message] ?? obj.message
+    return resolveMessage(obj.message)
   }
   return '操作失败，请稍后重试'
 }

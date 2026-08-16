@@ -26,13 +26,18 @@ export type FieldResolution = { source: 'ours' | 'theirs' } | { value: unknown }
 
 export type ConflictResolution = Record<string, FieldResolution>
 
-/** 冲突比对时排除的账本元字段（docs/data-model.md §5.3 的“非业务字段”）。 */
+/** 冲突比对时排除的账本元字段（docs/data-model.md §5.3 的“非业务字段”）。
+ *  work_order_id / mapping_id / service_category_id 是各表内部主键，不应进入冲突决策；
+ *  customer_id 是业务身份，保留。 */
 export const WIRE_META_FIELDS = [
   'row_version',
   'updated_at',
   'created_at',
   'account_phone',
   'sync_id',
+  'work_order_id',
+  'mapping_id',
+  'service_category_id',
 ] as const
 
 /** 浅拷贝剔除账本元字段，不修改入参（供冲突中心与合并 patch 使用）。 */
