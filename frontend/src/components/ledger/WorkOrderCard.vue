@@ -92,13 +92,13 @@ const emit = defineEmits<{
 }
 
 .cb-cust-code-pill {
-  background: var(--md-sys-color-on-surface);
-  color: var(--md-sys-color-surface);
+  color: var(--cb-accent);
   font-family: var(--cb-font-numeric);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 800;
-  padding: 2px 6px;
-  border-radius: var(--md-sys-shape-corner-extra-small);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 2px;
   flex-shrink: 0;
   line-height: 1.1;
 }

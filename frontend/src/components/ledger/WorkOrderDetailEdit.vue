@@ -865,23 +865,24 @@ async function handleRevert(operationId: string) {
 }
 
 .cb-placard-code-box {
-  padding: 3px 8px;
-  height: 24px;
-  background: var(--md-sys-color-on-surface);
-  color: var(--md-sys-color-surface);
+  padding: 0;
+  height: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--md-sys-shape-corner-extra-small);
   flex-shrink: 0;
 }
 
 .cb-placard-code-val {
   font-family: var(--cb-font-numeric);
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 800;
   letter-spacing: 0.5px;
   line-height: 1;
+  color: var(--cb-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 2px;
 }
 
 .cb-placard-names-col {
@@ -1365,13 +1366,13 @@ async function handleRevert(operationId: string) {
 }
 
 .cb-option-code-pill {
-  background: var(--md-sys-color-on-surface);
-  color: var(--md-sys-color-surface);
+  color: var(--cb-accent);
   font-family: var(--cb-font-numeric);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 800;
-  padding: 2px 6px;
-  border-radius: var(--md-sys-shape-corner-extra-small);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 2px;
 }
 
 .cb-option-name-title {
