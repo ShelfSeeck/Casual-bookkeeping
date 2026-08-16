@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 import LoginView from './components/LoginView.vue'
 import AppShell from './views/AppShell.vue'
 import { ApiClient } from './services/apiClient'
@@ -11,7 +11,13 @@ import { installSyncTriggers } from './services/syncTriggers'
 import { ChatApi } from './services/chatApi'
 import { appState } from './state/appState'
 
-const store = ref<AuthStore | null>(null)
+// shallowRef：不做深度 reactive 代理。AuthStore 内部持有 ref(state)；
+// ref() 会把类实例代理化，LoginView 里 this.state 被解包成普通对象，
+// login 中 this.state.value 的更新写不进真正的 ref（UI 永远停在登录页）。
+const store = shallowRef<AuthStore | null>(null)
+// 模板需要稳定追踪登录态；显式 computed 比模板链式解包（store.state.status）
+// 更明确，避免登录成功/失效时界面不切换。
+const isSignedIn = computed(() => store.value?.state.value.status === 'signed_in')
 let api: ApiClient | null = null
 let cleanupTriggers: (() => void) | null = null
 
@@ -27,7 +33,7 @@ onBeforeUnmount(() => {
 // 账户离开已登录状态（登出/会话失效）时立即移除同步触发器，
 // 避免旧账户的 syncManager 在新会话/登录页下继续被前台恢复、网络恢复触发。
 watch(
-  () => store.value?.state.status,
+  () => store.value?.state.value.status,
   (status) => {
     if (status !== 'signed_in') clearSyncTriggers()
   },
@@ -42,8 +48,8 @@ async function onAccountReady(phone: string) {
   const syncManager = new SyncManager(
     db,
     new HttpSyncApi(api),
-    { onStatusChange: () => {} },
-    { isCurrentAccount: () => store.value?.state.accountPhone === phone },
+    { onStatusChange: () => {}, onDataChange: () => appState.reload() },
+    { isCurrentAccount: () => store.value?.state.value.accountPhone === phone },
   )
   await appState.init(db, syncManager)
   // 启动 bootstrap/恢复同步：失败不阻塞本地页面（离线/首登无网时静默等待后续触发器）
@@ -54,8 +60,8 @@ async function onAccountReady(phone: string) {
   }
   // 异步初始化期间可能已登出/切换账户；只有当前仍是同一账户时才安装触发器。
   if (
-    store.value?.state.status !== 'signed_in' ||
-    store.value?.state.accountPhone !== phone
+    store.value?.state.value.status !== 'signed_in' ||
+    store.value?.state.value.accountPhone !== phone
   ) {
     return
   }
@@ -86,6 +92,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AppShell v-if="store && store.state.status === 'signed_in'" />
+  <AppShell v-if="store && isSignedIn" />
   <LoginView v-else-if="store" :store="store" />
 </template>

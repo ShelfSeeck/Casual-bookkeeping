@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { showFailToast, showSuccessToast } from 'vant'
-import type { AuthStorePublic } from '../services/authStore'
+import type { AuthStore } from '../services/authStore'
 
-const props = defineProps<{ store: AuthStorePublic }>()
+// 只依赖登录能力；App 用 shallowRef 传入原始 AuthStore 实例，避免深度代理。
+const props = defineProps<{ store: Pick<AuthStore, 'login'> }>()
 
 const phone = ref('')
 const password = ref('')

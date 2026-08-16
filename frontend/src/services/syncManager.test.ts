@@ -416,6 +416,29 @@ describe('SyncManager', () => {
     expect(order?.isCompleted).toBe(true)
   })
 
+
+  it('bootstrap 完成后回调 onDataChange（首次登录 UI 依赖它刷新列表）', async () => {
+    // 验证什么：首次登录 bootstrap 落库后必须通知上层 reload，否则页面停留在
+    // “请先维护基础档案”的旧列表（App.vue 用该回调触发 appState.reload）。
+    // 为什么：SyncManager 只写 IndexedDB，不持有 appState；回调是唯一受控通知口。
+    const bootstrap = vi.fn(async () => ({
+      snapshotSeq: 0,
+      hasMore: false,
+      customers: [],
+      serviceCategories: [],
+      workOrders: [],
+      customerCodeMappings: [],
+    }))
+    const api = makeApi({ bootstrap })
+    const onDataChange = vi.fn()
+    const manager = new SyncManager(db, api, {
+      onStatusChange: () => {},
+      onDataChange,
+    })
+    await manager.bootstrap()
+    expect(onDataChange).toHaveBeenCalledTimes(1)
+  })
+
   it('Pull 拉回撤回操作时，operations 镜像保留 revertsOperationId（跨设备撤回关系）', async () => {
     // 设备 B 的撤回操作经 Pull 下来，镜像应保留 revertsOperationId，历史页据此判断撤回关系
     const api = makeApi({

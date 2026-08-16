@@ -94,6 +94,9 @@ export interface SyncApi {
 
 export interface SyncStatusCallbacks {
   onStatusChange: (status: SyncStatus) => void
+  /** 本地数据被同步进程改写后（bootstrap 落库 / Pull 覆盖）通知上层刷新列表。
+   *  App.vue 用它触发 appState.reload；未传则保持旧行为（调用方自己轮询）。 */
+  onDataChange?: () => void | Promise<void>
 }
 
 export interface SyncStatus {
@@ -213,6 +216,8 @@ export class SyncManager {
     if (data.hasMore || data.snapshotSeq > 0) {
       await this.pullAll()
     }
+    // 首次登录场景：本地库刚被整包覆盖，必须通知上层刷新 UI 列表
+    await this.callbacks.onDataChange?.()
   }
 
   /**
