@@ -28,7 +28,7 @@ import { ChatApi, type ChatSession, type ChatSseEvent } from '../services/chatAp
 import { buildAiOperationFromDraft } from '../services/chatApproval'
 import { newId } from '../utils/id'
 import { toErrorMessage } from '../services/errorMessages'
-import { showFailToast } from 'vant'
+import { showFailToast, showSuccessToast } from 'vant'
 
 // appState：正式前端的全局视图状态。
 // 数据来自真实 Dexie 业务库 + businessCommands / SyncManager / syncStatus，
@@ -505,17 +505,13 @@ class AppState {
     }
   }
 
-  /** 从历史面板撤回指定操作：成功后触发同步并弹即时撤回浮条。失败抛给调用方展示。 */
+  /** 从历史面板撤回指定操作：成功后只提示结果，不弹 UndoSnackbar（同一目标不可重复撤回，
+   *  撤销条会再次 revertOperation 被已撤回守卫抛 revert_target_invalid）。失败抛给调用方展示。 */
   async revertOrderOperation(operationId: string): Promise<void> {
     const db = this.db
     if (!db) throw new Error('业务库未打开')
     await revertOperation(db, operationId)
-    this.triggerUndo({
-      undoId: newId('undo'),
-      operationId,
-      message: '已提交撤回，待同步生效',
-      actionType: 'update',
-    })
+    showSuccessToast('撤回已提交，待同步生效')
     await this.reload()
     if (this.syncManager) {
       void this.syncManager.sync().then(() => this.reload())
