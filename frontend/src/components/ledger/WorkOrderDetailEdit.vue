@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { showFailToast, showSuccessToast } from 'vant'
 import type { WorkOrderUi } from '../../types/ui'
 import { appState } from '../../state/appState'
@@ -38,6 +38,25 @@ const showSubcategorySheet = ref(false)
 const showDatePickerSheet = ref(false)
 const customerSearch = ref('')
 const customDateInputRef = ref<HTMLInputElement | null>(null)
+
+// 历史轨迹始终从 appState.workOrders 当前元素读取：loadOrderHistory 或 reload 后
+// 即便旧 prop 对象已被替换，也能渲染到最新 history。
+const orderHistory = computed(() => {
+  const current = appState.workOrders.find((o) => o.orderId === props.order.orderId)
+  return current?.history ?? []
+})
+
+async function refreshHistory() {
+  try {
+    await appState.loadOrderHistory(props.order.syncId ?? props.order.orderId)
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  }
+}
+
+onMounted(() => {
+  void refreshHistory()
+})
 
 function triggerCustomDatePicker() {
   if (customDateInputRef.value) {
@@ -193,14 +212,37 @@ async function toggleComplete() {
   try {
     await appState.toggleComplete(props.order.orderId, !props.order.isCompleted)
     showSuccessToast(props.order.isCompleted ? '已标记为未完成' : '已标记为完成')
+    await refreshHistory()
   } catch (e) {
     showFailToast(toErrorMessage(e))
   }
 }
 
-// 删除工单（软删二期功能，暂未开放）
-function handleDelete() {
-  showFailToast('删除工单为二期功能，暂未开放')
+// 删除工单（软删，提交后由 UndoSnackbar 提供即时撤回）
+async function handleDelete() {
+  if (!confirm(`确定要删除【${props.order.customerDisplayName} - ${props.order.subcategoryName}】这张工单吗？`)) {
+    return
+  }
+  try {
+    await appState.deleteWorkOrder(props.order.syncId ?? props.order.orderId)
+    showSuccessToast('工单已删除')
+    emit('back')
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  }
+}
+
+// 撤回历史中的某次修改：本地列表不立即变，Push→Pull 后生效
+async function handleRevert(operationId: string) {
+  if (!confirm('确定要撤回这次修改吗？撤回提交后需等待同步生效。')) {
+    return
+  }
+  try {
+    await appState.revertOrderOperation(operationId)
+    await refreshHistory()
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  }
 }
 </script>
 
@@ -417,13 +459,32 @@ function handleDelete() {
       </button>
 
       <!-- 7. 修改轨迹追溯 -->
-      <div v-if="order.history && order.history.length > 0" class="cb-history-card">
+      <div class="cb-history-card">
         <div class="cb-history-title">修改轨迹追溯</div>
-        <div class="cb-history-list">
-          <div v-for="h in order.history" :key="h.operationId" class="cb-history-row">
-            <span class="cb-history-time cb-tabular-nums">{{ h.timestamp }}</span>
-            <span class="cb-history-summary">{{ h.summary }}</span>
-            <span class="cb-history-device">{{ h.device }}</span>
+        <div v-if="orderHistory.length === 0" class="cb-history-empty">
+          暂无历史记录
+        </div>
+        <div v-else class="cb-history-list">
+          <div v-for="h in orderHistory" :key="h.operationId" class="cb-history-row">
+            <div class="cb-history-row-main">
+              <span class="cb-history-time cb-tabular-nums">{{ h.timestamp }}</span>
+              <span class="cb-history-summary">{{ h.summary }}</span>
+              <span class="cb-history-meta">
+                {{ h.device ?? '本机' }} · {{ h.actorType === 'ai' ? 'AI' : '本人' }}
+              </span>
+            </div>
+            <button
+              v-if="h.canRevert"
+              type="button"
+              class="cb-history-revert-btn cb-pressable"
+              @click="handleRevert(h.operationId)"
+            >
+              撤回这次修改
+            </button>
+            <span v-else-if="h.operationType === 'revert_operation'" class="cb-history-revert-tag">
+              撤回记录
+            </span>
+            <span v-else class="cb-history-revert-tag">已撤回</span>
           </div>
         </div>
       </div>
@@ -1099,12 +1160,21 @@ function handleDelete() {
 }
 
 .cb-history-row {
-  padding: 8px 12px;
+  padding: 10px 12px;
   background: var(--md-sys-color-surface);
   border-radius: var(--md-sys-shape-corner-small);
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 10px;
   font-size: 12px;
+}
+
+.cb-history-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
 .cb-history-time {
@@ -1117,8 +1187,42 @@ function handleDelete() {
   color: var(--md-sys-color-on-surface);
 }
 
-.cb-history-device {
+.cb-history-meta {
   color: var(--md-sys-color-outline);
+}
+
+.cb-history-empty {
+  font-size: 13px;
+  color: var(--md-sys-color-outline);
+  padding: 8px 4px;
+}
+
+.cb-history-revert-btn {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--md-sys-color-primary-container);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--md-sys-color-on-primary-container);
+  cursor: pointer;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.cb-history-revert-btn:hover {
+  background: var(--cb-accent-hover);
+  color: var(--md-sys-color-on-primary);
+}
+
+.cb-history-revert-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--md-sys-color-outline);
+  background: var(--md-sys-color-surface-container);
+  padding: 4px 8px;
+  border-radius: var(--md-sys-shape-corner-full);
 }
 
 /* 底部滑出抽屉通用样式 (M3 Modal Bottom Sheet) */

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { showFailToast, showSuccessToast } from 'vant'
 import type { WorkOrderUi } from '../../types/ui'
 import { appState } from '../../state/appState'
+import { toErrorMessage } from '../../services/errorMessages'
 import {
   isAllowedDecimalKey,
   isAllowedIntegerKey,
@@ -26,15 +28,42 @@ const priceError = ref('')
 // 历史轨迹展示
 const showHistory = ref(false)
 
+// 历史轨迹始终从 appState.workOrders 当前元素读取：loadOrderHistory 或 reload 后
+// 即便旧 prop 对象已被替换，也能渲染到最新 history。
+const orderHistory = computed(() => {
+  const current = appState.workOrders.find((o) => o.orderId === props.order.orderId)
+  return current?.history ?? []
+})
+
+async function refreshHistory() {
+  try {
+    await appState.loadOrderHistory(props.order.syncId ?? props.order.orderId)
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  }
+}
+
+onMounted(() => {
+  void refreshHistory()
+})
+
+function toggleHistory() {
+  showHistory.value = !showHistory.value
+  if (showHistory.value) {
+    void refreshHistory()
+  }
+}
+
 watch(
-  () => props.order,
-  (newOrder) => {
-    editQtyStr.value = String(newOrder.quantity)
-    editPriceStr.value = newOrder.unitPriceCents != null ? (newOrder.unitPriceCents / 100).toFixed(2) : ''
+  () => props.order.orderId,
+  () => {
+    editQtyStr.value = String(props.order.quantity)
+    editPriceStr.value = props.order.unitPriceCents != null ? (props.order.unitPriceCents / 100).toFixed(2) : ''
     qtyError.value = ''
     priceError.value = ''
+    showHistory.value = false
+    void refreshHistory()
   },
-  { deep: true }
 )
 
 function onQtyKeydown(e: KeyboardEvent) {
@@ -87,10 +116,28 @@ function onPriceChange() {
   }
 }
 
-function handleDelete() {
-  if (confirm(`确定要删除【${props.order.customerDisplayName} - ${props.order.subcategoryName}】这张单吗？`)) {
-    appState.deleteWorkOrder(props.order.orderId)
+async function handleDelete() {
+  if (!confirm(`确定要删除【${props.order.customerDisplayName} - ${props.order.subcategoryName}】这张单吗？`)) {
+    return
+  }
+  try {
+    await appState.deleteWorkOrder(props.order.syncId ?? props.order.orderId)
+    showSuccessToast('工单已删除')
     emit('close')
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  }
+}
+
+async function handleRevert(operationId: string) {
+  if (!confirm('确定要撤回这次修改吗？撤回提交后需等待同步生效。')) {
+    return
+  }
+  try {
+    await appState.revertOrderOperation(operationId)
+    await refreshHistory()
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
   }
 }
 </script>
@@ -169,7 +216,7 @@ function handleDelete() {
           type="button"
           class="cb-action-pill cb-pressable"
           :aria-expanded="showHistory"
-          @click="showHistory = !showHistory"
+          @click="toggleHistory"
         >
           📜 {{ showHistory ? '收起历史' : '修改历史轨迹' }}
         </button>
@@ -186,16 +233,30 @@ function handleDelete() {
       <!-- 历史轨迹时间线展开 -->
       <div v-if="showHistory" class="cb-history-panel" aria-label="历史修改轨迹">
         <div class="cb-history-title">操作与修改轨迹</div>
-        <div v-if="!order.history || order.history.length === 0" class="cb-history-empty">
+        <div v-if="orderHistory.length === 0" class="cb-history-empty">
           暂无历史记录
         </div>
         <div v-else class="cb-history-list">
-          <div v-for="h in order.history" :key="h.operationId" class="cb-history-item">
+          <div v-for="h in orderHistory" :key="h.operationId" class="cb-history-item">
             <div class="cb-history-dot" aria-hidden="true"></div>
             <div class="cb-history-content">
               <div class="cb-history-summary">{{ h.summary }}</div>
-              <div class="cb-history-meta">{{ h.timestamp }} · {{ h.device }}</div>
+              <div class="cb-history-meta">
+                {{ h.timestamp }} · {{ h.device ?? '本机' }} · {{ h.actorType === 'ai' ? 'AI' : '本人' }}
+              </div>
             </div>
+            <button
+              v-if="h.canRevert"
+              type="button"
+              class="cb-history-revert-btn cb-pressable"
+              @click="handleRevert(h.operationId)"
+            >
+              撤回这次修改
+            </button>
+            <span v-else-if="h.operationType === 'revert_operation'" class="cb-history-revert-tag">
+              撤回记录
+            </span>
+            <span v-else class="cb-history-revert-tag">已撤回</span>
           </div>
         </div>
       </div>
@@ -459,5 +520,40 @@ function handleDelete() {
 .cb-history-meta {
   font-size: 11px;
   color: var(--md-sys-color-outline);
+}
+
+.cb-history-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.cb-history-revert-btn {
+  align-self: center;
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--md-sys-color-primary-container);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--md-sys-color-on-primary-container);
+  cursor: pointer;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.cb-history-revert-btn:hover {
+  background: var(--cb-accent-hover);
+  color: var(--md-sys-color-on-primary);
+}
+
+.cb-history-revert-tag {
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--md-sys-color-outline);
+  background: var(--md-sys-color-surface-container);
+  padding: 4px 8px;
+  border-radius: var(--md-sys-shape-corner-full);
 }
 </style>
