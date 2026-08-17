@@ -26,6 +26,7 @@ from pydantic_ai.tools import DeferredToolRequests
 
 from backend.main import app
 from backend.repositories.chat_turns import ChatTurnsRepository
+from backend.routers.chat import TurnRequest
 from backend.services import chat as chat_module
 from backend.services.chat import PendingApproval, PendingCall
 
@@ -117,6 +118,30 @@ class _BusyAgent:
         deps=None,
     ) -> _BusyRun:
         return _BusyRun(self.release)
+
+
+
+def test_turn_request_accepts_per_call_approval_decisions():
+    # 路由请求契约：一批确认按 tool_call_id 分别表达 approve/reject/regenerate。
+    body = TurnRequest.model_validate(
+        {
+            "approval_request_id": "ar-1",
+            "decisions": [
+                {"tool_call_id": "call-1", "decision": "approve"},
+                {
+                    "tool_call_id": "call-2",
+                    "decision": "regenerate",
+                    "reason": "数量应为 12",
+                },
+            ],
+        }
+    )
+    assert body.approval_request_id == "ar-1"
+    assert [item.decision for item in body.decisions or []] == [
+        "approve",
+        "regenerate",
+    ]
+    assert not hasattr(body, "approved")
 
 
 # ---------- 鉴权 ----------
@@ -362,8 +387,8 @@ def test_send_turn_when_busy_returns_409_json_before_sse(
     assert thread.is_alive() is False
 
 
-def test_approve_turn_missing_approved_returns_invalid_approval(client, seed_account):
-    # approve 模式缺 approved 字段 → invalid_approval 400（流开始前统一 JSON）
+def test_approve_turn_missing_decisions_returns_invalid_approval(client, seed_account):
+    # approve 模式缺 decisions 字段 → invalid_approval 400（流开始前统一 JSON）
     seed_account()
     headers = _login(client)
     sid = _create_session(client, headers)["session_id"]
@@ -386,7 +411,12 @@ def test_approve_turn_unknown_request_returns_approval_not_found(client, seed_ac
     resp = client.post(
         f"/chat/sessions/{sid}/turns",
         headers=headers,
-        json={"approval_request_id": "ar-000000000000", "approved": True},
+        json={
+            "approval_request_id": "ar-000000000000",
+            "decisions": [
+                {"tool_call_id": "call-1", "decision": "approve"}
+            ],
+        },
     )
     assert resp.status_code == 404
     assert resp.json()["error_code"] == "approval_not_found"

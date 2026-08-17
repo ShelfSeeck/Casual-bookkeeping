@@ -30,8 +30,13 @@ import {
 } from '../services/conflictResolver'
 import type { SyncManager } from '../services/syncManager'
 import type { Subcategory } from '../db/schema/business/serviceCategories'
-import { ChatApi, type ChatSession, type ChatSseEvent } from '../services/chatApi'
-import { buildAiOperationFromDraft } from '../services/chatApproval'
+import { ChatApi, type ChatSession, type ChatSseEvent, type ToolDecision } from '../services/chatApi'
+import {
+  buildAiBatchOperation,
+  prepareAiDraftBatch,
+  type AiDraftCall,
+  type PreparedAiDraft,
+} from '../services/chatApprovalBatch'
 import { newId } from '../utils/id'
 import { toErrorMessage } from '../services/errorMessages'
 import { showFailToast, showSuccessToast } from 'vant'
@@ -95,11 +100,23 @@ export interface ChatMessage {
   }
 }
 
+export type AiDraftDecisionAction = 'approve' | 'reject' | 'regenerate'
+
+export interface AiDraftDecisionState {
+  action: AiDraftDecisionAction
+  reasonCode: string
+  note: string
+}
+
 export interface PendingAiApproval {
   requestId: string
-  toolName: string
-  draft: unknown
-  summary: string
+  sessionId: string
+  turnId: string
+  calls: AiDraftCall[]
+  drafts: PreparedAiDraft[]
+  decisions: Record<string, AiDraftDecisionState>
+  localOperationId: string | null
+  resumeError: string | null
 }
 
 const WELCOME_MESSAGE: ChatMessage = {
@@ -159,6 +176,7 @@ class AppState {
     this.db = db
     this.syncManager = syncManager
     await this.reload()
+    await this.restorePendingAiApproval()
   }
 
   async reload(): Promise<void> {
@@ -824,14 +842,10 @@ class AppState {
     const now = new Date()
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     this.chatMessages.push({ id: `m_${Date.now()}`, sender: 'user', content: text, timestamp: time })
-    // 经 reactive 数组内的 proxy 更新内容；直接改局部原始对象不触发视图更新（Vue3 响应式陷阱）
     const assistantId = `m_resp_${Date.now()}`
-    this.chatMessages.push({
-      id: assistantId,
-      sender: 'assistant',
-      content: '',
-      timestamp: time,
-    })
+    this.chatMessages.push({ id: assistantId, sender: 'assistant', content: '', timestamp: time })
+    let approvalEvent: Extract<ChatSseEvent, { type: 'tool_confirm_request' }> | null = null
+    const turnId = newId('turn')
     try {
       if (!this.chatSessionId) {
         const session = await api.createSession(text.slice(0, 20))
@@ -840,37 +854,80 @@ class AppState {
       }
       await api.streamTurn(
         this.chatSessionId,
-        { turn_id: newId('turn'), message: text },
-        (e: ChatSseEvent) => {
-          if (e.type === 'text_delta') {
-            this.appendToMessage(assistantId, e.content)
-          } else if (e.type === 'tool_confirm_request') {
-            this.pendingApproval.value = {
-              requestId: e.request_id,
-              toolName: e.tool_name,
-              draft: e.draft,
-              summary: this.draftSummary(e.tool_name, e.draft),
-            }
-          } else if (e.type === 'done') {
+        { turn_id: turnId, message: text },
+        (event: ChatSseEvent) => {
+          if (event.type === 'text_delta') {
+            this.appendToMessage(assistantId, event.content)
+          } else if (event.type === 'tool_confirm_request') {
+            approvalEvent = event
+          } else if (event.type === 'done') {
             const msg = this.chatMessages.find((m) => m.id === assistantId)
             if (msg && msg.content === '') {
-              msg.content = e.error ? `出错：${e.error.error_code}` : '(无文本)'
+              msg.content = event.error ? `出错：${event.error.error_code}` : '(无文本)'
             }
           }
         },
       )
-    } catch (e) {
-      this.setMessageContent(assistantId, `请求失败：${(e as Error).message}`)
+      if (approvalEvent) await this.installAiApproval(turnId, approvalEvent)
+    } catch (error) {
+      this.setMessageContent(assistantId, `请求失败：${(error as Error).message}`)
     } finally {
       this.chatBusy.value = false
     }
   }
 
-  /** 用户确认/拒绝 AI 草案后继续流；确认时先本地落盘（走 MutationService → outbox → 同步）。 */
-  async resolveAiApproval(approved: boolean): Promise<void> {
+  setAiDraftDecision(
+    toolCallId: string,
+    action: AiDraftDecisionAction,
+    reasonCode = '',
+    note = '',
+  ): void {
+    const approval = this.pendingApproval.value
+    if (!approval || !approval.decisions[toolCallId]) return
+    approval.decisions[toolCallId] = { action, reasonCode, note }
+    approval.resumeError = null
+    this.persistPendingAiApproval()
+  }
+
+  /** 提交逐条审核结果：批准项先组成一个本地原子操作，随后续接 AI 工具回合。 */
+  async submitAiApproval(): Promise<void> {
+    const approval = this.pendingApproval.value
+    if (!approval) return
+    const decisions = this.buildAiToolDecisions(approval)
+    if (approval.localOperationId === null) {
+      const approvedIds = new Set(
+        decisions.filter((item) => item.decision === 'approve').map((item) => item.tool_call_id),
+      )
+      const approvedDrafts = approval.drafts.filter((draft) => approvedIds.has(draft.toolCallId))
+      if (approvedDrafts.length > 0) {
+        const db = this.db
+        if (!db) throw new Error('业务库未打开')
+        const input = buildAiBatchOperation(approval.turnId, approvedDrafts)
+        approval.localOperationId = await new MutationService(db).commit(input)
+        this.triggerUndo({
+          undoId: newId('undo'),
+          operationId: approval.localOperationId,
+          message: `AI 工单已保存（${approvedDrafts.length} 张）`,
+          actionType: 'update',
+        })
+        this.persistPendingAiApproval()
+        if (this.syncManager) void this.syncManager.sync().then(() => this.reload())
+      }
+    }
+    await this.resumeAiApproval(decisions)
+  }
+
+  /** 本地已经写入后续接失败：只重发工具决策，绝不再次写入工单。 */
+  async retryAiApproval(): Promise<void> {
+    const approval = this.pendingApproval.value
+    if (!approval) return
+    await this.resumeAiApproval(this.buildAiToolDecisions(approval))
+  }
+
+  private async resumeAiApproval(decisions: ToolDecision[]): Promise<void> {
     const api = this.chatApi
     const approval = this.pendingApproval.value
-    if (!api || !approval || !this.chatSessionId) return
+    if (!api || !approval || this.chatBusy.value) return
     this.chatBusy.value = true
     const assistantId = `m_appr_${Date.now()}`
     this.chatMessages.push({
@@ -879,51 +936,135 @@ class AppState {
       content: '',
       timestamp: new Date().toTimeString().slice(0, 5),
     })
+    let nextApproval: Extract<ChatSseEvent, { type: 'tool_confirm_request' }> | null = null
+    let doneError: string | null = null
     try {
-      if (approved) {
-        // draft 来自 Vue ref（reactive proxy），写 IndexedDB 前先转成 plain object
-        const plainDraft = JSON.parse(JSON.stringify(approval.draft))
-        await this.commitAiDraft(approval.toolName, plainDraft)
-      }
-      this.pendingApproval.value = null
       await api.approveTurn(
-        this.chatSessionId,
+        approval.sessionId,
         approval.requestId,
-        approved,
-        (e: ChatSseEvent) => {
-          if (e.type === 'text_delta') {
-            this.appendToMessage(assistantId, e.content)
-          } else if (e.type === 'done') {
-            const msg = this.chatMessages.find((m) => m.id === assistantId)
-            if (msg && msg.content === '') {
-              msg.content = e.error ? `出错：${e.error.error_code}` : approved ? '✅ 已确认写入' : '已拒绝'
-            }
+        decisions,
+        (event: ChatSseEvent) => {
+          if (event.type === 'text_delta') {
+            this.appendToMessage(assistantId, event.content)
+          } else if (event.type === 'tool_confirm_request') {
+            nextApproval = event
+          } else if (event.type === 'done' && event.error) {
+            doneError = event.error.error_code
           }
         },
       )
-    } catch (e) {
-      this.setMessageContent(assistantId, `确认处理失败：${(e as Error).message}`)
+      if (nextApproval) {
+        await this.installAiApproval(approval.turnId, nextApproval)
+        return
+      }
+      if (doneError) throw new Error(doneError)
+      const msg = this.chatMessages.find((item) => item.id === assistantId)
+      if (msg && msg.content === '') {
+        const approvedCount = decisions.filter((item) => item.decision === 'approve').length
+        msg.content = approvedCount > 0 ? `已保存 ${approvedCount} 张工单` : '审核结果已提交'
+      }
+      this.clearPendingAiApproval()
+    } catch (error) {
+      approval.resumeError = (error as Error).message
+      this.persistPendingAiApproval()
+      const saved = approval.localOperationId !== null
+      this.setMessageContent(
+        assistantId,
+        saved
+          ? `工单已经保存；AI 对话续接失败：${approval.resumeError}`
+          : `审核结果提交失败：${approval.resumeError}`,
+      )
     } finally {
-      this.pendingApproval.value = null
       this.chatBusy.value = false
     }
   }
 
-  private async commitAiDraft(toolName: string, draft: unknown): Promise<void> {
+  private buildAiToolDecisions(approval: PendingAiApproval): ToolDecision[] {
+    return approval.drafts.map((draft) => {
+      const state = approval.decisions[draft.toolCallId]
+      if (!state) throw new Error('ai_approval_decision_missing')
+      if (state.action === 'approve') {
+        return { tool_call_id: draft.toolCallId, decision: 'approve' as const }
+      }
+      const reason = [state.reasonCode, state.note.trim()].filter(Boolean).join('：')
+      if (!reason) throw new Error('ai_approval_reason_required')
+      if (state.action === 'regenerate' && !state.note.trim()) {
+        throw new Error('ai_regenerate_note_required')
+      }
+      if (state.reasonCode === '其他' && !state.note.trim()) {
+        throw new Error('ai_approval_other_note_required')
+      }
+      return { tool_call_id: draft.toolCallId, decision: state.action, reason }
+    })
+  }
+
+  private async installAiApproval(
+    turnId: string,
+    event: Extract<ChatSseEvent, { type: 'tool_confirm_request' }>,
+  ): Promise<void> {
     const db = this.db
     if (!db) throw new Error('业务库未打开')
-    const input = await buildAiOperationFromDraft(db, this.chatSessionId ?? '', toolName, draft)
-    if (!input) throw new Error('ai_draft_invalid')
-    const opId = await new MutationService(db).commit(input)
-    this.triggerUndo({
-      undoId: newId('undo'),
-      operationId: opId,
-      message: 'AI 修改已保存',
-      actionType: 'update',
-    })
-    if (this.syncManager) {
-      void this.syncManager.sync().then(() => this.reload())
+    const calls: AiDraftCall[] = event.calls.map((call) => ({
+      toolCallId: call.tool_call_id,
+      toolName: call.tool_name,
+      draft: call.draft,
+    }))
+    const drafts = await prepareAiDraftBatch(db, calls)
+    const decisions = Object.fromEntries(
+      drafts.map((draft) => [
+        draft.toolCallId,
+        { action: 'approve', reasonCode: '', note: '' } satisfies AiDraftDecisionState,
+      ]),
+    )
+    if (!this.chatSessionId) throw new Error('聊天会话不存在')
+    this.pendingApproval.value = {
+      requestId: event.request_id,
+      sessionId: this.chatSessionId,
+      turnId,
+      calls,
+      drafts,
+      decisions,
+      localOperationId: null,
+      resumeError: null,
     }
+    this.persistPendingAiApproval()
+  }
+
+  private aiApprovalStorageKey(): string | null {
+    return this.db ? `cb_ai_pending:${this.db.name}` : null
+  }
+
+  private persistPendingAiApproval(): void {
+    const key = this.aiApprovalStorageKey()
+    if (!key) return
+    const value = this.pendingApproval.value
+    if (value) localStorage.setItem(key, JSON.stringify(value))
+    else localStorage.removeItem(key)
+  }
+
+  private async restorePendingAiApproval(): Promise<void> {
+    const key = this.aiApprovalStorageKey()
+    const db = this.db
+    if (!key || !db) return
+    const raw = localStorage.getItem(key)
+    if (!raw) return
+    try {
+      const stored = JSON.parse(raw) as PendingAiApproval
+      if (!stored.requestId || !stored.sessionId || !stored.turnId || !Array.isArray(stored.calls)) throw new Error('invalid')
+      if (stored.localOperationId === null) {
+        stored.drafts = await prepareAiDraftBatch(db, stored.calls)
+      }
+      this.pendingApproval.value = stored
+      this.chatSessionId = stored.sessionId
+      this.isNewChat.value = false
+    } catch {
+      localStorage.removeItem(key)
+    }
+  }
+
+  private clearPendingAiApproval(): void {
+    this.pendingApproval.value = null
+    this.persistPendingAiApproval()
   }
 
   /** 追加消息内容：必须经 reactive 数组内的 proxy 修改，直接改局部原始对象不触发视图更新。 */
@@ -938,15 +1079,6 @@ class AppState {
     if (msg) msg.content = content
   }
 
-  private draftSummary(toolName: string, draft: unknown): string {
-    if (typeof draft !== 'object' || draft === null) return 'AI 生成了一条业务修改草案'
-    const d = draft as { fields?: Record<string, unknown> }
-    const f = d.fields ?? {}
-    if (toolName === 'create_work_order') {
-      return `新建工单：${f.customer_name ?? f.customer_code ?? ''} ${f.service_item ?? ''} ${f.quantity ?? ''}${f.unit ?? ''}`
-    }
-    return `修改工单：${Object.keys(f).join(', ')}`
-  }
 }
 
 function operationSummary(operationType: string): string {

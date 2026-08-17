@@ -15,6 +15,7 @@ import json
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from pydantic_ai import DeferredToolRequests, RunContext
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -263,48 +264,132 @@ async def test_query_service_categories_tool_returns_contract_fields(connection)
 
 
 @pytest.mark.asyncio
-async def test_write_draft_tools_return_ack_shape():
-    # 验证：两个写草案工具直接调用时只回执、不写库，返回 §4.3 的草案形状
+async def test_write_draft_tools_return_ack_without_database_write(connection):
+    # 验证：写草案只接受显式业务字段模型；create 不接收 sync_id，update 保留目标与版本。
     ctx = RunContext(
         deps=BusinessToolDeps(account_phone="13800000000", query=None),
         model=TestModel(call_tools=[]),
         usage=RunUsage(),
     )
-
-    create = await business_tools.create_work_order(
-        ctx, entity_sync_id=None, fields={"work_order_date": "2026-08-12"}
+    create_fields = business_tools.CreateWorkOrderDraftFields(
+        work_order_date="2026-08-12",
+        customer_id=1,
+        service_category="洗水",
+        service_item="单洗",
+        quantity=10,
+        unit="件",
+        unit_price_cents=None,
     )
+    create = await business_tools.create_work_order(ctx, fields=create_fields)
     assert create == {
         "status": "draft_acknowledged",
         "operation_type": "create_work_order",
-        "changes": [
-            {
-                "entity_type": "work_order",
-                "entity_sync_id": None,
-                "base_version": 0,
-                "fields": {"work_order_date": "2026-08-12"},
-            }
-        ],
+        "changes": [{
+            "entity_type": "work_order",
+            "base_version": 0,
+            "fields": create_fields.model_dump(exclude_unset=True),
+        }],
     }
 
+    update_fields = business_tools.UpdateWorkOrderDraftFields(quantity=12)
     update = await business_tools.update_work_order(
         ctx,
         entity_sync_id="sync-wo-1",
         base_version=4,
-        fields={"quantity": 12},
+        fields=update_fields,
     )
     assert update == {
         "status": "draft_acknowledged",
         "operation_type": "update_work_order",
-        "changes": [
-            {
-                "entity_type": "work_order",
-                "entity_sync_id": "sync-wo-1",
-                "base_version": 4,
-                "fields": {"quantity": 12},
-            }
-        ],
+        "changes": [{
+            "entity_type": "work_order",
+            "entity_sync_id": "sync-wo-1",
+            "base_version": 4,
+            "fields": {"quantity": 12},
+        }],
     }
+    assert connection.execute("SELECT COUNT(*) FROM work_orders").fetchone()[0] == 0
+
+
+def test_write_draft_models_forbid_unknown_and_meta_fields():
+    # 验证：模型不能塞入任何未声明字段，尤其不能控制同步、账户、版本、删除等元字段。
+    valid_create = {
+        "work_order_date": "2026-08-12",
+        "customer_id": 1,
+        "service_category": "洗水",
+        "service_item": None,
+        "quantity": 10,
+        "unit": "件",
+        "unit_price_cents": None,
+    }
+    forbidden = [
+        "sync_id", "entity_sync_id", "customer_code", "customer_name", "account_phone",
+        "work_order_id", "row_version", "created_at", "updated_at", "deleted_at",
+        "operation_id", "device_id", "source_turn_id",
+    ]
+    for field_name in forbidden:
+        with pytest.raises(ValidationError):
+            business_tools.CreateWorkOrderDraftFields(**valid_create, **{field_name: "x"})
+        with pytest.raises(ValidationError):
+            business_tools.UpdateWorkOrderDraftFields(quantity=12, **{field_name: "x"})
+
+
+
+def test_write_draft_customer_id_accepts_offline_negative_ids_and_create_completion_is_explicit():
+    # customer_id 的负值是离线创建客户的永久权威 ID；AI 草案不能误拒绝。
+    omitted = business_tools.CreateWorkOrderDraftFields(
+        work_order_date="2026-08-17",
+        customer_id=-123456,
+        service_category="洗水",
+        service_item=None,
+        quantity=1,
+        unit="件",
+    )
+    assert omitted.model_dump(exclude_unset=True).get("is_completed") is None
+
+    completed = business_tools.CreateWorkOrderDraftFields(
+        work_order_date="2026-08-17",
+        customer_id=-123456,
+        service_category="洗水",
+        service_item=None,
+        quantity=1,
+        unit="件",
+        is_completed=1,
+    )
+    assert completed.model_dump(exclude_unset=True)["is_completed"] == 1
+
+    update = business_tools.UpdateWorkOrderDraftFields(customer_id=-123456)
+    assert update.model_dump(exclude_unset=True) == {"customer_id": -123456}
+
+
+def test_update_draft_only_serializes_explicit_optional_fields():
+    # 未提价格/完成状态时不进入 patch；明确设为未定价或完成时才进入。
+    quantity_only = business_tools.UpdateWorkOrderDraftFields(quantity=12)
+    assert quantity_only.model_dump(exclude_unset=True) == {"quantity": 12}
+
+    explicit = business_tools.UpdateWorkOrderDraftFields(
+        unit_price_cents=None, is_completed=1
+    )
+    assert explicit.model_dump(exclude_unset=True) == {
+        "unit_price_cents": None,
+        "is_completed": 1,
+    }
+
+    with pytest.raises(ValidationError):
+        business_tools.UpdateWorkOrderDraftFields()
+
+def test_write_tool_json_schema_is_closed_and_create_has_no_entity_sync_id():
+    # 验证：真正暴露给模型的 Pydantic AI tool schema 是封闭字段集，而不是自由 dict。
+    schemas = {tool.name: tool.function_schema.json_schema for tool in build_tools(WRITE_TOOL_NAMES)}
+    create_schema = schemas["create_work_order"]
+    update_schema = schemas["update_work_order"]
+    assert set(create_schema["properties"]) == {"fields"}
+    assert set(update_schema["properties"]) == {"entity_sync_id", "base_version", "fields"}
+    assert create_schema["additionalProperties"] is False
+    assert update_schema["additionalProperties"] is False
+    assert create_schema["properties"]["fields"].get("additionalProperties") is not True
+    assert update_schema["properties"]["fields"].get("additionalProperties") is not True
+    assert update_schema["properties"]["base_version"]["exclusiveMinimum"] == 0
 
 
 # ---------- 写草案暂停与 approve 续跑 ----------
@@ -428,3 +513,153 @@ async def test_update_work_order_pauses_for_approval_then_runs_after_approval(
         assert connection.execute(
             "SELECT COUNT(*) FROM work_orders"
         ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_create_work_order_business_validator_runs_before_approval(connection):
+    # 真实 Pydantic AI 工具链：args_validator 能接收封闭模型，并在人工确认前校验业务引用。
+    customers = CustomersRepository(connection)
+    customers.apply_Write(
+        "13800000000", "sync-customer-1", {"canonical_name": "甲厂", "archived_at": None}, 0
+    )
+    customer_id = customers.get_BySyncId("13800000000", "sync-customer-1")["customer_id"]
+    CustomerCodeMappingsRepository(connection).apply_Write(
+        "13800000000",
+        "sync-mapping-1",
+        {
+            "customer_id": customer_id,
+            "customer_code": "001",
+            "customer_name": "甲",
+            "valid_from": "2026-01-01",
+            "valid_to": None,
+        },
+        0,
+    )
+    ServiceCategoriesRepository(connection).apply_Write(
+        "13800000000",
+        "sync-category-1",
+        {
+            "category_name": "洗水",
+            "subcategories_json": json.dumps(
+                [{"name": "单洗", "default_unit": "件", "is_active": True}],
+                ensure_ascii=False,
+            ),
+            "is_active": 1,
+        },
+        0,
+    )
+    cfg = ModelConfig(
+        model_name="deepseek-chat", base_url="https://api.deepseek.com", api_key="sk-x"
+    )
+    agent = build_Agent(cfg, allowed_tools=["create_work_order"])
+
+    async def stream_fn(messages, agent_info):
+        yield {
+            0: DeltaToolCall(
+                name="create_work_order",
+                json_args=json.dumps(
+                    {
+                        "fields": {
+                            "work_order_date": "2026-08-17",
+                            "customer_id": customer_id,
+                            "service_category": "洗水",
+                            "service_item": "单洗",
+                            "quantity": 10,
+                            "unit": "件",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                tool_call_id="call-create-1",
+            )
+        }
+
+    with agent.override(model=FunctionModel(stream_function=stream_fn)):
+        async with agent.run_stream_events(
+            "给甲厂录 10 件单洗",
+            deps=BusinessToolDeps("13800000000", _make_service(connection)),
+        ) as run:
+            async for _ in run:
+                pass
+
+    assert isinstance(run.result.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in run.result.output.approvals] == [
+        "call-create-1"
+    ]
+    assert connection.execute("SELECT COUNT(*) FROM work_orders").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_business_draft_is_retried_before_human_confirmation(connection):
+    # 无效客户草案先返回模型修正；用户只会看到修正后的 deferred call。
+    customers = CustomersRepository(connection)
+    customers.apply_Write(
+        "13800000000", "sync-customer-1", {"canonical_name": "甲厂", "archived_at": None}, 0
+    )
+    customer_id = customers.get_BySyncId("13800000000", "sync-customer-1")["customer_id"]
+    CustomerCodeMappingsRepository(connection).apply_Write(
+        "13800000000",
+        "sync-mapping-1",
+        {
+            "customer_id": customer_id,
+            "customer_code": "001",
+            "customer_name": "甲",
+            "valid_from": "2026-01-01",
+            "valid_to": None,
+        },
+        0,
+    )
+    ServiceCategoriesRepository(connection).apply_Write(
+        "13800000000",
+        "sync-category-1",
+        {
+            "category_name": "洗水",
+            "subcategories_json": json.dumps(
+                [{"name": "单洗", "default_unit": "件", "is_active": True}],
+                ensure_ascii=False,
+            ),
+            "is_active": 1,
+        },
+        0,
+    )
+    agent = build_Agent(
+        ModelConfig("deepseek-chat", "https://api.deepseek.com", "sk-x"),
+        allowed_tools=["create_work_order"],
+    )
+    model_calls = 0
+
+    async def stream_fn(messages, agent_info):
+        nonlocal model_calls
+        model_calls += 1
+        chosen_customer_id = 99999 if model_calls == 1 else customer_id
+        yield {
+            0: DeltaToolCall(
+                name="create_work_order",
+                json_args=json.dumps(
+                    {
+                        "fields": {
+                            "work_order_date": "2026-08-17",
+                            "customer_id": chosen_customer_id,
+                            "service_category": "洗水",
+                            "service_item": "单洗",
+                            "quantity": 10,
+                            "unit": "件",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                tool_call_id=f"call-{model_calls}",
+            )
+        }
+
+    with agent.override(model=FunctionModel(stream_function=stream_fn)):
+        async with agent.run_stream_events(
+            "录单",
+            deps=BusinessToolDeps("13800000000", _make_service(connection)),
+        ) as run:
+            async for _ in run:
+                pass
+
+    assert model_calls == 2
+    assert isinstance(run.result.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in run.result.output.approvals] == ["call-2"]

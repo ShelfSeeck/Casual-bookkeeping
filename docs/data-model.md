@@ -525,6 +525,8 @@ pending → sending
 }
 ```
 
+AI 草案确认可以一次包含最多 20 条工单。用户逐条选择批准、拒绝或重新生成；批准项由前端合并为同一个 `operation_id`，因此正式提交仍遵循“一次动作对应一次原子操作”，任一 change 冲突或 rejected 时批准项整批不写入。模型不控制 create 的 `entity_sync_id`，也不直接填写客户编号/名称快照。
+
 AI 操作草案示例：
 
 ```json

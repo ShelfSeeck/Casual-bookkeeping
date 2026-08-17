@@ -47,6 +47,17 @@ class ServiceCategoriesRepository(BusinessRepository):
         # UNIQUE(account_phone, category_name) 兜底：同账户大类重名
         return "category_name_duplicate"
 
+    def get_ByCategoryName(
+        self, account_phone: str, category_name: str
+    ) -> dict[str, Any] | None:
+        """按大类名称读取配置；供草案预校验使用。"""
+        row = self.connection.execute(
+            "SELECT * FROM service_categories"
+            " WHERE account_phone = ? AND category_name = ?",
+            (account_phone, category_name),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
     def list_Categories(
         self,
         account_phone: str,

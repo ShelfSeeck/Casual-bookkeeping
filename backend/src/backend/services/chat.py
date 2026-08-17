@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolApproved, ToolDenied
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     PartDeltaEvent,
@@ -32,6 +32,8 @@ from pydantic_ai.tools import DeferredToolRequests
 
 from backend.errors import (
     ERROR_APPROVAL_NOT_FOUND,
+    ERROR_DRAFT_VALIDATION_FAILED,
+    ERROR_INVALID_APPROVAL,
     ERROR_MODEL_CALL_FAILED,
     ERROR_MODEL_CONFIG_MISSING,
     ERROR_SESSION_BUSY,
@@ -41,7 +43,7 @@ from backend.errors import (
     AuthError,
 )
 from backend.services.agent import BusinessToolDeps, build_Agent
-from backend.services.business_query import BusinessQueryService
+from backend.services.business_query import BusinessQueryService, DraftValidationError
 from backend.services.model_config import ModelConfigError
 from backend.tools import registry as tools_registry
 
@@ -51,6 +53,7 @@ _PENDING: dict[str, "PendingApproval"] = {}
 
 # 恢复扫描上限：与 GET /turns 的分页上限对齐，避免无界扫库。
 _RECOVERY_SCAN_LIMIT = 500
+_MAX_PENDING_WRITE_CALLS = 20
 
 
 @dataclass
@@ -124,17 +127,30 @@ def _make_PendingApproval(
     session_id: str,
     turn_id: str,
     requests: DeferredToolRequests,
+    business_query: BusinessQueryService | None = None,
+    request_id: str | None = None,
 ) -> PendingApproval:
-    request_id = _new_ApprovalRequestId()
-    calls = [
-        PendingCall(
-            request_id=request_id,
-            tool_call_id=call.tool_call_id,
-            tool_name=call.tool_name,
-            args=_parse_CallArgs(call.args),
+    if len(requests.approvals) > _MAX_PENDING_WRITE_CALLS:
+        raise DraftValidationError(
+            "draft_batch_too_large",
+            f"一次最多生成 {_MAX_PENDING_WRITE_CALLS} 条写草案，请拆分批次",
         )
-        for call in requests.approvals
-    ]
+    request_id = request_id or _new_ApprovalRequestId()
+    calls: list[PendingCall] = []
+    for call in requests.approvals:
+        args = _parse_CallArgs(call.args)
+        if business_query is not None:
+            args = business_query.prepare_WorkOrderDraft(
+                account_phone, call.tool_name, args
+            )
+        calls.append(
+            PendingCall(
+                request_id=request_id,
+                tool_call_id=call.tool_call_id,
+                tool_name=call.tool_name,
+                args=args,
+            )
+        )
     return PendingApproval(
         request_id=request_id,
         account_phone=account_phone,
@@ -145,16 +161,55 @@ def _make_PendingApproval(
     )
 
 
-def _tool_confirm_event(
-    pending: PendingApproval, call: PendingCall
-) -> dict[str, Any]:
+def _tool_confirm_event(pending: PendingApproval) -> dict[str, Any]:
+    """整批确认事件：一个 request_id 携带本轮全部待确认调用。"""
     return {
         "type": "tool_confirm_request",
         "request_id": pending.request_id,
-        "tool_call_id": call.tool_call_id,
-        "tool_name": call.tool_name,
-        "draft": call.args,
+        "calls": [
+            {
+                "tool_call_id": call.tool_call_id,
+                "tool_name": call.tool_name,
+                "draft": call.args,
+            }
+            for call in pending.calls
+        ],
     }
+
+
+def _build_ApprovalValues(
+    pending: PendingApproval, decisions: list[dict[str, Any]]
+) -> dict[str, ToolApproved | ToolDenied]:
+    """校验逐调用决策，并转换为 Pydantic AI 的批准/拒绝结果。"""
+    expected_ids = {call.tool_call_id for call in pending.calls}
+    seen: set[str] = set()
+    values: dict[str, ToolApproved | ToolDenied] = {}
+    for item in decisions:
+        call_id = item.get("tool_call_id")
+        decision = item.get("decision")
+        reason = item.get("reason")
+        if not isinstance(call_id, str) or call_id in seen or call_id not in expected_ids:
+            raise AuthError(ERROR_INVALID_APPROVAL, "确认决策包含未知或重复的 tool_call_id", 400)
+        seen.add(call_id)
+        if decision == "approve":
+            values[call_id] = ToolApproved()
+            continue
+        if decision not in {"reject", "regenerate"}:
+            raise AuthError(ERROR_INVALID_APPROVAL, "确认决策类型无效", 400)
+        if not isinstance(reason, str) or not reason.strip():
+            raise AuthError(ERROR_INVALID_APPROVAL, "拒绝或重新生成必须填写原因", 400)
+        reason = reason.strip()
+        if decision == "reject":
+            message = f"用户拒绝此草案，不要重新生成。原因：{reason}"
+        else:
+            message = (
+                "用户要求重新生成此草案。请按原因修正后重新提交新的草案供确认。"
+                f"原因：{reason}"
+            )
+        values[call_id] = ToolDenied(message)
+    if seen != expected_ids:
+        raise AuthError(ERROR_INVALID_APPROVAL, "必须为每个待确认工具调用提供决策", 400)
+    return values
 
 
 class ChatService:
@@ -229,7 +284,7 @@ class ChatService:
                 if isinstance(output, DeferredToolRequests) and output.approvals:
                     # 写草案暂停：部分落库 + tool_confirm_request，不发 done。
                     pending = _make_PendingApproval(
-                        account_phone, session_id, turn_id, output
+                        account_phone, session_id, turn_id, output, self._business_query
                     )
                     _PENDING[account_phone] = pending
                     try:
@@ -240,8 +295,7 @@ class ChatService:
                                 run.result.all_messages()
                             ).decode(),
                         )
-                        for call in pending.calls:
-                            yield _tool_confirm_event(pending, call)
+                        yield _tool_confirm_event(pending)
                     except Exception:
                         # 落库/发事件失败不能留半截 pending。
                         _PENDING.pop(account_phone, None)
@@ -252,6 +306,16 @@ class ChatService:
                         turn_id, session_id, run.result.new_messages_json().decode()
                     )
                     yield {"type": "done", "turn_id": turn_id, "error": None}
+            except DraftValidationError as exc:
+                yield {
+                    "type": "done",
+                    "turn_id": turn_id,
+                    "error": {
+                        "error_code": ERROR_DRAFT_VALIDATION_FAILED,
+                        "message": exc.message,
+                        "details": {"draft_error_code": exc.error_code},
+                    },
+                }
             except ModelConfigError as exc:
                 yield {
                     "type": "done",
@@ -278,7 +342,7 @@ class ChatService:
         account_phone: str,
         session_id: str,
         approval_request_id: str,
-        approved: bool,
+        decisions: list[dict[str, Any]],
     ) -> AsyncIterator[dict[str, Any]]:
         """approve 模式（docs/spec/agent-tools.md §5.3）。
 
@@ -289,11 +353,19 @@ class ChatService:
         pending = _PENDING.get(account_phone)
         fresh_events: list[dict[str, Any]] = []
         if pending is None:
-            # 进程重启后内存 pending 丢失：从已落库的部分回合恢复。
-            pending = self._recover_PendingApproval(account_phone, session_id)
-            fresh_events = [
-                _tool_confirm_event(pending, call) for call in pending.calls
-            ]
+            # 进程重启后内存 pending 丢失：从已落库的部分回合恢复，并沿用
+            # 前端持有的 request_id。恢复只续接原确认，不额外发出一张已失效的新确认卡。
+            try:
+                pending = self._recover_PendingApproval(
+                    account_phone, session_id, approval_request_id
+                )
+            except DraftValidationError as exc:
+                raise AuthError(
+                    ERROR_DRAFT_VALIDATION_FAILED,
+                    exc.message,
+                    422,
+                    {"draft_error_code": exc.error_code},
+                ) from exc
         else:
             if pending.session_id != session_id:
                 raise AuthError(ERROR_SESSION_NOT_FOUND, "会话不存在", 404)
@@ -304,9 +376,8 @@ class ChatService:
         if record is None or record["session_id"] != pending.session_id:
             raise AuthError(ERROR_TURN_NOT_FOUND, "回合不存在", 404)
         messages = ModelMessagesTypeAdapter.validate_json(record["messages_json"])
-        results = pending.requests.build_results(
-            approvals={call.tool_call_id: approved for call in pending.calls}
-        )
+        approval_values = _build_ApprovalValues(pending, decisions)
+        results = pending.requests.build_results(approvals=approval_values)
 
         # 校验通过后再写入共享 pending（恢复路径；内存路径幂等覆盖）。
         _PENDING[account_phone] = pending
@@ -315,7 +386,7 @@ class ChatService:
         )
 
     def _recover_PendingApproval(
-        self, account_phone: str, session_id: str
+        self, account_phone: str, session_id: str, request_id: str
     ) -> PendingApproval:
         """从该会话已落库回合中恢复 pending；找不到可恢复调用 → approval_not_found。"""
         record = self._sessions.get_Session(session_id)
@@ -328,7 +399,12 @@ class ChatService:
             requests = recover_PendingApprovals(messages)
             if requests is not None:
                 return _make_PendingApproval(
-                    account_phone, session_id, row["turn_id"], requests
+                    account_phone,
+                    session_id,
+                    row["turn_id"],
+                    requests,
+                    self._business_query,
+                    request_id=request_id,
                 )
         raise AuthError(ERROR_APPROVAL_NOT_FOUND, "确认请求不存在或已处理", 404)
 
@@ -372,18 +448,41 @@ class ChatService:
                                 "content": event.delta.content_delta,
                             }
 
-                # 成功后整体覆盖：all_messages 才是「本轮完整消息」。
-                # 注意：续跑 run 的 new_messages_json 只含新增消息（工具回执+收尾文本），
-                # 直接覆盖会丢原始 user prompt 与 tool_call（docs/spec/chat-agent.md §3.3）。
-                self._turns.upsert_Turn(
-                    pending.turn_id,
-                    pending.session_id,
-                    ModelMessagesTypeAdapter.dump_json(
-                        run.result.all_messages()
-                    ).decode(),
-                )
-                _PENDING.pop(account_phone, None)
-                yield {"type": "done", "turn_id": pending.turn_id, "error": None}
+                all_messages_json = ModelMessagesTypeAdapter.dump_json(
+                    run.result.all_messages()
+                ).decode()
+                output = run.result.output
+                if isinstance(output, DeferredToolRequests) and output.approvals:
+                    # 续跑再次产生写草案：必须再次暂停，不能自动批准或收尾。
+                    next_pending = _make_PendingApproval(
+                        account_phone,
+                        pending.session_id,
+                        pending.turn_id,
+                        output,
+                        self._business_query,
+                    )
+                    self._turns.upsert_Turn(
+                        pending.turn_id, pending.session_id, all_messages_json
+                    )
+                    _PENDING[account_phone] = next_pending
+                    yield _tool_confirm_event(next_pending)
+                else:
+                    # 成功后整体覆盖：all_messages 才是「本轮完整消息」。
+                    self._turns.upsert_Turn(
+                        pending.turn_id, pending.session_id, all_messages_json
+                    )
+                    _PENDING.pop(account_phone, None)
+                    yield {"type": "done", "turn_id": pending.turn_id, "error": None}
+            except DraftValidationError as exc:
+                yield {
+                    "type": "done",
+                    "turn_id": pending.turn_id,
+                    "error": {
+                        "error_code": ERROR_DRAFT_VALIDATION_FAILED,
+                        "message": exc.message,
+                        "details": {"draft_error_code": exc.error_code},
+                    },
+                }
             except ModelConfigError as exc:
                 yield {
                     "type": "done",

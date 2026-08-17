@@ -10,12 +10,105 @@ Global Constraint 12：所有工具函数首参必须显式标注 RunContext[Bus
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import date
+from typing import Annotated, Any, Literal
 
-from pydantic_ai import RunContext
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_ai import ModelRetry, RunContext
 
 from backend.services.agent import BusinessToolDeps
+from backend.services.business_query import DraftValidationError
 from backend.tools.registry import register_tool
+
+
+NonEmptyText = Annotated[str, Field(min_length=1)]
+PositiveInt = Annotated[int, Field(strict=True, gt=0)]
+NonZeroInt = Annotated[int, Field(strict=True)]
+NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
+
+
+class _DraftFields(BaseModel):
+    """模型可控业务字段基类：封闭 schema，拒绝所有同步/账户/删除元字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("customer_id", check_fields=False)
+    @classmethod
+    def _validate_customer_id(cls, value: int | None) -> int | None:
+        if value == 0:
+            raise ValueError("customer_id 不能为 0")
+        return value
+
+    @field_validator("work_order_date", check_fields=False)
+    @classmethod
+    def _validate_work_order_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("work_order_date 必须是 YYYY-MM-DD 的有效日期") from exc
+        return value
+
+    @field_validator("service_category", "unit", check_fields=False)
+    @classmethod
+    def _strip_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("字段不能为空")
+        return stripped
+
+    @field_validator("service_item", check_fields=False)
+    @classmethod
+    def _strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("service_item 不能为空字符串")
+        return stripped
+
+
+class CreateWorkOrderDraftFields(_DraftFields):
+    work_order_date: str
+    customer_id: NonZeroInt
+    service_category: NonEmptyText
+    service_item: NonEmptyText | None
+    quantity: PositiveInt
+    unit: NonEmptyText
+    unit_price_cents: NonNegativeInt | None = None
+    is_completed: Literal[0, 1] | None = None
+
+
+class UpdateWorkOrderDraftFields(_DraftFields):
+    work_order_date: str | None = None
+    customer_id: NonZeroInt | None = None
+    service_category: NonEmptyText | None = None
+    service_item: NonEmptyText | None = None
+    quantity: PositiveInt | None = None
+    unit: NonEmptyText | None = None
+    unit_price_cents: NonNegativeInt | None = None
+    is_completed: Literal[0, 1] | None = None
+
+    @model_validator(mode="after")
+    def _require_patch_field(self) -> "UpdateWorkOrderDraftFields":
+        if not self.model_fields_set:
+            raise ValueError("修改草案至少包含一个业务字段")
+        return self
+
+
+class CreateWorkOrderDraftInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fields: CreateWorkOrderDraftFields
+
+
+class UpdateWorkOrderDraftInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    entity_sync_id: NonEmptyText
+    base_version: PositiveInt
+    fields: UpdateWorkOrderDraftFields
 
 
 @register_tool
@@ -137,33 +230,29 @@ async def query_service_categories(
     )
 
 
-@register_tool(requires_approval=True)
 async def create_work_order(
     ctx: RunContext[BusinessToolDeps],
-    entity_sync_id: str | None,
-    fields: dict,
+    fields: CreateWorkOrderDraftFields,
 ) -> dict[str, Any]:
-    """生成新建工单草案。只回执，不写库；需用户确认后由前端提交。"""
+    """生成新建工单草案。同步 ID 由前端生成；确认后只回执，不写库。"""
     return {
         "status": "draft_acknowledged",
         "operation_type": "create_work_order",
         "changes": [
             {
                 "entity_type": "work_order",
-                "entity_sync_id": entity_sync_id,
                 "base_version": 0,
-                "fields": fields,
+                "fields": fields.model_dump(exclude_unset=True),
             }
         ],
     }
 
 
-@register_tool(requires_approval=True)
 async def update_work_order(
     ctx: RunContext[BusinessToolDeps],
-    entity_sync_id: str,
-    base_version: int,
-    fields: dict,
+    entity_sync_id: NonEmptyText,
+    base_version: PositiveInt,
+    fields: UpdateWorkOrderDraftFields,
 ) -> dict[str, Any]:
     """生成修改工单草案。只回执，不写库；需用户确认后由前端提交。"""
     return {
@@ -174,7 +263,65 @@ async def update_work_order(
                 "entity_type": "work_order",
                 "entity_sync_id": entity_sync_id,
                 "base_version": base_version,
-                "fields": fields,
+                "fields": fields.model_dump(exclude_unset=True),
             }
         ],
     }
+
+
+async def _validate_create_work_order(
+    ctx: RunContext[BusinessToolDeps], draft: CreateWorkOrderDraftInput
+) -> None:
+    if ctx.deps.query is None:
+        return
+    try:
+        ctx.deps.query.prepare_WorkOrderDraft(
+            ctx.deps.account_phone, "create_work_order", draft.model_dump()
+        )
+    except DraftValidationError as exc:
+        raise ModelRetry(f"{exc.error_code}: {exc.message}") from exc
+
+
+async def _validate_update_work_order(
+    ctx: RunContext[BusinessToolDeps], draft: UpdateWorkOrderDraftInput
+) -> None:
+    if ctx.deps.query is None:
+        return
+    try:
+        ctx.deps.query.prepare_WorkOrderDraft(
+            ctx.deps.account_phone,
+            "update_work_order",
+            draft.model_dump(exclude_unset=True),
+        )
+    except DraftValidationError as exc:
+        raise ModelRetry(f"{exc.error_code}: {exc.message}") from exc
+
+
+async def _create_work_order_tool(
+    ctx: RunContext[BusinessToolDeps], draft: CreateWorkOrderDraftInput
+) -> dict[str, Any]:
+    return await create_work_order(ctx, draft.fields)
+
+
+async def _update_work_order_tool(
+    ctx: RunContext[BusinessToolDeps], draft: UpdateWorkOrderDraftInput
+) -> dict[str, Any]:
+    return await update_work_order(
+        ctx, draft.entity_sync_id, draft.base_version, draft.fields
+    )
+
+
+# Pydantic AI 对单一 BaseModel 参数会展开其字段；用包装输入模型保持 wire schema
+# 为 {fields} / {entity_sync_id, base_version, fields}，同时保留公共工具函数的直接调用缝。
+_create_work_order_tool.__name__ = "create_work_order"
+_update_work_order_tool.__name__ = "update_work_order"
+register_tool(
+    _create_work_order_tool,
+    requires_approval=True,
+    args_validator=_validate_create_work_order,
+)
+register_tool(
+    _update_work_order_tool,
+    requires_approval=True,
+    args_validator=_validate_update_work_order,
+)

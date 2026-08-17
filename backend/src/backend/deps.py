@@ -25,6 +25,7 @@ from backend.errors import (
 )
 from backend.repositories.account_devices import AccountDevicesRepository
 from backend.repositories.accounts import AccountsRepository
+from backend.repositories.chat_pending_approvals import ChatPendingApprovalsRepository
 from backend.repositories.chat_sessions import ChatSessionsRepository
 from backend.repositories.chat_turns import ChatTurnsRepository
 from backend.repositories.customer_code_mappings import (
@@ -231,14 +232,28 @@ def get_ChatTurnsRepository(
     return ChatTurnsRepository(connection)
 
 
+def get_ChatPendingApprovalsRepository(
+    connection: sqlite3.Connection = Depends(get_Connection),
+) -> ChatPendingApprovalsRepository:
+    return ChatPendingApprovalsRepository(connection)
+
+
 def get_ChatService(
     sessions: ChatSessionsRepository = Depends(get_ChatSessionsRepository),
     turns: ChatTurnsRepository = Depends(get_ChatTurnsRepository),
+    pending_approvals: ChatPendingApprovalsRepository = Depends(
+        get_ChatPendingApprovalsRepository
+    ),
     business_query: BusinessQueryService = Depends(get_BusinessQueryService),
 ) -> ChatService:
     # agent_factory 默认 build_Agent：每次 run 时热读 config.toml [model]
     # business_query 注入只读查询门面，供 Agent 业务工具使用（docs/spec/agent-tools.md §4.1）
-    return ChatService(sessions, turns, business_query=business_query)
+    return ChatService(
+        sessions,
+        turns,
+        pending_approvals=pending_approvals,
+        business_query=business_query,
+    )
 
 
 def get_CurrentAccount(

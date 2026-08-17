@@ -53,6 +53,7 @@ def set_AccountPassword(connection, phone: str, password: str) -> None:
     """改密码：用 Argon2id 重新哈希后入库（复用 AccountsRepository.set_Password）。"""
     password_hash = PasswordService().hash(password)
     AccountsRepository(connection).set_Password(phone, password_hash)
+    AccountDevicesRepository(connection).revoke_AllDevices(phone)
 
 
 def set_AccountStatus(connection, phone: str, status: str) -> None:

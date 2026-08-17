@@ -22,7 +22,7 @@ import json
 from typing import Any
 
 import pytest
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolApproved, ToolDenied
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -40,6 +40,11 @@ from pydantic_ai.tools import DeferredToolRequests
 from backend.errors import AppError
 from backend.repositories.chat_sessions import ChatSessionsRepository
 from backend.repositories.chat_turns import ChatTurnsRepository
+from backend.repositories.customer_code_mappings import CustomerCodeMappingsRepository
+from backend.repositories.customers import CustomersRepository
+from backend.repositories.service_categories import ServiceCategoriesRepository
+from backend.repositories.work_orders import WorkOrdersRepository
+from backend.services.business_query import BusinessQueryService
 from backend.services import chat as chat_module
 from backend.services.chat import (
     ChatService,
@@ -164,10 +169,10 @@ class _FakeAgent:
         if deferred_tool_results is not None:
             # approve 续跑：approved=True 才模拟执行握手工具（只回执、不写库）；
             # False 只记录拒绝不执行 —— 对应 Pydantic AI 的 ToolApproved/ToolDenied 语义。
-            for tool_call_id, approved in deferred_tool_results.approvals.items():
-                if approved is True:
+            for tool_call_id, decision in deferred_tool_results.approvals.items():
+                if isinstance(decision, ToolApproved):
                     self.executed.append(tool_call_id)
-                else:
+                elif isinstance(decision, ToolDenied):
                     self.denied.append(tool_call_id)
             assert self.resume_result is not None, "resume 场景需配置 resume_result"
             return _FakeRun(self.resume_events, self.resume_result)
@@ -213,6 +218,15 @@ class _BlockingFakeAgent:
         deps: Any = None,
     ) -> _BlockingFakeRun:
         return _BlockingFakeRun(self.release)
+
+
+def _decisions(
+    *items: tuple[str, str, str | None]
+) -> list[dict[str, Any]]:
+    return [
+        {"tool_call_id": call_id, "decision": decision, "reason": reason}
+        for call_id, decision, reason in items
+    ]
 
 
 def _pending_approval(
@@ -388,9 +402,11 @@ async def test_run_Turn_pauses_on_approval_requests(connection):
     confirm = events[1]
     assert confirm["type"] == "tool_confirm_request"
     assert confirm["request_id"].startswith("ar-")
-    assert confirm["tool_call_id"] == "call-1"
-    assert confirm["tool_name"] == "update_work_order"
-    assert confirm["draft"] == draft
+    assert confirm["calls"] == [{
+        "tool_call_id": "call-1",
+        "tool_name": "update_work_order",
+        "draft": draft,
+    }]
 
     pending = chat_module._PENDING.get("13800000000")
     assert pending is not None
@@ -493,7 +509,8 @@ async def test_approve_Turn_true_resumes_and_clears_pending(connection):
     approve_events = [
         event
         async for event in service.approve_Turn(
-            "13800000000", "s-1", request_id, True
+            "13800000000", "s-1", request_id,
+            _decisions(("call-1", "approve", None))
         )
     ]
 
@@ -536,7 +553,8 @@ async def test_approve_Turn_false_denies_tool_and_finishes(connection):
     approve_events = [
         event
         async for event in service.approve_Turn(
-            "13800000000", "s-1", request_id, False
+            "13800000000", "s-1", request_id,
+            _decisions(("call-1", "reject", "这是重复工单"))
         )
     ]
 
@@ -555,7 +573,8 @@ async def test_approve_Turn_unknown_request_raises_approval_not_found(connection
 
     service = ChatService(sessions, turns, agent_factory=_test_agent_factory)
     with pytest.raises(AppError) as exc:
-        service.approve_Turn("13800000000", "s-1", "ar-000000000000", True)
+        service.approve_Turn("13800000000", "s-1", "ar-000000000000",
+            _decisions(("call-1", "approve", None)))
     assert exc.value.error_code == "approval_not_found"
 
 
@@ -570,7 +589,8 @@ async def test_approve_Turn_wrong_request_id_raises_tool_approval_required(conne
     service = ChatService(sessions, turns, agent_factory=_test_agent_factory)
 
     with pytest.raises(AppError) as exc:
-        service.approve_Turn("13800000000", "s-1", "ar-new", True)
+        service.approve_Turn("13800000000", "s-1", "ar-new",
+            _decisions(("call-1", "approve", None)))
     assert exc.value.error_code == "tool_approval_required"
 
 
@@ -587,7 +607,8 @@ async def test_approve_Turn_wrong_session_raises_session_not_found(connection):
     service = ChatService(sessions, turns, agent_factory=_test_agent_factory)
 
     with pytest.raises(AppError) as exc:
-        service.approve_Turn("13800000000", "s-1", pending.request_id, True)
+        service.approve_Turn("13800000000", "s-1", pending.request_id,
+            _decisions(("call-1", "approve", None)))
     assert exc.value.error_code == "session_not_found"
 
 
@@ -603,7 +624,8 @@ async def test_approve_Turn_missing_partial_turn_raises_turn_not_found(connectio
     service = ChatService(sessions, turns, agent_factory=_test_agent_factory)
 
     with pytest.raises(AppError) as exc:
-        service.approve_Turn("13800000000", "s-1", pending.request_id, True)
+        service.approve_Turn("13800000000", "s-1", pending.request_id,
+            _decisions(("call-1", "approve", None)))
     assert exc.value.error_code == "turn_not_found"
 
 
@@ -653,8 +675,8 @@ def test_recover_PendingApprovals_ignores_returned_and_non_approval_calls():
 @pytest.mark.asyncio
 async def test_approve_Turn_recovers_from_stored_partial_turn(connection):
     # 模拟进程重启：_PENDING 丢失，但部分回合已落库。
-    # approve 时从 messages_json 还原 pending、重新生成 request_id 并发新的
-    # tool_confirm_request，随后续跑收尾。
+    # approve 时从 messages_json 还原 pending，并沿用前端持有的 request_id；
+    # 不额外发出一张已经被同时执行的新确认卡。
     sessions = ChatSessionsRepository(connection)
     turns = ChatTurnsRepository(connection)
     sessions.create_Session("13800000000", "s-1", "标题")
@@ -677,18 +699,363 @@ async def test_approve_Turn_recovers_from_stored_partial_turn(connection):
     approve_events = [
         event
         async for event in service.approve_Turn(
-            "13800000000", "s-1", "ar-old", True
+            "13800000000", "s-1", "ar-old",
+            _decisions(("call-1", "approve", None))
         )
     ]
 
-    assert approve_events[0]["type"] == "tool_confirm_request"
-    assert approve_events[0]["request_id"].startswith("ar-")
-    assert approve_events[0]["tool_call_id"] == "call-1"
-    assert approve_events[0]["tool_name"] == "update_work_order"
-    assert approve_events[0]["draft"] == draft
+    assert [event["type"] for event in approve_events] == ["text_delta", "done"]
     assert approve_events[-1] == {"type": "done", "turn_id": "turn-1", "error": None}
     assert fake.executed == ["call-1"]
     assert fake.denied == []
     assert "13800000000" not in chat_module._PENDING
     stored = turns.get_Turn("turn-1")
     assert stored["messages_json"] == ModelMessagesTypeAdapter.dump_json(final_messages).decode()
+
+
+# ---------- 批量草案、安全预校验与逐项决策 ----------
+
+
+def _business_query(connection) -> BusinessQueryService:
+    return BusinessQueryService(
+        WorkOrdersRepository(connection),
+        CustomersRepository(connection),
+        CustomerCodeMappingsRepository(connection),
+        ServiceCategoriesRepository(connection),
+    )
+
+
+def _seed_draft_references(connection) -> None:
+    customers = CustomersRepository(connection)
+    customers.apply_Write(
+        "13800000000", "sync-customer-1", {"canonical_name": "甲厂", "archived_at": None}, 0
+    )
+    customer_id = customers.get_BySyncId("13800000000", "sync-customer-1")["customer_id"]
+    CustomerCodeMappingsRepository(connection).apply_Write(
+        "13800000000",
+        "sync-mapping-1",
+        {
+            "customer_id": customer_id,
+            "customer_code": "001",
+            "customer_name": "甲",
+            "valid_from": "2026-01-01",
+            "valid_to": None,
+        },
+        0,
+    )
+    ServiceCategoriesRepository(connection).apply_Write(
+        "13800000000",
+        "sync-category-1",
+        {
+            "category_name": "洗水",
+            "subcategories_json": json.dumps(
+                [{"name": "单洗", "default_unit": "件", "is_active": True}],
+                ensure_ascii=False,
+            ),
+            "is_active": 1,
+        },
+        0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_Turn_emits_all_pending_calls_as_one_batch(connection):
+    sessions = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
+    sessions.create_Session("13800000000", "s-1", "标题")
+    calls = [
+        _tool_call(
+            "update_work_order",
+            {"entity_sync_id": f"sync-wo-{index}", "base_version": 1, "fields": {"quantity": index}},
+            f"call-{index}",
+        )
+        for index in (1, 2)
+    ]
+    fake = _FakeAgent()
+    fake.send_result = _FakeResult(
+        output=DeferredToolRequests(approvals=calls),
+        messages=[_user_message("批量改单"), ModelResponse(parts=calls)],
+    )
+    service = ChatService(sessions, turns, agent_factory=lambda allowed_tools=None: fake)
+
+    events = [
+        event
+        async for event in service.run_Turn("13800000000", "s-1", "turn-1", "批量改单")
+    ]
+
+    assert len(events) == 1
+    assert events[0]["type"] == "tool_confirm_request"
+    assert [item["tool_call_id"] for item in events[0]["calls"]] == ["call-1", "call-2"]
+    assert len(chat_module._PENDING["13800000000"].calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_recovery_rejects_persisted_draft_with_forbidden_meta_fields(connection):
+    # 进程重启恢复不能绕过写工具的 Pydantic extra=forbid 安全边界。
+    _seed_draft_references(connection)
+    sessions = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
+    sessions.create_Session("13800000000", "s-1", "标题")
+    customer_id = CustomersRepository(connection).get_BySyncId(
+        "13800000000", "sync-customer-1"
+    )["customer_id"]
+    malicious = {
+        "fields": {
+            "work_order_date": "2026-08-17",
+            "customer_id": customer_id,
+            "service_category": "洗水",
+            "service_item": "单洗",
+            "quantity": 1,
+            "unit": "件",
+            "deleted_at": "2026-08-17T00:00:00+00:00",
+        }
+    }
+    partial = [
+        _user_message("录单"),
+        ModelResponse(parts=[_tool_call("create_work_order", malicious, "call-bad")]),
+    ]
+    turns.upsert_Turn(
+        "turn-bad", "s-1", ModelMessagesTypeAdapter.dump_json(partial).decode()
+    )
+    service = ChatService(
+        sessions,
+        turns,
+        agent_factory=_test_agent_factory,
+        business_query=_business_query(connection),
+    )
+
+    with pytest.raises(AppError) as exc:
+        service.approve_Turn(
+            "13800000000",
+            "s-1",
+            "ar-stored",
+            _decisions(("call-bad", "approve", None)),
+        )
+    assert exc.value.error_code == "draft_validation_failed"
+    assert exc.value.details == {"draft_error_code": "draft_fields_invalid"}
+    assert "13800000000" not in chat_module._PENDING
+
+
+@pytest.mark.asyncio
+async def test_run_Turn_prevalidates_and_derives_customer_snapshot(connection):
+    _seed_draft_references(connection)
+    sessions = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
+    sessions.create_Session("13800000000", "s-1", "标题")
+    customer_id = CustomersRepository(connection).get_BySyncId(
+        "13800000000", "sync-customer-1"
+    )["customer_id"]
+    args = {
+        "fields": {
+            "work_order_date": "2026-08-17",
+            "customer_id": customer_id,
+            "service_category": "洗水",
+            "service_item": "单洗",
+            "quantity": 10,
+            "unit": "件",
+            "unit_price_cents": None,
+        }
+    }
+    tool_call = _tool_call("create_work_order", args, "call-1")
+    fake = _FakeAgent()
+    fake.send_result = _FakeResult(
+        output=DeferredToolRequests(approvals=[tool_call]),
+        messages=[_user_message("录单"), ModelResponse(parts=[tool_call])],
+    )
+    service = ChatService(
+        sessions,
+        turns,
+        agent_factory=lambda allowed_tools=None: fake,
+        business_query=_business_query(connection),
+    )
+
+    events = [
+        event
+        async for event in service.run_Turn("13800000000", "s-1", "turn-1", "录单")
+    ]
+
+    fields = events[0]["calls"][0]["draft"]["fields"]
+    assert fields["customer_id"] == customer_id
+    assert fields["customer_code"] == "001"
+    assert fields["customer_name"] == "甲"
+    assert fields["is_completed"] == 0
+    assert "entity_sync_id" not in events[0]["calls"][0]["draft"]
+    assert connection.execute("SELECT COUNT(*) FROM work_orders").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_Turn_invalid_draft_never_reaches_confirmation(connection):
+    _seed_draft_references(connection)
+    sessions = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
+    sessions.create_Session("13800000000", "s-1", "标题")
+    args = {
+        "fields": {
+            "work_order_date": "2026-08-17",
+            "customer_id": 99999,
+            "service_category": "洗水",
+            "service_item": "单洗",
+            "quantity": 10,
+            "unit": "件",
+        }
+    }
+    tool_call = _tool_call("create_work_order", args, "call-1")
+    fake = _FakeAgent()
+    fake.send_result = _FakeResult(
+        output=DeferredToolRequests(approvals=[tool_call]),
+        messages=[_user_message("录单"), ModelResponse(parts=[tool_call])],
+    )
+    service = ChatService(
+        sessions,
+        turns,
+        agent_factory=lambda allowed_tools=None: fake,
+        business_query=_business_query(connection),
+    )
+
+    events = [
+        event
+        async for event in service.run_Turn("13800000000", "s-1", "turn-1", "录单")
+    ]
+
+    assert [event["type"] for event in events] == ["done"]
+    assert events[0]["error"]["error_code"] == "draft_validation_failed"
+    assert events[0]["error"]["details"]["draft_error_code"] == "customer_not_found"
+    assert "13800000000" not in chat_module._PENDING
+
+
+@pytest.mark.asyncio
+async def test_run_Turn_rejects_more_than_twenty_write_drafts(connection):
+    sessions = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
+    sessions.create_Session("13800000000", "s-1", "标题")
+    calls = [
+        _tool_call(
+            "update_work_order",
+            {"entity_sync_id": f"sync-{index}", "base_version": 1, "fields": {"quantity": 1}},
+            f"call-{index}",
+        )
+        for index in range(21)
+    ]
+    fake = _FakeAgent()
+    fake.send_result = _FakeResult(
+        output=DeferredToolRequests(approvals=calls),
+        messages=[_user_message("批量"), ModelResponse(parts=calls)],
+    )
+    service = ChatService(sessions, turns, agent_factory=lambda allowed_tools=None: fake)
+
+    events = [event async for event in service.run_Turn("13800000000", "s-1", "turn-1", "批量")]
+
+    assert events[-1]["error"]["error_code"] == "draft_validation_failed"
+    assert events[-1]["error"]["details"]["draft_error_code"] == "draft_batch_too_large"
+    assert all(event["type"] != "tool_confirm_request" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_approve_Turn_applies_per_call_decisions_with_reasons(connection):
+    sessions = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
+    sessions.create_Session("13800000000", "s-1", "标题")
+    calls = [
+        _tool_call("update_work_order", {"entity_sync_id": f"sync-{i}", "base_version": 1, "fields": {"quantity": i}}, f"call-{i}")
+        for i in (1, 2, 3)
+    ]
+    partial = [_user_message("处理三单"), ModelResponse(parts=calls)]
+    fake = _FakeAgent()
+    fake.send_result = _FakeResult(output=DeferredToolRequests(approvals=calls), messages=partial)
+    fake.resume_result = _FakeResult(output="完成", messages=partial + [_assistant_message("完成")])
+    service = ChatService(sessions, turns, agent_factory=lambda allowed_tools=None: fake)
+    send_events = [event async for event in service.run_Turn("13800000000", "s-1", "turn-1", "处理三单")]
+
+    events = [
+        event
+        async for event in service.approve_Turn(
+            "13800000000",
+            "s-1",
+            send_events[-1]["request_id"],
+            _decisions(
+                ("call-1", "approve", None),
+                ("call-2", "reject", "重复工单"),
+                ("call-3", "regenerate", "数量应为 12"),
+            ),
+        )
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert fake.executed == ["call-1"]
+    assert fake.denied == ["call-2", "call-3"]
+    approval_values = fake.calls[-1]["deferred_tool_results"].approvals
+    assert "不要重新生成" in approval_values["call-2"].message
+    assert "重新生成" in approval_values["call-3"].message
+    assert "数量应为 12" in approval_values["call-3"].message
+
+
+@pytest.mark.asyncio
+async def test_approve_Turn_requires_reason_for_reject_and_regenerate(connection):
+    sessions = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
+    sessions.create_Session("13800000000", "s-1", "标题")
+    tool_call = _tool_call(
+        "update_work_order",
+        {"entity_sync_id": "sync-1", "base_version": 1, "fields": {"quantity": 2}},
+        "call-1",
+    )
+    partial = [_user_message("改单"), ModelResponse(parts=[tool_call])]
+    turns.upsert_Turn("turn-1", "s-1", ModelMessagesTypeAdapter.dump_json(partial).decode())
+    pending = PendingApproval(
+        request_id="ar-1",
+        account_phone="13800000000",
+        session_id="s-1",
+        turn_id="turn-1",
+        requests=DeferredToolRequests(approvals=[tool_call]),
+        calls=[PendingCall("ar-1", "call-1", "update_work_order", {})],
+    )
+    chat_module._PENDING["13800000000"] = pending
+    service = ChatService(sessions, turns, agent_factory=_test_agent_factory)
+
+    with pytest.raises(AppError) as exc:
+        service.approve_Turn(
+            "13800000000",
+            "s-1",
+            "ar-1",
+            _decisions(("call-1", "reject", "  ")),
+        )
+    assert exc.value.error_code == "invalid_approval"
+
+
+@pytest.mark.asyncio
+async def test_approve_Turn_pauses_again_when_resume_creates_new_draft(connection):
+    sessions = ChatSessionsRepository(connection)
+    turns = ChatTurnsRepository(connection)
+    sessions.create_Session("13800000000", "s-1", "标题")
+    first = _tool_call(
+        "update_work_order",
+        {"entity_sync_id": "sync-1", "base_version": 1, "fields": {"quantity": 2}},
+        "call-1",
+    )
+    second = _tool_call(
+        "update_work_order",
+        {"entity_sync_id": "sync-2", "base_version": 1, "fields": {"quantity": 3}},
+        "call-2",
+    )
+    partial = [_user_message("改单"), ModelResponse(parts=[first])]
+    resumed = partial + [ModelResponse(parts=[second])]
+    fake = _FakeAgent()
+    fake.send_result = _FakeResult(output=DeferredToolRequests(approvals=[first]), messages=partial)
+    fake.resume_result = _FakeResult(output=DeferredToolRequests(approvals=[second]), messages=resumed)
+    service = ChatService(sessions, turns, agent_factory=lambda allowed_tools=None: fake)
+    send_events = [event async for event in service.run_Turn("13800000000", "s-1", "turn-1", "改单")]
+
+    events = [
+        event
+        async for event in service.approve_Turn(
+            "13800000000",
+            "s-1",
+            send_events[-1]["request_id"],
+            _decisions(("call-1", "approve", None)),
+        )
+    ]
+
+    assert [event["type"] for event in events] == ["tool_confirm_request"]
+    assert events[0]["calls"][0]["tool_call_id"] == "call-2"
+    assert chat_module._PENDING["13800000000"].calls[0].tool_call_id == "call-2"
+    assert turns.get_Turn("turn-1")["messages_json"] == ModelMessagesTypeAdapter.dump_json(resumed).decode()

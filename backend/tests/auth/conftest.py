@@ -95,7 +95,13 @@ def client(test_database, clock):
         devices: AccountDevicesRepository = Depends(get_AccountDevicesRepository),
     ):
         return AuthService(
-            accounts, devices, PasswordService(), tokens, limiter, now_factory=clock
+            accounts,
+            devices,
+            PasswordService(),
+            tokens,
+            limiter,
+            now_factory=clock,
+            sleep_factory=lambda _seconds: None,
         )
 
     app.dependency_overrides[get_Database] = _override_database

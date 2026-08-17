@@ -22,6 +22,21 @@ class CustomerCodeMappingsRepository(BusinessRepository):
             return "invalid_mapping_period"
         return None
 
+    def list_ActiveByCustomerId(
+        self, account_phone: str, customer_id: int, on_date: str
+    ) -> list[dict[str, Any]]:
+        """按稳定客户身份与业务日期读取有效编号映射。"""
+        if not self._is_valid_date(on_date):
+            return []
+        rows = self.connection.execute(
+            "SELECT * FROM customer_code_mappings"
+            " WHERE account_phone = ? AND customer_id = ?"
+            " AND valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)"
+            " ORDER BY valid_from DESC, mapping_id DESC",
+            (account_phone, customer_id, on_date, on_date),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_Mappings(
         self,
         account_phone: str,

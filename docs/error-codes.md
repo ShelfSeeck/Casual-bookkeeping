@@ -27,7 +27,7 @@
 | --- | --- |
 | 401 | token 缺失/无效/过期、登录失败、防刷锁定 |
 | 403 | 账户停用、设备被踢（组合非 active） |
-| 400 | 请求整体格式不合法；聊天域确认请求缺 `approved`（`invalid_approval`） |
+| 400 | 请求整体格式不合法；聊天域逐工具确认决策不合法（`invalid_approval`） |
 | 404 | 资源不存在（聊天域会话/回合/确认请求） |
 | 409 | 状态冲突（聊天域单飞锁 `session_busy` / 未处理确认 `tool_approval_required`） |
 | 422 | 请求体缺字段或类型错误（FastAPI 默认） |
@@ -116,15 +116,24 @@ rejected 响应结构（变更级，一条操作可带多条）：
 | `session_busy` | 409 | 同一账户已有回合在运行（单飞锁） |
 | `session_not_found` | 404 | 会话不存在或不属于该账户 |
 | `turn_not_found` | 404 | 回合不存在 |
-| `invalid_approval` | 400 | 确认请求缺 `approved` 字段 |
+| `invalid_approval` | 400 | decisions 缺失、不完整、重复、含未知调用，或 reject/regenerate 缺少非空原因 |
 | `approval_not_found` | 404 | 确认请求不存在或已处理 |
 | `tool_approval_required` | 409 | 当前账户存在未处理的工具确认请求（send 先处理再发新消息）；或 approve 的 `approval_request_id` 不是最新未处理请求 |
+| `draft_validation_failed` | SSE | 防御性草案预校验未通过；具体原因见 `details.draft_error_code` |
 | `model_config_missing` | 500 | `config.toml` 未配置 `[model]` |
 | `model_build_failed` | 500 | Agent 构建失败 |
 | `model_authentication_error` | 502 | 模型服务认证失败（api_key 错误） |
 | `model_quota_limit_error` | 429 | 模型额度不足 / 频率限制 |
 | `model_network_error` | 502 | 模型服务网络 / 超时 |
 | `model_call_failed` | 500 | 模型调用失败（通用） |
+
+草案预校验的 `details.draft_error_code` 使用既有业务错误码，并新增：
+
+| draft_error_code | 含义 |
+| --- | --- |
+| `customer_mapping_ambiguous` | 同一客户在工单日期存在多条有效编号映射，不能自动选择 |
+| `draft_base_version_conflict` | 修改目标版本已变化，必须重新查询后生成草案 |
+| `draft_batch_too_large` | 一次写草案超过 20 条，必须拆批 |
 
 ### 4.4 前端本地校验（不进入 Push rejected）
 

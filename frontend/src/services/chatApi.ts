@@ -38,9 +38,11 @@ export type ChatSseEvent =
   | {
       type: 'tool_confirm_request'
       request_id: string
-      tool_call_id: string
-      tool_name: string
-      draft: unknown
+      calls: Array<{
+        tool_call_id: string
+        tool_name: string
+        draft: unknown
+      }>
     }
   | {
       type: 'done'
@@ -48,12 +50,18 @@ export type ChatSseEvent =
       error: { error_code: string; message: string } | null
     }
 
+export type ToolDecision = {
+  tool_call_id: string
+  decision: 'approve' | 'reject' | 'regenerate'
+  reason?: string
+}
+
 export interface TurnPayload {
   turn_id?: string
   message?: string
   allowed_tools?: string[]
   approval_request_id?: string
-  approved?: boolean
+  decisions?: ToolDecision[]
 }
 
 interface RawSession {
@@ -131,13 +139,13 @@ export class ChatApi {
   async approveTurn(
     sid: string,
     approvalRequestId: string,
-    approved: boolean,
+    decisions: ToolDecision[],
     onEvent: (e: ChatSseEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> {
     await this.streamPost(
       sid,
-      { approval_request_id: approvalRequestId, approved },
+      { approval_request_id: approvalRequestId, decisions },
       onEvent,
       signal,
     )

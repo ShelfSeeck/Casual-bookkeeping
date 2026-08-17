@@ -4,7 +4,7 @@
 账户隔离以注入的 account_phone 为准。SSE 事件协议见 docs/spec/chat-agent.md §5。
 
 POST /turns 单模型双模式：
-- approval_request_id 非空 → approve 模式：缺 approved → invalid_approval 400；
+- approval_request_id 非空 → approve 模式：缺 decisions → invalid_approval 400；
   归属校验由 ChatService.approve_Turn 用 pending.session_id 完成（本层不做
   sessions 查询），错误在流开始前以统一 JSON 返回。
 - 否则 send 模式：缺 turn_id / message → invalid_request 400；流开始前做
@@ -60,6 +60,13 @@ class CreateSessionRequest(BaseModel):
     title: str
 
 
+class ToolDecisionRequest(BaseModel):
+    # 语义校验统一放 ChatService，确保错误稳定映射为 invalid_approval 400。
+    tool_call_id: str | None = None
+    decision: str | None = None
+    reason: str | None = None
+
+
 class TurnRequest(BaseModel):
     """POST /turns 单模型双模式（docs/spec/agent-tools.md §5.5）。"""
 
@@ -68,7 +75,7 @@ class TurnRequest(BaseModel):
     # 本轮允许的工具白名单（send 模式透传；approve 模式忽略）
     allowed_tools: list[str] | None = None
     approval_request_id: str | None = None
-    approved: bool | None = None
+    decisions: list[ToolDecisionRequest] | None = None
 
 
 def _new_session_id() -> str:
@@ -198,12 +205,14 @@ async def post_turn(
     service: ChatService = Depends(get_ChatService),
 ) -> StreamingResponse:
     if body.approval_request_id is not None:
-        # approve 模式：缺 approved → invalid_approval 400；归属校验由
-        # ChatService.approve_Turn 用 pending.session_id 完成（流开始前）。
-        if body.approved is None:
-            raise AppError(ERROR_INVALID_APPROVAL, "确认请求缺少 approved 字段", 400)
+        # approve 模式：必须逐 tool_call_id 提供 approve/reject/regenerate 决策。
+        if body.decisions is None:
+            raise AppError(ERROR_INVALID_APPROVAL, "确认请求缺少 decisions 字段", 400)
         events = service.approve_Turn(
-            current.account_phone, sid, body.approval_request_id, body.approved
+            current.account_phone,
+            sid,
+            body.approval_request_id,
+            [decision.model_dump() for decision in body.decisions],
         )
         return StreamingResponse(_sse(events), media_type="text/event-stream")
 

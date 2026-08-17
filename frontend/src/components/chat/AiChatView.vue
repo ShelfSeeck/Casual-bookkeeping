@@ -1,13 +1,24 @@
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { computed, ref, nextTick, watch } from 'vue'
 import { appState } from '../../state/appState'
 import { formatChatTime } from '../../utils/chatTime'
+import AiDraftReview from './AiDraftReview.vue'
 
 const inputVal = ref('')
 const msgContainer = ref<HTMLElement | null>(null)
 const historyPanelOpen = ref(false)
 const historyLoading = ref(false)
 const openingSessionId = ref<string | null>(null)
+const reviewOpen = ref(false)
+
+const approvalCounts = computed(() => {
+  const drafts = appState.pendingApproval.value?.drafts ?? []
+  return {
+    total: drafts.length,
+    creates: drafts.filter((draft) => draft.kind === 'create').length,
+    updates: drafts.filter((draft) => draft.kind === 'update').length,
+  }
+})
 
 const quickPrompts = [
   '今日工单汇总',
@@ -40,10 +51,6 @@ async function send(text: string) {
   scrollToBottom()
 }
 
-async function approveDraft(approved: boolean) {
-  await appState.resolveAiApproval(approved)
-  scrollToBottom()
-}
 
 async function openHistoryPanel() {
   historyPanelOpen.value = true
@@ -100,6 +107,10 @@ watch(
 
 <template>
   <div class="cb-chat-view">
+    <AiDraftReview
+      v-if="reviewOpen && appState.pendingApproval.value"
+      @back="reviewOpen = false"
+    />
     <!-- M3 Top App Bar -->
     <header class="cb-chat-header">
       <div class="cb-chat-title-group">
@@ -164,39 +175,31 @@ watch(
         </div>
       </div>
 
-      <!-- 真实 AI 草案确认卡（tool_confirm_request） -->
-      <div
+      <!-- AI 批量草案入口：完整审核在独立全屏页完成 -->
+      <article
         v-if="appState.pendingApproval.value"
-        class="cb-draft-card cb-approval-card"
-        role="region"
-        aria-label="AI 工单草案待确认"
+        class="cb-approval-entry"
+        aria-label="AI 工单草案等待审核"
       >
-        <div class="cb-draft-header">
-          <span class="cb-draft-tag">📋 AI 草案待确认</span>
-          <span class="cb-draft-notice">{{ appState.pendingApproval.value.toolName }}</span>
+        <div class="cb-approval-entry__icon" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <path d="M14 2v6h6"></path><path d="M8 13h8"></path><path d="M8 17h5"></path>
+          </svg>
         </div>
-        <div class="cb-message-content">{{ appState.pendingApproval.value.summary }}</div>
-        <div class="cb-draft-actions">
-          <button
-            type="button"
-            class="cb-draft-confirm-btn cb-pressable"
-            aria-label="确认写入本地账本"
-            :disabled="appState.chatBusy.value"
-            @click="approveDraft(true)"
-          >
-            确认写入本地工单
-          </button>
-          <button
-            type="button"
-            class="cb-draft-reject-btn cb-pressable"
-            aria-label="拒绝该草案"
-            :disabled="appState.chatBusy.value"
-            @click="approveDraft(false)"
-          >
-            拒绝
-          </button>
+        <div class="cb-approval-entry__body">
+          <span class="cb-approval-entry__eyebrow">AI 工单草案</span>
+          <h2>{{ appState.pendingApproval.value.resumeError ? '工单已保存，AI 回复待重试' : `已生成 ${approvalCounts.total} 张工单` }}</h2>
+          <p v-if="!appState.pendingApproval.value.resumeError">
+            新建 {{ approvalCounts.creates }} 张 · 修改 {{ approvalCounts.updates }} 张
+          </p>
+          <p v-else>本地写入不会重复执行，可以安全重试对话续接。</p>
         </div>
-      </div>
+        <button type="button" class="cb-approval-entry__button cb-pressable" @click="reviewOpen = true">
+          {{ appState.pendingApproval.value.resumeError ? '查看并重试' : '查看并处理' }}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+        </button>
+      </article>
     </main>
 
     <!-- M3 Suggestion Chips Toolbar：放在消息区下方，靠近输入框 -->
@@ -316,6 +319,7 @@ watch(
 
 <style scoped>
 .cb-chat-view {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -526,125 +530,48 @@ watch(
 }
 
 /* ==========================================================================
-   4. Draft Verification Card (M3 Elevated Card)
+   4. AI draft review entry
    ========================================================================== */
-.cb-draft-card {
-  margin-top: 12px;
+.cb-approval-entry {
+  margin: 4px 16px 16px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
   background: var(--md-sys-color-surface-container-low);
-  border: none;
+  color: var(--md-sys-color-on-surface);
   box-shadow: var(--md-sys-elevation-1);
+}
+.cb-approval-entry__icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
   border-radius: var(--md-sys-shape-corner-medium);
-  padding: 14px 16px;
-}
-
-.cb-draft-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.cb-draft-tag {
   background: var(--md-sys-color-primary-container);
   color: var(--md-sys-color-on-primary-container);
-  font-size: 12px;
-  font-weight: 800;
-  padding: 3px 8px;
-  border-radius: var(--md-sys-shape-corner-extra-small);
 }
-
-.cb-draft-notice {
-  font-size: 11px;
-  color: var(--md-sys-color-outline);
-}
-
-.cb-draft-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 12px;
-  margin-bottom: 14px;
-  background: var(--md-sys-color-surface);
-  padding: 10px 12px;
-  border-radius: var(--md-sys-shape-corner-small);
-}
-
-.cb-draft-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.cb-draft-label {
-  font-size: 12px;
-  color: var(--md-sys-color-on-surface-variant);
-  font-weight: 500;
-}
-
-.cb-draft-val {
-  font-family: var(--cb-font-numeric);
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--md-sys-color-on-surface);
-}
-
-.cb-draft-val--cust {
-  font-family: inherit;
-  color: var(--md-sys-color-primary);
-  font-weight: 800;
-}
-
-.cb-draft-val-strong {
-  font-family: var(--cb-font-numeric);
-  font-size: 17px;
-  font-weight: 800;
-  color: var(--md-sys-color-on-surface);
-}
-
-.cb-draft-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.cb-approval-card {
-  margin: 0 16px 16px;
-}
-
-.cb-draft-reject-btn {
-  flex: 0 0 88px;
-  height: 44px;
-  background: var(--md-sys-color-surface);
-  color: var(--md-sys-color-error);
-  border: 1.5px solid var(--md-sys-color-error);
-  border-radius: var(--md-sys-shape-corner-medium);
-  font-size: 14px;
-  font-weight: 800;
-  cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
-}
-.cb-draft-reject-btn:hover {
-  background: var(--md-sys-color-error-container);
-}
-
-.cb-draft-confirm-btn {
-  width: 100%;
-  height: 44px;
-  background: var(--cb-confirm-bg);
-  color: var(--cb-confirm-text);
-  border: none;
-  border-radius: var(--md-sys-shape-corner-medium);
-  font-size: 14px;
-  font-weight: 800;
-  box-shadow: var(--md-sys-elevation-1);
+.cb-approval-entry__body { min-width: 0; }
+.cb-approval-entry__eyebrow { font-size: 12px; font-weight: 800; color: var(--md-sys-color-primary); }
+.cb-approval-entry__body h2 { margin: 3px 0 0; font-size: 17px; line-height: 1.35; }
+.cb-approval-entry__body p { margin: 5px 0 0; font-size: 13px; line-height: 1.45; color: var(--md-sys-color-on-surface-variant); }
+.cb-approval-entry__button {
+  grid-column: 1 / -1;
+  min-height: 48px;
+  padding: 0 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
-}
-.cb-draft-confirm-btn:hover {
-  background: var(--cb-confirm-hover);
-  box-shadow: var(--md-sys-elevation-2);
+  border: 0;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: var(--md-sys-elevation-1);
 }
 
 /* ==========================================================================

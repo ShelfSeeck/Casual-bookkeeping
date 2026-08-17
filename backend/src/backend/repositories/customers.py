@@ -21,6 +21,16 @@ class CustomersRepository(BusinessRepository):
             return "invalid_customer_name"
         return None
 
+    def get_ByCustomerId(
+        self, account_phone: str, customer_id: int
+    ) -> dict[str, Any] | None:
+        """按稳定 customer_id 读取当前账户客户；供草案预校验使用。"""
+        row = self.connection.execute(
+            "SELECT * FROM customers WHERE account_phone = ? AND customer_id = ?",
+            (account_phone, customer_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
     def list_Customers(
         self,
         account_phone: str,

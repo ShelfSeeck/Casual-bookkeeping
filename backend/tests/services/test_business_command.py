@@ -100,6 +100,19 @@ def test_rejects_conflicting_operation_id(service, connection):
     assert result.errors[0]["error_code"] == "operation_id_conflict"
 
 
+def test_rejects_cross_account_operation_id_reuse(service, connection):
+    # 安全隔离：账户 A 提交的操作，账户 B 即使提交完全相同的 payload 与 operation_id，
+    # 也不能复用账户 A 的幂等结果或 server_seq，必须 rejected（operation_id_conflict）。
+    service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", _customer_op())
+
+    # 账户 B 提交同一 operation_id 与同一 payload
+    result = service.execute_Operation("13900000001", "dev-b2c3d4e5f6a1", _customer_op())
+    assert result.status == "rejected"
+    assert result.errors[0]["error_code"] == "operation_id_conflict"
+    assert result.server_seq is None
+    assert result.row_versions is None
+
+
 def test_rejects_bad_field_within_operation(service):
     # rejected（本表校验）：工单数量非法 → 整条 rejected，不写业务表也不留历史
     op = {

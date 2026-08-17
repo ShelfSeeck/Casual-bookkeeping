@@ -87,7 +87,7 @@ class BusinessRepository(BaseRepository):
             now = self._now_factory()
             values: dict[str, Any] = {"account_phone": account_phone, "sync_id": sync_id}
             for key, value in fields.items():
-                if key in self._columns():
+                if key in self._columns() and key not in ("account_phone", "sync_id", "row_version"):
                     values[key] = value
             values.setdefault("created_at", now)
             values["updated_at"] = now
@@ -107,7 +107,7 @@ class BusinessRepository(BaseRepository):
         now = self._now_factory()
         set_values: dict[str, Any] = {"updated_at": now}
         for key, value in fields.items():
-            if key in self._columns() and key != "account_phone" and key != "sync_id":
+            if key in self._columns() and key not in ("account_phone", "sync_id", "row_version"):
                 set_values[key] = value
         new_version = existing["row_version"] + 1
         set_values["row_version"] = new_version

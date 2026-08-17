@@ -124,6 +124,25 @@ def test_rate_limiting_is_per_phone(client, seed_account):
     assert resp.status_code == 200
 
 
+def test_login_failures_from_one_source_do_not_lock_account_for_another_source(
+    client, seed_account
+):
+    # 安全回归：未认证攻击者只能限制自己的来源组合，不能仅凭目标手机号
+    # 把合法用户的正确密码全局锁死。来源取 ASGI 直连 peer，不信任可伪造头。
+    seed_account()
+    client._transport.client = ("198.51.100.10", 50000)
+    for _ in range(5):
+        assert _login(client, password="wrong-password").status_code == 401
+
+    blocked = _login(client)
+    assert blocked.status_code == 401
+    assert blocked.json()["error_code"] == "login_blocked"
+
+    client._transport.client = ("203.0.113.20", 50000)
+    allowed = _login(client)
+    assert allowed.status_code == 200
+
+
 # ---------- B4-B6 刷新 ----------
 
 def test_refresh_rolls_tokens(client, seed_account, clock):
@@ -141,6 +160,29 @@ def test_refresh_rolls_tokens(client, seed_account, clock):
 
     assert new_access != old_access
     assert new_cookie != old_cookie
+
+
+def test_refresh_replay_revokes_newly_rotated_token_family(
+    client, seed_account, clock
+):
+    # 安全回归：旧 refresh 成功轮换一次后再用即触发族吊销，刚拿到的新 token 也失效。
+    seed_account()
+    _login(client)
+    old_cookie = client.cookies["refresh_token"]
+
+    clock.ts += 60
+    assert client.post("/auth/refresh").status_code == 200
+    new_cookie = client.cookies["refresh_token"]
+
+    client.cookies.set("refresh_token", old_cookie)
+    replay = client.post("/auth/refresh")
+    assert replay.status_code == 403
+    assert replay.json()["error_code"] == "session_revoked"
+
+    client.cookies.set("refresh_token", new_cookie)
+    revoked_family = client.post("/auth/refresh")
+    assert revoked_family.status_code == 403
+    assert revoked_family.json()["error_code"] == "session_revoked"
 
 
 def test_refresh_rejects_revoked_device(client, seed_account, test_database):

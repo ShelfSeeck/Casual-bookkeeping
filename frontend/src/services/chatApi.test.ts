@@ -162,7 +162,7 @@ describe('ChatApi.streamTurn SSE', () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
       sseResponse([
         'data: {"type":"text_delta","content":"你',
-        '好"}\n\ndata: {"type":"tool_confirm_request","request_id":"ar-000000000001","tool_call_id":"pyd_ai_1","tool_name":"update_work_order","draft":{"entity_sync_id":"sync-000000000001","base_version":4,"fields":{"quantity":12}}}\n\n',
+        '好"}\n\ndata: {"type":"tool_confirm_request","request_id":"ar-000000000001","calls":[{"tool_call_id":"pyd_ai_1","tool_name":"update_work_order","draft":{"entity_sync_id":"sync-000000000001","base_version":4,"fields":{"quantity":12}}},{"tool_call_id":"pyd_ai_2","tool_name":"create_work_order","draft":{"fields":{"work_order_date":"2026-08-17","customer_id":1,"service_category":"水洗","service_item":"床单","quantity":10,"unit":"件"}}}]}\n\n',
         'data: {"type":"done","turn_id":"turn-000000000001","error":null}\n\n',
       ]),
     )
@@ -178,13 +178,31 @@ describe('ChatApi.streamTurn SSE', () => {
       {
         type: 'tool_confirm_request',
         request_id: 'ar-000000000001',
-        tool_call_id: 'pyd_ai_1',
-        tool_name: 'update_work_order',
-        draft: {
-          entity_sync_id: 'sync-000000000001',
-          base_version: 4,
-          fields: { quantity: 12 },
-        },
+        calls: [
+          {
+            tool_call_id: 'pyd_ai_1',
+            tool_name: 'update_work_order',
+            draft: {
+              entity_sync_id: 'sync-000000000001',
+              base_version: 4,
+              fields: { quantity: 12 },
+            },
+          },
+          {
+            tool_call_id: 'pyd_ai_2',
+            tool_name: 'create_work_order',
+            draft: {
+              fields: {
+                work_order_date: '2026-08-17',
+                customer_id: 1,
+                service_category: '水洗',
+                service_item: '床单',
+                quantity: 10,
+                unit: '件',
+              },
+            },
+          },
+        ],
       },
       { type: 'done', turn_id: 'turn-000000000001', error: null },
     ])
@@ -240,7 +258,7 @@ describe('ChatApi.streamTurn SSE', () => {
     )
   })
 
-  it('approveTurn 走同一 SSE 传输：payload 为 approval_request_id/approved 且事件分发', async () => {
+  it('approveTurn 走同一 SSE 传输：payload 携带逐工具决策和原因', async () => {
     localStorage.setItem('cb_access_token', ACCESS)
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
       sseResponse([
@@ -251,7 +269,10 @@ describe('ChatApi.streamTurn SSE', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const events: ChatSseEvent[] = []
-    await chat.approveTurn('s1', 'ar-000000000001', true, (e) => {
+    await chat.approveTurn('s1', 'ar-000000000001', [
+      { tool_call_id: 'pyd_ai_1', decision: 'approve' },
+      { tool_call_id: 'pyd_ai_2', decision: 'regenerate', reason: '数量应为 12 件' },
+    ], (e) => {
       events.push(e)
     })
 
@@ -265,7 +286,10 @@ describe('ChatApi.streamTurn SSE', () => {
     expect(new Headers(init?.headers as HeadersInit).get('Authorization')).toBe(`Bearer ${ACCESS}`)
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       approval_request_id: 'ar-000000000001',
-      approved: true,
+      decisions: [
+        { tool_call_id: 'pyd_ai_1', decision: 'approve' },
+        { tool_call_id: 'pyd_ai_2', decision: 'regenerate', reason: '数量应为 12 件' },
+      ],
     })
   })
 

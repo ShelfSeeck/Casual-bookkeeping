@@ -40,8 +40,9 @@
 - 双层 token：**access token** + **refresh token**，两者均为 JWT，claims 携带 `phone` + `device_id` + `token_type` + `exp`。
 - `token_type`：access 为 `"access"`，refresh 为 `"refresh"`；鉴权依赖校验 `token_type == "access"`，refresh 端点校验 `token_type == "refresh"`，防止 refresh 被误当 access 使用。
 - 具体有效期：**access 24 小时 + refresh 180 天**。使用节奏为天天记、天天同步，离线概率低。
-- **吊销靠信任状态表，不存 token**：`account_devices` 表记录 `(account_phone, device_id)` 组合是否有效；踢出设备 = 将该行标记失效或删除。refresh 请求验签后必须查表确认组合仍有效，被踢即拒绝。
-- 吊销粒度是"(账户, 设备)"而非单个 token，对"一个设备一个会话"的模型完全等价。
+- access token 保持无状态；refresh token 增加随机 `jti` 与 `refresh_family_id`。服务端只在 `account_devices` 保存当前 refresh 的 SHA-256 哈希、`jti` 和令牌族，不保存 token 明文。
+- refresh 每次使用都以当前哈希做原子 compare-and-swap 轮换；同一旧 token 再次出现即视为重放，撤销该设备的当前令牌族，要求重新登录。
+- 吊销粒度仍是 `(账户, 设备)` 会话；设备踢出、登出和密码修改都会使相关 refresh 族失效。重新登录同一设备会创建新族，旧族到达时不能误伤新族。
 - 过期时间双存：JWT `exp`（验签判断）+ 表 `refresh_expires_at`（供清理过期会话脚本使用），刷新时滚动续期两处同步更新。
 
 ### 2.6 前端 token 存储
@@ -83,7 +84,9 @@
 
 ### 2.11 登录防刷
 
-- **失败次数限速**：同一手机号登录失败 5 次后锁定 15 分钟（仅手机号维度，不做 IP 计数，避免内网 NAT 共享出口 IP 误伤）。
+- **来源组合硬限速**：按 ASGI 直连来源 IP + 规范化手机号组合计数；同一组合失败 5 次后限制 15 分钟。不同可信来源的正确密码仍可登录，攻击者不能仅凭目标手机号把账户全局锁死。
+- **账户温和退避**：账户维度只施加 50ms 起、最大 1s 的有界指数延迟，不据此拒绝正确密码；成功登录清零。
+- 来源只取服务器提供的直连 peer，不直接信任客户端可伪造的 `X-Forwarded-For`。反向代理部署时应先在服务器层配置可信代理。
 - 计数放**内存**，不建表（进程重启即重置，可接受）。
 - MVP 不做图形/短信验证码（等以后加短信验证码登录时一并考虑）。
 
@@ -170,7 +173,7 @@
 | error_code | HTTP | 含义 |
 | --- | --- | --- |
 | `invalid_credentials` | 401 | 登录失败（手机号或密码错），不泄露账户是否存在 |
-| `login_blocked` | 401 | 防刷锁定（同一手机号失败 5 次 / 15 分钟） |
+| `login_blocked` | 401 | 当前来源 IP / 账户组合失败过多（5 次 / 15 分钟） |
 | `invalid_token` | 401 | token 缺失、无效、过期、类型不符、验签失败 |
 | `session_revoked` | 403 | 设备被踢或组合失效，需重新登录 |
 | `account_disabled` | 403 | 账户停用，无法登录 / 已登录会话立即失效 |
@@ -183,14 +186,14 @@
 3. access JWT：签发含 `phone` + `device_id` + `exp`；验签通过/伪造签名拒绝 ✅
 4. refresh JWT：同样含 `phone` + `device_id` + `exp`；验签通过/伪造拒绝 ✅
 5. 过期判断：`exp` 已过期 / 未过期边界 ✅
-6. 防刷计数：失败计数、锁定阈值、锁定到期自动解锁、按 key 隔离 ✅
+6. 防刷计数：失败计数、来源组合锁定、账户有界退避、锁定到期自动解锁、按 key 隔离 ✅
 
 ### 3.4 接口测试用例清单（B 层）
 
 1. 登录成功 → 返回 access + 设置 refresh cookie ✅
 2. 登录失败（密码错）→ 401，且记一次失败 ✅
-3. 防刷：连续失败 5 次 → 第 6 次即使密码对也锁定 ✅
-4. 刷新：有效 refresh → 新 access + 新 refresh（滚动）✅
+3. 防刷：同一来源组合连续失败 5 次后受限；不同可信来源的正确密码仍可登录 ✅
+4. 刷新：有效 refresh → 新 access + 新 refresh（滚动）；旧 refresh 重放会吊销当前族 ✅
 5. 刷新：被踢出设备的 refresh → 拒绝 ✅
 6. 刷新：过期 refresh → 拒绝 ✅
 7. 登出 → 会话删除，refresh 不能再刷新 ✅
@@ -236,10 +239,13 @@
 | `device_id` | TEXT | 主键一部分，登录设备标识 |
 | `status` | TEXT | `active` / `revoked`；踢出 = 置 `revoked` 或删除 |
 | `refresh_expires_at` | TEXT | refresh token 过期时间（= 最后登录/刷新时间 + 180 天），供清理过期会话 |
+| `refresh_token_hash` | TEXT / NULL | 当前 refresh token 的 SHA-256 哈希；旧库迁移后为空，需重新登录 |
+| `refresh_family_id` | TEXT / NULL | 当前登录产生的 refresh 令牌族 |
+| `refresh_jti` | TEXT / NULL | 当前可用 refresh 的随机唯一标识 |
 | `created_at` | TEXT | 首次登记时间 |
 | `last_active_at` | TEXT | 最后活跃时间 |
 
-约束：`(account_phone, device_id)` 组合主键，同一账户在同一设备同时只存在一个会话。token 本身不落库，验签后查本表确认组合有效。
+约束：`(account_phone, device_id)` 组合主键，同一账户在同一设备同时只存在一个会话。token 明文不落库；refresh 仅存当前哈希并原子轮换。
 
 ## 6. 未定事项
 

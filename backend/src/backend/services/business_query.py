@@ -16,6 +16,15 @@ from backend.repositories.customers import CustomersRepository
 from backend.repositories.service_categories import ServiceCategoriesRepository
 from backend.repositories.work_orders import WorkOrdersRepository
 
+class DraftValidationError(ValueError):
+    """AI 工单草案预校验失败；error_code 可稳定返回模型与前端。"""
+
+    def __init__(self, error_code: str, message: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.message = message
+
+
 _WORK_ORDER_SNAPSHOT_FIELDS = (
     "sync_id",
     "work_order_date",
@@ -188,6 +197,123 @@ class BusinessQueryService:
             for row in rows
         ]
         return {"items": items}
+
+    def prepare_WorkOrderDraft(
+        self, account_phone: str, tool_name: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """统一解析封闭 schema、只读预校验并补齐工单快照字段。"""
+        # 正常模型调用和进程重启恢复都必须经过同一组 Pydantic 模型；
+        # 局部导入避免 business_tools -> BusinessQueryService 的模块初始化环。
+        from pydantic import ValidationError
+        from backend.tools.business_tools import (
+            CreateWorkOrderDraftInput,
+            UpdateWorkOrderDraftInput,
+        )
+
+        try:
+            if tool_name == "create_work_order":
+                args = CreateWorkOrderDraftInput.model_validate(args).model_dump(
+                    exclude_unset=True
+                )
+            elif tool_name == "update_work_order":
+                args = UpdateWorkOrderDraftInput.model_validate(args).model_dump(
+                    exclude_unset=True
+                )
+            else:
+                raise DraftValidationError("draft_tool_invalid", "不支持的写草案工具")
+        except ValidationError as exc:
+            raise DraftValidationError(
+                "draft_fields_invalid", "草案字段不符合封闭业务模型"
+            ) from exc
+        if tool_name == "create_work_order":
+            fields = dict(args.get("fields") or {})
+            mapping = self._resolve_customer_mapping(
+                account_phone, fields.get("customer_id"), fields.get("work_order_date")
+            )
+            self._validate_service_option(
+                account_phone, fields.get("service_category"), fields.get("service_item")
+            )
+            normalized = {
+                **fields,
+                "customer_code": mapping["customer_code"],
+                "customer_name": mapping["customer_name"],
+                "is_completed": fields.get("is_completed")
+                if fields.get("is_completed") is not None
+                else 0,
+            }
+            return {"fields": normalized}
+
+        if tool_name != "update_work_order":
+            raise DraftValidationError("draft_tool_invalid", "不支持的写草案工具")
+
+        sync_id = args.get("entity_sync_id")
+        base_version = args.get("base_version")
+        existing = self._work_orders.get_BySyncId(account_phone, sync_id)
+        if existing is None or existing.get("deleted_at") is not None:
+            raise DraftValidationError("entity_not_found", "要修改的工单不存在或已删除")
+        if existing["row_version"] != base_version:
+            raise DraftValidationError(
+                "draft_base_version_conflict", "工单版本已变化，请重新查询后生成草案"
+            )
+
+        fields = dict(args.get("fields") or {})
+        merged = {**existing, **fields}
+        if "customer_id" in fields or "work_order_date" in fields:
+            mapping = self._resolve_customer_mapping(
+                account_phone, merged.get("customer_id"), merged.get("work_order_date")
+            )
+            fields["customer_code"] = mapping["customer_code"]
+            fields["customer_name"] = mapping["customer_name"]
+        if "service_category" in fields or "service_item" in fields:
+            self._validate_service_option(
+                account_phone, merged.get("service_category"), merged.get("service_item")
+            )
+        return {
+            "entity_sync_id": sync_id,
+            "base_version": base_version,
+            "fields": fields,
+        }
+
+    def _resolve_customer_mapping(
+        self, account_phone: str, customer_id: Any, work_order_date: Any
+    ) -> dict[str, Any]:
+        if not isinstance(customer_id, int) or isinstance(customer_id, bool):
+            raise DraftValidationError("customer_not_found", "客户 ID 无效")
+        customer = self._customers.get_ByCustomerId(account_phone, customer_id)
+        if customer is None or customer.get("archived_at") is not None:
+            raise DraftValidationError("customer_not_found", "客户不存在或已归档")
+        if not isinstance(work_order_date, str):
+            raise DraftValidationError("customer_mapping_invalid", "工单日期无效")
+        mappings = self._mappings.list_ActiveByCustomerId(
+            account_phone, customer_id, work_order_date
+        )
+        if not mappings:
+            raise DraftValidationError(
+                "customer_mapping_invalid", "该客户在工单日期没有有效编号映射"
+            )
+        if len(mappings) > 1:
+            raise DraftValidationError(
+                "customer_mapping_ambiguous", "该客户在工单日期存在多个有效编号映射"
+            )
+        return mappings[0]
+
+    def _validate_service_option(
+        self, account_phone: str, category_name: Any, item_name: Any
+    ) -> None:
+        if not isinstance(category_name, str) or not category_name.strip():
+            raise DraftValidationError("service_option_disabled", "服务大类无效")
+        category = self._categories.get_ByCategoryName(account_phone, category_name)
+        if category is None or category.get("is_active") != 1:
+            raise DraftValidationError("service_option_disabled", "服务大类不存在或已停用")
+        if item_name is None:
+            return
+        subcategories = self._parse_subcategories(category.get("subcategories_json"))
+        for item in subcategories:
+            if item.get("name") == item_name:
+                if item.get("is_active") is True:
+                    return
+                raise DraftValidationError("service_option_disabled", "服务小类已停用")
+        raise DraftValidationError("service_item_mismatch", "服务小类不属于所选大类")
 
     @staticmethod
     def _parse_subcategories(raw: str | None) -> list[dict[str, Any]]:

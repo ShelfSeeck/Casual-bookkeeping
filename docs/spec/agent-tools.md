@@ -1,8 +1,6 @@
 ---
-status: partially-outdated
-as_of: 2026-08-16
-outdated_sections:
-  - "§1.2 明确不做：『前端确认 UI 只提供接口与类型，不实现可视化确认组件』——AiChatView 确认卡片已实现，以 AGENTS.md 当前协作状态为准"
+status: current
+as_of: 2026-08-17
 ---
 
 # Agent 业务工具与确认握手实现设计
@@ -22,7 +20,6 @@ outdated_sections:
 
 ### 1.2 明确不做
 
-- 前端确认 UI：只提供接口与类型（§8），不实现可视化确认组件。
 - 后端直接写业务库（`docs/data-model.md` 已定边界）。
 - 客户 / 映射 / 服务选项的写草案工具：一期 AI 只帮改工单，配置维护留给页面（工具注册表后续按同一模式加）。
 - approve 后由 agent 汇报同步结果（当前回合在握手后收尾，不 resume 汇报，登记在 `docs/spec/chat-agent.md` §11）。
@@ -30,7 +27,7 @@ outdated_sections:
 ## 2. 核心原则
 
 1. **后端工具永不落库**：写工具的执行业务只是校验回执（`draft_acknowledged`）；权威写入只经前端 outbox → Push。
-2. **工具参数即草案**：`tool_confirm_request.draft` 原样携带工具参数；前端展示与提交的是同一份数据（`docs/spec/chat-agent.md` §6.2）。
+2. **预校验材料即确认内容**：工具参数先经过封闭 schema 和后端只读业务校验；`tool_confirm_request.calls[].draft` 携带补齐客户快照后的最终材料，前端再按本地数据复验，展示与提交使用同一份规范化结果。
 3. **运行时来源字段不进工具 schema**：`operation_id`、`actor_type=ai`、`source_turn_id` 由前端确认时补齐（工具参数不含它们，避免模型编 ID）。
 4. **读工具只读**：所有读工具只调 `BusinessQueryService`，签名不含任何写入口。
 5. **白名单过滤**：`allowed_tools` 继续生效（读工具与写草案工具都受控）。
@@ -43,10 +40,11 @@ outdated_sections:
   → ChatService 构建 Agent（读工具 + 写草案工具，deps=BusinessToolDeps）
   → 模型可能调读工具：立即执行，结果回模型，继续输出文本
   → 模型调写草案工具：run 暂停，run.result.output = DeferredToolRequests
-  → SSE: tool_confirm_request { request_id, tool_call_id, tool_name, draft }
+  → SSE: tool_confirm_request { request_id, calls[] }（最多 20 条）
   → 部分回合落库（messages_json = all_messages）
-  → 前端确认（UI 接口）→ 本地 Dexie 写业务 + outbox（operationId 新生成）→ Push
-  → POST /chat/sessions/{sid}/turns { approval_request_id, approved }
+  → 前端全屏审核：逐条批准 / 拒绝 / 重新生成并填写原因
+  → 批准项合并为一个原子操作，写本地 Dexie + outbox → Push
+  → POST /chat/sessions/{sid}/turns { approval_request_id, decisions[] }
   → ChatService 加载部分回合 + DeferredToolResults → 续跑
   → 握手工具执行（只回执）→ 模型收尾文本 → done + 回合覆盖落库
 ```
@@ -80,33 +78,30 @@ class BusinessToolDeps:
 
 ### 4.3 写草案工具
 
-一期只做工单（配置类写工具后续按同一模式注册）。工具参数形状与 `docs/data-model.md` §6.3 草案一致，**不含** `operation_id / actor_type / source_turn_id`：
+一期只做工单。两个工具都使用 `extra="forbid"` 的 Pydantic 封闭模型；未知字段以及账户、同步、版本、删除等元字段会在进入工具前被拒绝。
 
-| 工具名 | 参数 | 说明 |
+| 工具名 | 参数 | 模型可控字段 |
 | --- | --- | --- |
-| `create_work_order` | `entity_sync_id: str \| None`, `fields: dict` | `entity_sync_id` 可空（前端确认时生成 `sync-<12hex>`）；`fields` 为工单业务字段（`work_order_date`, `customer_id`, `customer_code`, `customer_name`, `service_category`, `service_item\|null`, `quantity`, `unit`, `unit_price_cents\|null`）。模型先用读工具拿到映射快照再填 |
-| `update_work_order` | `entity_sync_id: str`, `base_version: int`, `fields: dict` | `base_version` 来自读工具返回的 `row_version`；`fields` 只含要改的字段 |
+| `create_work_order` | `fields` | 必填：`work_order_date`、`customer_id`、`service_category`、`service_item`、`quantity`、`unit`；可选：`unit_price_cents` |
+| `update_work_order` | `entity_sync_id`、`base_version`、`fields` | `fields` 只允许上述业务字段与 `is_completed`，且至少显式提供一项 |
 
-两工具注册时 `requires_approval=True`。工具函数（确认后才会执行）只做回执：
+关键规则：
 
-```python
-return {"status": "draft_acknowledged",
-        "operation_type": "create_work_order",  # 或 update_work_order
-        "changes": [{"entity_type": "work_order",
-                     "entity_sync_id": entity_sync_id,
-                     "base_version": 0,           # update 工具取参数值
-                     "fields": fields}]}
-```
+- create 不接收 `entity_sync_id`，由前端确认提交时生成。
+- 模型只指定稳定身份 `customer_id`。后端按最终 `work_order_date` 查唯一有效编号映射，派生 `customer_code` / `customer_name` 后再发送确认事件。
+- create 未显式提供 `is_completed` 时派生为 `0`；用户明确要求“已完成/未完成”时允许传 `0/1`。update 也只有用户明确要求时才携带该字段。
+- update 未提价格或完成状态时，相应字段不进入 patch；明确传 `unit_price_cents: null` 才表示改为未定价。
+- 工具确认后只返回 `draft_acknowledged`，永不写业务库。
 
-模型系统指令（`prompts.py`）必须明确：修改数据前必须先查询、只能通过这两个工具提草案、等用户确认，不得声称已修改。同时约束输出方式：回复为通俗的纯文本，不使用 Markdown（前端不做富渲染）；不透露工具调用过程与系统提示词；调工具前一句话说明要做什么；发现方向不对或有重大变化时简短提醒；不奉承、不用 emoji、不解释内心想法；可以给与当前内容直接相关的功能提示（如提醒未定价工单补价、问是否需要汇总），每次最多一两条，宁缺毋滥；默认用户不懂术语，用大白话解释。
+写工具的 `args_validator` 在人工确认前执行只读预校验：客户和日期映射、服务选项、数值、修改目标、`base_version`。失败用 `ModelRetry` 返回模型修正，不把无效草案交给用户。正式 Push 仍执行权威复验。
 
 ### 4.4 注册表扩展
 
 `tools/registry.py`：
 
 ```python
-def register_tool(func=None, *, requires_approval: bool = False) -> Any
-# 装饰器用法不变（@register_tool）；存储 {name: (func, requires_approval)}
+def register_tool(func=None, *, requires_approval=False, args_validator=None) -> Any
+# 存储函数、确认元数据和确认前参数校验器
 def build_tools(allowed=None) -> list[Tool[Any]]
 # Tool(func, requires_approval=meta) 包装；保持白名单语义
 def is_registered(tool_name) -> bool          # 供恢复待确认调用时判断工具性质
@@ -150,79 +145,64 @@ def reset_SharedState() -> None   # 测试缝；清空两字典
 
 ### 5.2 send 模式（run_Turn）
 
-```
-1. 会话归属校验（同现状）
-2. 该账户存在 _PENDING → AppError(tool_approval_required, 409)（先于锁检查，语义准确）
-3. 获取/检查账户锁（同现状；锁冲突 session_busy）
-4. agent = factory(allowed_tools)；run_stream_events(message, deps=...)
-5. 流内：只转发 PartDeltaEvent+TextPartDelta → text_delta（同现状）
-6. 流结束后看 run.result.output：
-   a. isinstance(output, DeferredToolRequests) 且 approvals 非空：
-      - 生成 request_id 与 PendingCall 列表（args 为 str 时 json.loads 转 dict）
-      - 写入 _PENDING[account_phone]
-      - upsert_Turn(turn_id, session_id, dump_json(run.result.all_messages()))  ← 部分回合
-      - 逐条 yield tool_confirm_request 事件（draft = args dict 原样）
-      - 不 yield done（回合暂停）
-   b. 否则：upsert_Turn(... new_messages_json()) + done（同现状）
-7. 异常映射同现状；锁 finally 释放
-```
+1. 完成会话归属、pending 与单飞锁检查。
+2. Agent 产生 `DeferredToolRequests` 后，要求本批写调用数量为 `1..20`。
+3. 每条调用再次通过 `BusinessQueryService.prepare_WorkOrderDraft` 做防御性预校验和快照派生。
+4. 整批部分回合落库，并只发送一个 `tool_confirm_request`，其中 `calls[]` 包含全部待确认调用；不发送 `done`。
+5. 无效草案不进入 `_PENDING`，流以 `done.error=draft_validation_failed` 结束。
 
 ### 5.3 approve 模式（approve_Turn）
 
-```
-1. pending = _PENDING.get(account_phone)
-   - None → AppError(approval_not_found, 404)
-   - pending.request_id != approval_request_id → AppError(tool_approval_required, 409)
-2. 账户锁：占用 → session_busy（409）
-3. 从 chat_turns 读 pending.turn_id 的 messages_json；不存在 → turn_not_found
-   ModelMessagesTypeAdapter.validate_json 还原消息列表
-4. DeferredToolResults = pending.requests.build_results(
-       approvals={pending 每个 tool_call_id: approved})
-   approved=True → 握手工具执行（只回执）；False → ToolDenied 回传模型
-5. agent.run_stream_events(None, message_history=messages, deferred_tool_results=results, deps=...)
-6. 流内转发 text_delta；结束后 upsert_Turn(最终 new_messages_json) + done
-7. 成功后清除 _PENDING[account_phone]；模型异常时保留 pending（允许前端重发 approve）；锁 finally 释放
-```
+确认请求按 `tool_call_id` 为本批每条调用提供一个决策：
+
+- `approve`：转换为 `ToolApproved()`。
+- `reject`：必须带非空 `reason`，转换为明确要求“不再生成”的 `ToolDenied(message)`。
+- `regenerate`：必须带非空 `reason`，转换为明确要求按原因重做的 `ToolDenied(message)`。
+
+决策必须完整覆盖当前批次，未知、重复、缺失调用或缺少原因均返回 `invalid_approval`。批准项的业务写入由前端合并成一个原子操作；后端工具仍只回执。
+
+续跑结束后：
+
+- 若模型正常收尾，整体覆盖回合、清 pending、发送 `done`。
+- 若模型再次产生写草案，重新预校验并建立新的 pending，发送新的批量确认事件，不发送 `done`，绝不自动批准第二批。
+- 模型调用失败保留当前 pending，前端可只重试 AI 续接，不重复本地业务写入。
 
 ### 5.4 进程重启后的恢复
 
-部分回合已落库（步骤 6a）。approve 时若内存 pending 丢失但回合存在且「最后响应里有未回执的 requires_approval 工具调用」，从消息历史重建 `DeferredToolRequests`：
-
-```python
-recover_PendingApprovals(messages: list[ModelMessage]) -> DeferredToolRequests | None
-# 遍历：记录每个 tool_call_id 的 ToolCallPart 与 ToolReturnPart 回执集合
-# 取「无回执」的 ToolCallPart，且工具名在注册表 requires_approval → approvals
-# 有结果则配合回合记录重建 pending（request_id 重新生成，返回新 request_id 由事件带给前端）
-```
-
-实现为 `services/chat.py` 内部函数，供 `approve_Turn` 在内存 pending 缺失时使用。
+内存 pending 丢失时，从已落库的部分回合恢复所有未回执写调用，重新执行同一预校验并生成新的批次 `request_id`。已存在 `ToolReturnPart` 的调用不会恢复。
 
 ### 5.5 路由（routers/chat.py）
 
-`POST /chat/sessions/{sid}/turns` 一个模型、两种模式：
+approve 请求：
 
-```python
-class TurnRequest(BaseModel):
-    turn_id: str | None = None
-    message: str | None = None
-    allowed_tools: list[str] | None = None
-    approval_request_id: str | None = None
-    approved: bool | None = None
+```json
+{
+  "approval_request_id": "ar-...",
+  "decisions": [
+    {"tool_call_id": "call-1", "decision": "approve"},
+    {"tool_call_id": "call-2", "decision": "regenerate", "reason": "数量应为 12"},
+    {"tool_call_id": "call-3", "decision": "reject", "reason": "重复工单"}
+  ]
+}
 ```
-
-- `approval_request_id is not None` → approve 模式：`approved is None` → `AppError(invalid_approval, 400)`；调 `service.approve_Turn(account_phone, approval_request_id, approved)`。
-- 否则 send 模式：`turn_id`/`message` 缺任一 → `AppError(invalid_request, 400)`；调 `run_Turn(..., allowed_tools=body.allowed_tools)`。
-- 流开始前做会话归属校验（approve 模式用 pending.session_id 做同样校验，避免绕过）。
 
 ### 5.6 SSE 事件
 
-`tool_confirm_request` 帧：
-
 ```json
-{"type":"tool_confirm_request","request_id":"ar-...","tool_call_id":"pyd_ai_...","tool_name":"update_work_order","draft":{"entity_sync_id":"sync-...","base_version":4,"fields":{"quantity":12}}}
+{
+  "type": "tool_confirm_request",
+  "request_id": "ar-...",
+  "calls": [
+    {
+      "tool_call_id": "call-1",
+      "tool_name": "create_work_order",
+      "draft": {"fields": {"work_order_date": "2026-08-17", "customer_id": 1, "customer_code": "001", "customer_name": "甲", "is_completed": 0}}
+    }
+  ]
+}
 ```
 
-其余帧沿用 `docs/spec/chat-agent.md` §5；`done` 只在回合真正结束时发。
+`draft` 是经过预校验和派生后的最终展示/提交材料；一批最多 20 条。`done` 只在回合真正结束时发送。
 
 ## 6. BusinessQueryService（`services/business_query.py`）
 
@@ -234,7 +214,7 @@ class TurnRequest(BaseModel):
 - `CustomerCodeMappingsRepository.list_Mappings(account_phone, *, customer_code=None, on_date=None, limit=100, offset=0)`。
 - `ServiceCategoriesRepository.list_Categories(account_phone, *, include_inactive=False)`。
 
-参数校验在仓库层：`limit` 超界收窄到上限；`on_date`/`date_from` 等格式非法 → 返回空结果而非抛错（读工具容错）。
+参数校验在仓库层：`limit` 超界收窄到上限；`on_date`/`date_from` 等格式非法 → 返回空结果而非抛错（读工具容错）。`prepare_WorkOrderDraft` 只读校验工单草案，并按 `customer_id + work_order_date` 派生编号与名称快照。
 
 ## 7. 错误与安全
 
@@ -243,46 +223,17 @@ class TurnRequest(BaseModel):
 - 模型报出的 `base_version`/`sync_id` 以读工具返回值里的 `row_version`/`sync_id` 为准（指令约束）；前端确认时仍做本地即时校验，Push 时后端权威校验兜底，错版本走既有冲突管线。
 - 聊天域错误码沿用 §4.3（`tool_approval_required` / `approval_not_found` / `invalid_approval` 从「预留」转为「真实触发」）。
 
-## 8. 前端接口（确认 UI 留接口，不实现界面）
+## 8. 前端批量审核实现
 
-新增 `frontend/src/services/chatApi.ts` 与 `frontend/src/services/chatApproval.ts`：
+前端实现位于：
 
-```ts
-// chatApi：会话/回合/SSE 契约（docs/spec/chat-agent.md §4/§5）
-export interface ChatSseEvent = { type:'text_delta'; content:string }
-  | { type:'tool_confirm_request'; request_id:string; tool_call_id:string; tool_name:string; draft: unknown }
-  | { type:'done'; turn_id:string; error:{error_code:string;message:string}|null }
+- `services/chatApi.ts`：解析批量 `tool_confirm_request.calls[]`，提交逐工具 `decisions[]`。
+- `services/chatApprovalBatch.ts`：最多 20 条；严格字段白名单；按 `customer_id + work_order_date` 复验客户快照；生成新建完整内容、修改前快照与实际差异；把批准项组装成一条原子 `MutationInput`。
+- `services/chatApproval.ts`：单条兼容入口，同样复用批量严格校验，不保留旧的任意 `fields` 通道。
+- `state/appState.ts`：保存审核状态与逐条决策；本地写入成功后单独续接 AI；续接失败只重试对话，不重复业务写入；页面刷新后恢复对应会话和审核材料。
+- `components/chat/AiDraftReview.vue`：MD3 全屏审核页；默认逐条批准，可改为拒绝或重新生成；原因按条目保存；提交前显示批量汇总和二次确认。
 
-export class ChatApi {
-  createSession(title): Promise<ChatSession>
-  listSessions(): Promise<ChatSession[]>
-  listTurns(sid, afterTurnId?, limit?): Promise<{turns; nextCursor}>
-  streamTurn(sid, payload: {turn_id?; message?; allowed_tools?; approval_request_id?; approved?},
-             onEvent: (e: ChatSseEvent)=>void, signal?: AbortSignal): Promise<void>
-  // approve 模式同样是 SSE（chat-agent.md §4.4 两种模式响应均为 text/event-stream）：
-  approveTurn(sid, approvalRequestId, approved, onEvent, signal?): Promise<void>
-}
-// SSE 用 fetch + ReadableStream（POST 不支持 EventSource）；start 阶段 401 → refreshNow 后重试一次
-
-// chatApproval：确认 UI 的接口契约（本期无实现组件）
-export interface ChatApprovalUi {
-  /** 收到写草案时调用；resolve true 才继续 approve+本地提交。默认实现始终 false。 */
-  requestApproval(draft: unknown): Promise<boolean>
-}
-export const notConnectedApprovalUi: ChatApprovalUi
-export function buildAiOperationFromDraft(
-  turnId: string, toolName: string, draft: unknown
-): MutationInput | null
-// draft 即 tool_confirm_request.draft（工具原始参数，§5.6）：
-//   create_work_order → {entity_sync_id: string|null, fields}
-//   update_work_order → {entity_sync_id: string, base_version: number, fields}
-// 适配器按 toolName 推导 operation_type/entity_type；填充 actorType='ai'、sourceTurnId=turnId；
-// create 的 entity_sync_id 为 null 时生成 sync-<12hex>；update 要求 base_version 为正整数。
-// MutationInput 本身不含 operationId —— 由 MutationService.commit 生成（docs/data-model.md §6.1）。
-// 返回可直接喂给 MutationService.commit 的输入；形状不合法返回 null。
-```
-
-后续页面收到 `tool_confirm_request` 时：存在注入的 `ChatApprovalUi` → 调 `requestApproval(draft)`；确认后先 `buildAiOperationFromDraft(turnId, tool_name, draft)` + `MutationService.commit` + `SyncManager.sync()`，再 `approveTurn(sid, request_id, true, onEvent)`；拒绝则 `approveTurn(..., false, onEvent)`。**本期** `ChatApprovalUi` 使用 `notConnectedApprovalUi`（始终 false），没有确认 UI 就没有任何写操作。
+批准项使用同一个 `operation_id`，任一 change 冲突或 rejected 时整批回滚。拒绝和重新生成通过 `ToolDenied(message)` 把原因返回模型；续跑再次产生写工具调用时建立新的 pending 批次，再次等待确认。
 
 ## 9. 最终文件清单
 
@@ -297,8 +248,11 @@ export function buildAiOperationFromDraft(
 | `backend/src/backend/deps.py` | `get_BusinessQueryService`；ChatService 注入 query service |
 | `backend/src/backend/services/prompts.py` | 工具使用说明、「先查后改、必须确认」约束与纯文本说话方式约束 |
 | `frontend/src/services/chatApi.ts` | 会话/回合/SSE 客户端 |
-| `frontend/src/services/chatApproval.ts` | 确认 UI 接口 + 草案转 MutationInput |
-| `frontend/src/views/AiChatView.vue` | 会话流页面（确认 UI 仅接口） |
+| `frontend/src/services/chatApprovalBatch.ts` | 批量草案复验、展示材料与原子 `MutationInput` |
+| `frontend/src/services/chatApproval.ts` | 单条兼容入口，复用批量严格校验 |
+| `frontend/src/state/appState.ts` | 审核状态、逐条决策、刷新恢复与续接重试 |
+| `frontend/src/components/chat/AiChatView.vue` | 会话流与草案审核入口 |
+| `frontend/src/components/chat/AiDraftReview.vue` | MD3 全屏批量审核页 |
 | 测试 | `tests/services/test_business_query.py`、`tests/services/test_agent_tools.py`、扩展 `test_chat.py`、前端 `chatApi.test.ts` / `chatApproval.test.ts` |
 
 ## 10. 测试策略
@@ -306,7 +260,7 @@ export function buildAiOperationFromDraft(
 - 读工具：真实 `tmp_path` SQLite 造数据 → 直接调工具函数（构造 `RunContext`）→ 断言返回结构与过滤/汇总正确。
 - 写草案：注册表断言 `requires_approval` 元数据；用 `FunctionModel` 强制模型调写工具 → 断言 run 暂停、`run.result.output` 为 `DeferredToolRequests`、工具函数**未执行**；approve 续跑后工具执行且输出收尾文本（不落业务表）。
 - ChatService：沿用 `agent_factory` 测试缝，注入 FakeAgent/FakeRun 分别模拟「文本直出」「写草案暂停」「approve 续跑」，断言事件序列、部分回合落库与覆盖、pending 清除、错误码（`approval_not_found` / `tool_approval_required` / `invalid_approval`）。
-- 前端：`chatApi` 用 mock fetch 验证 SSE 解析与 401 重试；`chatApproval` 验证草案形状校验、ID 补齐与 `notConnectedApprovalUi` 的拒绝行为。
+- 前端：`chatApi` 验证批量 SSE 与逐项 decisions；`chatApprovalBatch` 验证字段白名单、客户快照复验、修改差异、20 条上限和原子操作；`chatApproval` 验证单条兼容入口不能绕过严格校验。
 
 ## 11. 边界
 

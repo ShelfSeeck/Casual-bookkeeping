@@ -297,3 +297,31 @@ def test_order_delete_sets_deleted_at(connection):
     record = repo.get_BySyncId("13800000000", "sync-000000000001")
     assert record["deleted_at"] == "2026-08-12T00:00:00+00:00"
     assert record["row_version"] == 2
+
+
+def test_apply_Write_ignores_tampered_reserved_fields(customer_repo):
+    # 安全加固：create 与 update 中即使 fields 携带伪造的 account_phone、sync_id 或 row_version，
+    # 也绝不覆盖真实账户与同步主键。
+    result = customer_repo.apply_Write(
+        "13800000000",
+        "sync-000000000001",
+        {
+            "account_phone": "13900000001",
+            "sync_id": "sync-tampered-0001",
+            "row_version": 999,
+            "canonical_name": "某某厂",
+        },
+        0,
+    )
+    assert result.status == "applied"
+    assert result.new_row_version == 1
+
+    # 139 账户查不到，138 账户按原始 sync_id 查得到
+    assert customer_repo.get_BySyncId("13900000001", "sync-000000000001") is None
+    assert customer_repo.get_BySyncId("13800000000", "sync-tampered-0001") is None
+    record = customer_repo.get_BySyncId("13800000000", "sync-000000000001")
+    assert record is not None
+    assert record["account_phone"] == "13800000000"
+    assert record["sync_id"] == "sync-000000000001"
+    assert record["row_version"] == 1
+    assert record["canonical_name"] == "某某厂"

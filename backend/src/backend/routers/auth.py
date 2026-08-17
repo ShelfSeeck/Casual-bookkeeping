@@ -60,11 +60,17 @@ def _clear_refresh_cookie(
 @router.post("/login", response_model=TokenResponse)
 def login(
     body: LoginRequest,
+    request: Request,
     response: Response,
     auth: AuthService = Depends(get_AuthService),
     cookie: RefreshCookieConfig = Depends(get_RefreshCookieConfig),
 ) -> TokenResponse:
-    pair: TokenPair = auth.login(body.phone, body.password, body.device_id)
+    # 只采用 ASGI 服务器提供的直连 peer；不直接信任 X-Forwarded-For，
+    # 反向代理部署时应由服务器层先配置可信代理并改写 request.client。
+    source_ip = request.client.host if request.client else "unknown"
+    pair: TokenPair = auth.login(
+        body.phone, body.password, body.device_id, source_ip=source_ip
+    )
     _set_refresh_cookie(response, cookie, pair.refresh_token)
     return TokenResponse(access_token=pair.access_token)
 

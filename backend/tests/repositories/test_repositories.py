@@ -155,6 +155,67 @@ def test_upsert_Device_updates_when_exists(connection):
     assert devices[0].refresh_expires_at == "2028-01-01T00:00:00+00:00"
 
 
+def test_refresh_token_rotation_is_compare_and_swap(connection):
+    # 当前 refresh 哈希只能原子替换一次；旧哈希再次使用不得覆盖新状态。
+    AccountsRepository(connection).create_Account(
+        "13800000000", "hash-value", "active"
+    )
+    repo = AccountDevicesRepository(connection)
+    repo.upsert_Device(
+        "13800000000",
+        "dev-a1b2c3d4e5f6",
+        "2027-01-01T00:00:00+00:00",
+        refresh_token_hash="old-hash",
+        refresh_family_id="family-1",
+        refresh_jti="jti-1",
+    )
+
+    assert repo.rotate_RefreshToken(
+        "13800000000",
+        "dev-a1b2c3d4e5f6",
+        expected_token_hash="old-hash",
+        refresh_token_hash="new-hash",
+        refresh_family_id="family-1",
+        refresh_jti="jti-2",
+        refresh_expires_at="2028-01-01T00:00:00+00:00",
+    ) is True
+    assert repo.rotate_RefreshToken(
+        "13800000000",
+        "dev-a1b2c3d4e5f6",
+        expected_token_hash="old-hash",
+        refresh_token_hash="other-hash",
+        refresh_family_id="family-1",
+        refresh_jti="jti-3",
+        refresh_expires_at="2028-01-01T00:00:00+00:00",
+    ) is False
+
+    device = repo.get_Device("13800000000", "dev-a1b2c3d4e5f6")
+    assert device is not None
+    assert device.refresh_token_hash == "new-hash"
+    assert device.refresh_jti == "jti-2"
+
+
+def test_revoke_refresh_family_does_not_revoke_newer_login_family(connection):
+    # 旧登录族的 token 到达时不能误伤同设备后来重新登录得到的新族。
+    AccountsRepository(connection).create_Account(
+        "13800000000", "hash-value", "active"
+    )
+    repo = AccountDevicesRepository(connection)
+    repo.upsert_Device(
+        "13800000000",
+        "dev-a1b2c3d4e5f6",
+        "2027-01-01T00:00:00+00:00",
+        refresh_token_hash="new-hash",
+        refresh_family_id="new-family",
+        refresh_jti="new-jti",
+    )
+
+    assert repo.revoke_RefreshFamily(
+        "13800000000", "dev-a1b2c3d4e5f6", "old-family"
+    ) is False
+    assert repo.get_ActiveSession("13800000000", "dev-a1b2c3d4e5f6") is True
+
+
 def test_revoke_Device_sets_status_revoked(connection):
     # 踢出设备 → status 从 active 变为 revoked（行保留，吊销语义，可追踪）
     AccountsRepository(connection).create_Account(

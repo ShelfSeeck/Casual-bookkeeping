@@ -1,14 +1,14 @@
-"""TokenService：JWT 签发与验签（docs/auth-structure.md §2.5）。
+"""TokenService：JWT 签发、验签与 refresh 轮换标识（docs/auth-structure.md §2.5）。
 
-双层 token（access 24h / refresh 180 天），claims 均携带 phone + device_id +
-token_type + exp。签发/校验分离：验签按 expected_type 区分用途，防止
-refresh 被误当 access 使用。时钟可注入（now_factory），便于测试模拟过期。
-吊销不依赖本类：验签通过后由 AuthService / 鉴权守卫实时查信任表。
+access token 无服务端状态；refresh token 带随机 jti + 令牌族，服务端只保存当前
+refresh 的 SHA-256 哈希。AuthService 用它完成原子轮换与旧 token 重放检测。
 """
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Callable
+from uuid import uuid4
 
 import jwt
 
@@ -18,7 +18,7 @@ class TokenError(Exception):
 
 
 class InvalidTokenError(TokenError):
-    """签名伪造 / 格式损坏 / 无法解析。"""
+    """签名伪造 / 格式损坏 / 必要 claim 缺失。"""
 
 
 class TokenExpiredError(TokenError):
@@ -26,7 +26,7 @@ class TokenExpiredError(TokenError):
 
 
 class TokenTypeError(TokenError):
-    """token 有效但 token_type 与期望不符（如 refresh 被当 access 用）。"""
+    """token 有效但 token_type 与期望不符。"""
 
 
 @dataclass(frozen=True)
@@ -36,14 +36,18 @@ class TokenClaims:
     phone: str
     device_id: str
     token_type: str
+    jti: str | None = None
+    refresh_family_id: str | None = None
 
 
 @dataclass(frozen=True)
 class TokenPair:
-    """一次登录/刷新签发出的 access + refresh。"""
+    """一次登录/刷新签发出的 access + refresh 及 refresh 轮换元数据。"""
 
     access_token: str
     refresh_token: str
+    refresh_jti: str
+    refresh_family_id: str
 
 
 def _utc_now() -> datetime:
@@ -68,28 +72,73 @@ class TokenService:
     def sign_access(self, phone: str, device_id: str) -> str:
         return self._sign(phone, device_id, "access", self._access_ttl)
 
-    def sign_refresh(self, phone: str, device_id: str) -> str:
-        return self._sign(phone, device_id, "refresh", self.refresh_ttl)
+    def sign_refresh(
+        self,
+        phone: str,
+        device_id: str,
+        *,
+        jti: str | None = None,
+        refresh_family_id: str | None = None,
+    ) -> str:
+        return self._sign(
+            phone,
+            device_id,
+            "refresh",
+            self.refresh_ttl,
+            jti=jti or uuid4().hex,
+            refresh_family_id=refresh_family_id or uuid4().hex,
+        )
 
-    def _sign(self, phone: str, device_id: str, token_type: str, ttl: int) -> str:
+    def _sign(
+        self,
+        phone: str,
+        device_id: str,
+        token_type: str,
+        ttl: int,
+        *,
+        jti: str | None = None,
+        refresh_family_id: str | None = None,
+    ) -> str:
         payload = {
             "phone": phone,
             "device_id": device_id,
             "token_type": token_type,
             "exp": self._now().timestamp() + ttl,
         }
+        if token_type == "refresh":
+            payload["jti"] = jti
+            payload["refresh_family_id"] = refresh_family_id
         return jwt.encode(payload, self._secret, algorithm="HS256")
 
-    def issue_pair(self, phone: str, device_id: str) -> TokenPair:
+    def issue_pair(
+        self,
+        phone: str,
+        device_id: str,
+        *,
+        refresh_family_id: str | None = None,
+    ) -> TokenPair:
+        refresh_jti = uuid4().hex
+        family_id = refresh_family_id or uuid4().hex
+        refresh_token = self.sign_refresh(
+            phone,
+            device_id,
+            jti=refresh_jti,
+            refresh_family_id=family_id,
+        )
         return TokenPair(
             access_token=self.sign_access(phone, device_id),
-            refresh_token=self.sign_refresh(phone, device_id),
+            refresh_token=refresh_token,
+            refresh_jti=refresh_jti,
+            refresh_family_id=family_id,
         )
 
+    @staticmethod
+    def hash_refresh(token: str) -> str:
+        """返回可安全落库比对的 refresh token SHA-256 十六进制哈希。"""
+        return sha256(token.encode("utf-8")).hexdigest()
+
     def verify(self, token: str, expected_type: str) -> TokenClaims:
-        """验签 + 过期判断 + 类型校验；失败抛 TokenError 子类。"""
-        # 关闭 pyjwt 内置 exp 校验（它用真实时钟，与注入的 now_factory 冲突），
-        # 过期判断改由本类用注入时钟完成，保证测试可模拟过期。
+        """验签 + 过期判断 + 类型/必要 claim 校验；失败抛 TokenError。"""
         try:
             payload = jwt.decode(
                 token,
@@ -97,14 +146,30 @@ class TokenService:
                 algorithms=["HS256"],
                 options={"verify_exp": False},
             )
-        except jwt.InvalidTokenError:
+            expires_at = float(payload.get("exp", 0))
+        except (jwt.InvalidTokenError, TypeError, ValueError):
             raise InvalidTokenError() from None
-        if self._now().timestamp() >= payload.get("exp", 0):
+        if self._now().timestamp() >= expires_at:
             raise TokenExpiredError()
         if payload.get("token_type") != expected_type:
             raise TokenTypeError()
+        phone = payload.get("phone")
+        device_id = payload.get("device_id")
+        if not isinstance(phone, str) or not isinstance(device_id, str):
+            raise InvalidTokenError()
+        jti = payload.get("jti")
+        family_id = payload.get("refresh_family_id")
+        if expected_type == "refresh" and (
+            not isinstance(jti, str)
+            or not jti
+            or not isinstance(family_id, str)
+            or not family_id
+        ):
+            raise InvalidTokenError()
         return TokenClaims(
-            phone=payload["phone"],
-            device_id=payload["device_id"],
+            phone=phone,
+            device_id=device_id,
             token_type=payload["token_type"],
+            jti=jti,
+            refresh_family_id=family_id,
         )

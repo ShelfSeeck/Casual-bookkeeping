@@ -67,6 +67,17 @@ class BusinessCommandService:
         # 1. 幂等查
         existing = self._operations.get_ByOperationId(operation_id)
         if existing is not None:
+            if existing["account_phone"] != account_phone:
+                return OperationResult(
+                    operation_id=operation_id,
+                    status="rejected",
+                    errors=[
+                        {
+                            "error_code": "operation_id_conflict",
+                            "message": "operation_id 已被占用",
+                        }
+                    ],
+                )
             if existing["request_hash"] == request_hash:
                 # 同一次动作重试 → 返回首次成功结果
                 import json

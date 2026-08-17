@@ -99,13 +99,15 @@ def test_sign_access_carries_claims(svc, clock):
 
 
 def test_sign_refresh_carries_claims(svc, clock):
-    # refresh 签发：含 phone + device_id + token_type=refresh + exp（180 天后）
+    # refresh 签发：除身份与 exp 外，必须有随机 jti 和令牌族供轮换/重放检测。
     token = svc.sign_refresh("13800000000", "dev-a1b2c3d4e5f6")
     payload = _decode_without_verify(token)
     assert payload["phone"] == "13800000000"
     assert payload["device_id"] == "dev-a1b2c3d4e5f6"
     assert payload["token_type"] == "refresh"
     assert payload["exp"] == clock.ts + REFRESH_TTL
+    assert len(payload["jti"]) == 32
+    assert len(payload["refresh_family_id"]) == 32
 
 
 def test_verify_accepts_valid_access(svc):
@@ -120,6 +122,22 @@ def test_verify_accepts_valid_refresh(svc):
     claims = svc.verify(token, "refresh")
     assert claims.phone == "13800000000"
     assert claims.device_id == "dev-a1b2c3d4e5f6"
+    assert claims.jti is not None
+    assert claims.refresh_family_id is not None
+
+
+def test_refresh_rotation_keeps_family_and_changes_jti(svc):
+    first = svc.issue_pair("13800000000", "dev-a1b2c3d4e5f6")
+    second = svc.issue_pair(
+        "13800000000",
+        "dev-a1b2c3d4e5f6",
+        refresh_family_id=first.refresh_family_id,
+    )
+
+    assert second.refresh_family_id == first.refresh_family_id
+    assert second.refresh_jti != first.refresh_jti
+    assert second.refresh_token != first.refresh_token
+    assert svc.hash_refresh(second.refresh_token) != svc.hash_refresh(first.refresh_token)
 
 
 def test_verify_rejects_forged_signature(svc):
@@ -225,6 +243,25 @@ def test_reset_clears_failures(limiter):
     limiter.reset("13800000000")
     assert limiter.is_locked("13800000000") is False
 
+
+def test_delay_seconds_does_not_overflow_after_thousands_of_failures(limiter):
+    key = "account:13800000000"
+    for _ in range(5000):
+        limiter.record_failure(key)
+    assert limiter.delay_seconds(key, base=0.05, maximum=1.0) == 1.0
+
+
+def test_delay_seconds_is_bounded_and_expires(limiter, clock):
+    # 账户维度只做有上限的温和退避，不作为硬锁；窗口到期后自动清零。
+    limiter.record_failure("account:13800000000")
+    assert limiter.delay_seconds("account:13800000000", base=0.1, maximum=0.5) == 0.1
+    for _ in range(5):
+        limiter.record_failure("account:13800000000")
+    assert limiter.delay_seconds("account:13800000000", base=0.1, maximum=0.5) == 0.5
+
+    clock.ts += LOCK_SECONDS
+    assert limiter.delay_seconds("account:13800000000", base=0.1, maximum=0.5) == 0.0
+
 # ---------- AuthService 登录持久化（登录响应与业务端点之间的竞态） ----------
 
 def test_login_persists_device_before_returning(database, clock):
@@ -269,3 +306,104 @@ def test_login_persists_device_before_returning(database, clock):
         ) is True
     finally:
         fresh.close()
+
+
+def test_login_source_lock_cannot_be_bypassed_by_rotating_device_id(database, clock):
+    # device_id 是未认证输入；轮换设备标识仍属于同一来源 IP + 账户限流桶。
+    from backend.errors import AuthError
+    from backend.repositories.account_devices import AccountDevicesRepository
+    from backend.repositories.accounts import AccountsRepository
+    from backend.services.auth import AuthService
+
+    conn = database.connect()
+    try:
+        accounts = AccountsRepository(conn)
+        accounts.create_Account(
+            "13800000000", PasswordService().hash("secret-password"), "active"
+        )
+        conn.commit()
+        auth = AuthService(
+            accounts,
+            AccountDevicesRepository(conn),
+            PasswordService(),
+            TokenService(
+                secret="test-secret-0123456789abcdef0123456789abcdef",
+                access_ttl=ACCESS_TTL,
+                refresh_ttl=REFRESH_TTL,
+                now_factory=clock,
+            ),
+            RateLimiter(MAX_FAILURES, LOCK_SECONDS, now_factory=clock),
+            now_factory=clock,
+            sleep_factory=lambda _seconds: None,
+        )
+        for index in range(5):
+            with pytest.raises(AuthError) as wrong:
+                auth.login(
+                    "13800000000",
+                    "wrong-password",
+                    f"dev-{index:012x}",
+                    source_ip="198.51.100.10",
+                )
+            assert wrong.value.error_code == "invalid_credentials"
+
+        with pytest.raises(AuthError) as blocked:
+            auth.login(
+                "13800000000",
+                "secret-password",
+                "dev-ffffffffffff",
+                source_ip="198.51.100.10",
+            )
+        assert blocked.value.error_code == "login_blocked"
+    finally:
+        conn.close()
+
+
+def test_refresh_replay_revokes_the_current_token_family(database, clock):
+    # 同一 refresh 第一次轮换成功；旧 token 再用视为重放并吊销整个当前族，
+    # 因而刚签发的新 refresh 也必须随即失效。
+    from backend.errors import AuthError
+    from backend.repositories.account_devices import AccountDevicesRepository
+    from backend.repositories.accounts import AccountsRepository
+    from backend.services.auth import AuthService
+
+    conn = database.connect()
+    try:
+        accounts = AccountsRepository(conn)
+        devices = AccountDevicesRepository(conn)
+        accounts.create_Account(
+            "13800000000", PasswordService().hash("secret-password"), "active"
+        )
+        conn.commit()
+        auth = AuthService(
+            accounts,
+            devices,
+            PasswordService(),
+            TokenService(
+                secret="test-secret-0123456789abcdef0123456789abcdef",
+                access_ttl=ACCESS_TTL,
+                refresh_ttl=REFRESH_TTL,
+                now_factory=clock,
+            ),
+            RateLimiter(MAX_FAILURES, LOCK_SECONDS, now_factory=clock),
+            now_factory=clock,
+            sleep_factory=lambda _seconds: None,
+        )
+
+        first = auth.login(
+            "13800000000",
+            "secret-password",
+            "dev-a1b2c3d4e5f6",
+            source_ip="198.51.100.10",
+        )
+        clock.ts += 60
+        second = auth.refresh(first.refresh_token)
+
+        with pytest.raises(AuthError) as replay:
+            auth.refresh(first.refresh_token)
+        assert replay.value.error_code == "session_revoked"
+
+        with pytest.raises(AuthError) as family_revoked:
+            auth.refresh(second.refresh_token)
+        assert family_revoked.value.error_code == "session_revoked"
+    finally:
+        conn.close()

@@ -73,6 +73,27 @@ def test_set_AccountPassword_rotates_hash(connection):
     assert not PasswordService().verify(account.password_hash, "old-password")
 
 
+def test_set_AccountPassword_revokes_existing_refresh_sessions(connection):
+    # 改密码是高风险事件：所有设备的旧 refresh 族都必须立即失效。
+    add_Account(connection, "13800000000", "old-password")
+    repo = AccountDevicesRepository(connection)
+    repo.upsert_Device(
+        "13800000000",
+        "dev-a1b2c3d4e5f6",
+        "2027-01-01T00:00:00+00:00",
+        refresh_token_hash="current-hash",
+        refresh_family_id="family-1",
+        refresh_jti="jti-1",
+    )
+
+    set_AccountPassword(connection, "13800000000", "new-password")
+
+    device = repo.get_Device("13800000000", "dev-a1b2c3d4e5f6")
+    assert device is not None
+    assert device.status == "revoked"
+    assert device.refresh_token_hash is None
+
+
 def test_set_AccountStatus_disables_and_enables(connection):
     # 停用/启用：status 在 active 与 disabled 间切换（docs §2.12 删除账户=停用）
     add_Account(connection, "13800000000", "secret-password")

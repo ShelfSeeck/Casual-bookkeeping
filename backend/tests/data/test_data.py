@@ -140,3 +140,52 @@ def test_get_Settings_returns_shared_instance():
     from backend.deps import get_Settings
 
     assert get_Settings() is get_Settings()
+
+
+def test_apply_schema_migrates_legacy_account_devices_for_refresh_rotation(tmp_path):
+    # 已部署数据库只有旧 6 列时，启动建表流程必须原位补齐轮换列且保留会话行。
+    database = Database(str(tmp_path / "legacy.db"))
+    connection = database.connect()
+    connection.executescript(
+        """
+        CREATE TABLE accounts (
+            phone TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE account_devices (
+            account_phone TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            refresh_expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_active_at TEXT NOT NULL,
+            PRIMARY KEY (account_phone, device_id)
+        );
+        INSERT INTO account_devices VALUES (
+            '13800000000', 'dev-a1b2c3d4e5f6', 'active',
+            '2027-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00',
+            '2026-01-01T00:00:00+00:00'
+        );
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    apply_schema(database)
+
+    assert {
+        "refresh_token_hash",
+        "refresh_family_id",
+        "refresh_jti",
+    } <= _table_columns(database, "account_devices")
+    verify = database.connect()
+    try:
+        row = verify.execute(
+            "SELECT status, refresh_token_hash FROM account_devices"
+        ).fetchone()
+        assert dict(row) == {"status": "active", "refresh_token_hash": None}
+    finally:
+        verify.close()
