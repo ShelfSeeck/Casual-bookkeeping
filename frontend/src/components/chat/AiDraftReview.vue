@@ -310,14 +310,13 @@ function changeRows(draft: PreparedAiDraft): ChangeRow[] {
         <div><span>批准并写入</span><strong>{{ counts.approve }} 张</strong></div>
         <div><span>要求 AI 重新生成</span><strong>{{ counts.regenerate }} 张</strong></div>
         <div><span>直接拒绝</span><strong>{{ counts.reject }} 张</strong></div>
-        <p v-if="counts.approve > 0">批准的 {{ counts.approve }} 张将作为一个原子批次提交。</p>
       </div>
     </van-dialog>
   </section>
 </template>
 
 <style scoped>
-.cb-ai-review { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; min-height: 0; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }
+.cb-ai-review { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; min-height: 0; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }
 .cb-ai-review__topbar { min-height: 64px; padding: env(safe-area-inset-top, 0) 16px 0; display: grid; grid-template-columns: 48px 1fr 48px; align-items: center; background: var(--md-sys-color-surface); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .cb-ai-review__icon-button { width: 48px; height: 48px; display: grid; place-items: center; border: 0; border-radius: var(--md-sys-shape-corner-full); color: var(--md-sys-color-on-surface); background: transparent; }
 .cb-ai-review__title-group { min-width: 0; text-align: center; }

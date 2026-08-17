@@ -82,11 +82,32 @@ export interface ConflictEntry {
   diffs: ConflictAnalysis['diffs']
 }
 
+export interface ProcessedDraftItem {
+  kind: 'create' | 'update'
+  customerText: string
+  serviceText: string
+  quantityText: string
+  priceText: string
+  statusText: string
+  decision: 'approve' | 'regenerate' | 'reject'
+  decisionText: string
+  reason?: string
+}
+
+export interface ProcessedDraftSummary {
+  total: number
+  approvedCount: number
+  regeneratedCount: number
+  rejectedCount: number
+  items: ProcessedDraftItem[]
+}
+
 export interface ChatMessage {
   id: string
   sender: 'user' | 'assistant'
   content: string
   timestamp: string
+  draftResult?: ProcessedDraftSummary
   suggestedDraft?: {
     action: 'create_order'
     data: {
@@ -451,6 +472,11 @@ class AppState {
   })
 
   setTab(tab: TabKey) {
+    if (tab === 'chat' && this.currentTab.value !== 'chat') {
+      if (!this.pendingApproval.value && !this.chatBusy.value && !this.isNewChat.value) {
+        this.startNewChat()
+      }
+    }
     this.currentTab.value = tab
   }
 
@@ -810,6 +836,26 @@ class AppState {
         }
       }
       if (messages.length > 0) {
+        const localMsgs = this.loadLocalChatMessages(sessionId)
+        if (localMsgs && localMsgs.length > 0) {
+          for (const lm of localMsgs) {
+            if (lm.draftResult) {
+              let target = messages.find(
+                (m) =>
+                  m.content === lm.content ||
+                  (m.content &&
+                    lm.content &&
+                    (m.content.includes(lm.content) || lm.content.includes(m.content))),
+              )
+              if (!target) {
+                target = [...messages].reverse().find((m) => m.sender === 'assistant')
+              }
+              if (target) {
+                target.draftResult = lm.draftResult
+              }
+            }
+          }
+        }
         this.chatMessages.splice(0, this.chatMessages.length, ...messages)
       } else {
         this.chatMessages.push({ ...WELCOME_MESSAGE })
@@ -884,8 +930,12 @@ class AppState {
   ): void {
     const approval = this.pendingApproval.value
     if (!approval || !approval.decisions[toolCallId]) return
-    approval.decisions[toolCallId] = { action, reasonCode, note }
+    approval.decisions = {
+      ...approval.decisions,
+      [toolCallId]: { action, reasonCode, note },
+    }
     approval.resumeError = null
+    this.pendingApproval.value = { ...approval }
     this.persistPendingAiApproval()
   }
 
@@ -954,15 +1004,23 @@ class AppState {
         },
       )
       if (nextApproval) {
+        const summary = this.buildProcessedDraftSummary(approval)
+        const msg = this.chatMessages.find((item) => item.id === assistantId)
+        if (msg) msg.draftResult = summary
+        if (approval.sessionId) this.saveLocalChatMessages(approval.sessionId)
         await this.installAiApproval(approval.turnId, nextApproval)
         return
       }
       if (doneError) throw new Error(doneError)
+      const summary = this.buildProcessedDraftSummary(approval)
       const msg = this.chatMessages.find((item) => item.id === assistantId)
-      if (msg && msg.content === '') {
-        const approvedCount = decisions.filter((item) => item.decision === 'approve').length
-        msg.content = approvedCount > 0 ? `已保存 ${approvedCount} 张工单` : '审核结果已提交'
+      if (msg) {
+        msg.draftResult = summary
+        if (msg.content === '') {
+          msg.content = summary.approvedCount > 0 ? `已保存 ${summary.approvedCount} 张工单` : '审核结果已提交'
+        }
       }
+      if (approval.sessionId) this.saveLocalChatMessages(approval.sessionId)
       this.clearPendingAiApproval()
     } catch (error) {
       approval.resumeError = (error as Error).message
@@ -996,6 +1054,94 @@ class AppState {
       }
       return { tool_call_id: draft.toolCallId, decision: state.action, reason }
     })
+  }
+
+  private buildProcessedDraftSummary(approval: PendingAiApproval): ProcessedDraftSummary {
+    let approvedCount = 0
+    let regeneratedCount = 0
+    let rejectedCount = 0
+
+    const items: ProcessedDraftItem[] = approval.drafts.map((draft) => {
+      const state = approval.decisions[draft.toolCallId]
+      const decision = state?.action ?? 'approve'
+      if (decision === 'approve') approvedCount += 1
+      else if (decision === 'regenerate') regeneratedCount += 1
+      else if (decision === 'reject') rejectedCount += 1
+
+      const decisionText =
+        decision === 'approve' ? '已入库' : decision === 'regenerate' ? '已重生成' : '已拒绝'
+
+      const merged = { ...(draft.before ?? {}), ...draft.fields }
+      const customerCode = merged.customer_code ? String(merged.customer_code) : ''
+      const customerName = merged.customer_name ? String(merged.customer_name) : ''
+      const customerText =
+        [customerCode, customerName].filter(Boolean).join(' · ') ||
+        (draft.kind === 'create' ? '新建工单' : '修改工单')
+
+      const category = merged.service_category ? String(merged.service_category) : ''
+      const item = merged.service_item ? String(merged.service_item) : ''
+      const serviceText = [category, item].filter(Boolean).join(' / ')
+
+      const quantity =
+        merged.quantity !== undefined && merged.quantity !== null ? String(merged.quantity) : ''
+      const unit = merged.unit ? String(merged.unit) : '件'
+      const quantityText = quantity ? `${quantity} ${unit}` : ''
+
+      const priceCents = merged.unit_price_cents
+      const priceText =
+        typeof priceCents === 'number' ? `¥${(priceCents / 100).toFixed(2)}` : '待定价'
+
+      const isCompleted = merged.is_completed === 1 || merged.is_completed === true
+      const statusText = isCompleted ? '已完成' : '未完成'
+
+      const reason =
+        state && decision !== 'approve'
+          ? [state.reasonCode, state.note.trim()].filter(Boolean).join('：')
+          : undefined
+
+      return {
+        kind: draft.kind,
+        customerText,
+        serviceText,
+        quantityText,
+        priceText,
+        statusText,
+        decision,
+        decisionText,
+        reason,
+      }
+    })
+
+    return {
+      total: approval.drafts.length,
+      approvedCount,
+      regeneratedCount,
+      rejectedCount,
+      items,
+    }
+  }
+
+  private chatMessagesStorageKey(sessionId: string): string | null {
+    return this.db ? `cb_chat_msgs:${this.db.name}:${sessionId}` : null
+  }
+
+  private saveLocalChatMessages(sessionId: string): void {
+    const key = this.chatMessagesStorageKey(sessionId)
+    if (!key) return
+    try {
+      localStorage.setItem(key, JSON.stringify(this.chatMessages))
+    } catch {}
+  }
+
+  private loadLocalChatMessages(sessionId: string): ChatMessage[] | null {
+    const key = this.chatMessagesStorageKey(sessionId)
+    if (!key) return null
+    try {
+      const raw = localStorage.getItem(key)
+      return raw ? (JSON.parse(raw) as ChatMessage[]) : null
+    } catch {
+      return null
+    }
   }
 
   private async installAiApproval(

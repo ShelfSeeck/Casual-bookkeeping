@@ -74,10 +74,12 @@ export class MutationService {
       createdAt: now,
       updatedAt: now,
     }
-    const changes: MutationChange[] = input.changes ?? input.entitySyncIds.map((id) => ({
+    const rawChanges: MutationChange[] = input.changes ?? input.entitySyncIds.map((id) => ({
       entitySyncId: id,
       baseVersion: 0,
     }))
+    // 脱去 Vue Proxy 包装，防止 IndexedDB structured clone 抛出 DataCloneError
+    const changes: MutationChange[] = JSON.parse(JSON.stringify(rawChanges))
     // outbox.command.changes 原样保留 entityType（docs/spec/business-p0p1.md §5.6）：
     // 跨实体操作依赖逐 change 的 entityType，提交时不能丢字段。
     const commandChanges = changes.map((c) => ({

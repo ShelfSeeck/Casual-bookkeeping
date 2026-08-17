@@ -91,7 +91,9 @@ export function buildAiBatchOperation(
   if (drafts.length === 0 || drafts.length > AI_DRAFT_BATCH_LIMIT) {
     throw new AiDraftValidationError('ai_draft_selection_invalid', '批准项数量不合法')
   }
-  const changes = drafts.map((draft) => draft.change)
+  const changes: MutationChange[] = drafts.map(
+    (draft) => JSON.parse(JSON.stringify(draft.change)) as MutationChange,
+  )
   return {
     operationType: drafts.length === 1 ? drafts[0].toolName : 'ai_batch_work_orders',
     entitySyncIds: changes.map((change) => change.entitySyncId),

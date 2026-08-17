@@ -171,6 +171,60 @@ watch(
         <div class="cb-message-bubble">
           <div class="cb-message-content">{{ msg.content }}</div>
 
+          <!-- 已处理工单草案历史结果卡片（纯前端沉淀） -->
+          <div v-if="msg.draftResult" class="cb-processed-drafts" aria-label="已处理工单草案记录">
+            <div class="cb-processed-drafts__header">
+              <div class="cb-processed-drafts__title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <path d="M14 2v6h6"></path><path d="m9 15 2 2 4-4"></path>
+                </svg>
+                <span>已处理工单 ({{ msg.draftResult.total }} 张)</span>
+              </div>
+              <div class="cb-processed-drafts__tags">
+                <span v-if="msg.draftResult.approvedCount > 0" class="cb-tag cb-tag--approved">
+                  入库 {{ msg.draftResult.approvedCount }}
+                </span>
+                <span v-if="msg.draftResult.regeneratedCount > 0" class="cb-tag cb-tag--regenerated">
+                  重生成 {{ msg.draftResult.regeneratedCount }}
+                </span>
+                <span v-if="msg.draftResult.rejectedCount > 0" class="cb-tag cb-tag--rejected">
+                  拒绝 {{ msg.draftResult.rejectedCount }}
+                </span>
+              </div>
+            </div>
+
+            <div class="cb-processed-drafts__list">
+              <div
+                v-for="(item, itemIdx) in msg.draftResult.items"
+                :key="itemIdx"
+                class="cb-processed-item"
+                :class="`cb-processed-item--${item.decision}`"
+              >
+                <div class="cb-processed-item__main">
+                  <div class="cb-processed-item__headline">
+                    <span class="cb-processed-item__kind">{{ item.kind === 'create' ? '新建' : '修改' }}</span>
+                    <strong class="cb-processed-item__customer">{{ item.customerText }}</strong>
+                    <span class="cb-processed-item__service">{{ item.serviceText }}</span>
+                  </div>
+                  <div class="cb-processed-item__meta">
+                    <span class="cb-processed-item__qty">{{ item.quantityText }}</span>
+                    <span class="cb-processed-item__price" :class="{ 'cb-text-muted': !item.priceText || item.priceText === '未定价' }">
+                      {{ item.priceText && item.priceText !== '未定价' ? item.priceText : '待定价' }}
+                    </span>
+                    <span v-if="item.statusText" class="cb-processed-item__status">{{ item.statusText }}</span>
+                  </div>
+                  <div v-if="item.reason" class="cb-processed-item__reason">
+                    反馈：{{ item.reason }}
+                  </div>
+                </div>
+                <div class="cb-processed-item__badge" :class="`cb-processed-item__badge--${item.decision}`">
+                  {{ item.decisionText }}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <span class="cb-message-time">{{ msg.timestamp }}</span>
         </div>
       </div>
@@ -527,6 +581,158 @@ watch(
   margin-top: 6px;
   opacity: 0.7;
   text-align: right;
+}
+
+/* ==========================================================================
+   3.5. Processed Drafts Result Card (Message Flow)
+   ========================================================================== */
+.cb-processed-drafts {
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-medium);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cb-processed-drafts__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--md-sys-color-outline-variant);
+}
+
+.cb-processed-drafts__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--md-sys-color-primary);
+}
+
+.cb-processed-drafts__tags {
+  display: flex;
+  gap: 4px;
+}
+
+.cb-tag {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.cb-tag--approved {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+.cb-tag--regenerated {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+}
+.cb-tag--rejected {
+  background: rgba(100, 116, 139, 0.15);
+  color: #64748b;
+}
+
+.cb-processed-drafts__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cb-processed-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--md-sys-color-surface);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-small);
+}
+
+.cb-processed-item__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cb-processed-item__headline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.cb-processed-item__kind {
+  padding: 1px 4px;
+  background: var(--md-sys-color-surface-container-high);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.cb-processed-item__customer {
+  color: var(--md-sys-color-on-surface);
+  font-weight: 700;
+}
+
+.cb-processed-item__service {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 12px;
+}
+
+.cb-processed-item__meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.cb-processed-item__qty {
+  font-weight: 600;
+}
+
+.cb-processed-item__price {
+  color: var(--md-sys-color-primary);
+  font-weight: 700;
+}
+
+.cb-processed-item__reason {
+  font-size: 11px;
+  color: #d97706;
+  background: rgba(245, 158, 11, 0.08);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-top: 2px;
+}
+
+.cb-processed-item__badge {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.cb-processed-item__badge--approve {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+.cb-processed-item__badge--regenerate {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+}
+.cb-processed-item__badge--reject {
+  background: rgba(100, 116, 139, 0.15);
+  color: #64748b;
 }
 
 /* ==========================================================================
