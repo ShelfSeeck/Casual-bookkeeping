@@ -42,6 +42,7 @@ from backend.errors import (
     ERROR_TURN_NOT_FOUND,
     AuthError,
 )
+from backend.repositories.chat_pending_approvals import ChatPendingApprovalsRepository
 from backend.services.agent import BusinessToolDeps, build_Agent
 from backend.services.business_query import BusinessQueryService, DraftValidationError
 from backend.services.model_config import ModelConfigError
@@ -221,15 +222,36 @@ class ChatService:
         turns,
         agent_factory: Callable[[list[str] | None], Agent] | None = None,
         business_query: BusinessQueryService | None = None,
+        pending_approvals: ChatPendingApprovalsRepository | None = None,
     ) -> None:
         self._sessions = sessions
         self._turns = turns
+        self._pending_approvals = pending_approvals
         # 默认工厂需要包一层：build_Agent 的 allowed_tools 是 keyword-only，
         # ChatService 统一按位置调用 agent_factory(allowed_tools)（任务约定）。
         self._agent_factory = agent_factory or (
             lambda allowed_tools=None: build_Agent(allowed_tools=allowed_tools)
         )
         self._business_query = business_query
+
+    def _persist_Pending(self, pending: PendingApproval) -> None:
+        if self._pending_approvals is not None:
+            self._pending_approvals.upsert_Pending(
+                pending.account_phone,
+                pending.request_id,
+                pending.session_id,
+                pending.turn_id,
+            )
+
+    def _clear_Pending(self, account_phone: str) -> None:
+        _PENDING.pop(account_phone, None)
+        if self._pending_approvals is not None:
+            self._pending_approvals.delete_ByAccount(account_phone)
+
+    def _persisted_Pending(self, account_phone: str) -> dict[str, Any] | None:
+        if self._pending_approvals is None:
+            return None
+        return self._pending_approvals.get_ByAccount(account_phone)
 
     def preflight_Send(self, account_phone: str) -> None:
         """send 模式流前检查：pending 前置校验 → 单飞锁占用检查。
@@ -238,7 +260,7 @@ class ChatService:
         session_busy 以统一 JSON 在 SSE 流开始前返回；run_Turn 保留同样检查
         作为直接服务调用方的防御纵深（检查幂等，可重复执行）。
         """
-        if account_phone in _PENDING:
+        if account_phone in _PENDING or self._persisted_Pending(account_phone) is not None:
             raise AuthError(ERROR_TOOL_APPROVAL_REQUIRED, "存在未处理的工具确认请求", 409)
 
         lock = _LOCKS.get(account_phone)
@@ -295,10 +317,11 @@ class ChatService:
                                 run.result.all_messages()
                             ).decode(),
                         )
+                        self._persist_Pending(pending)
                         yield _tool_confirm_event(pending)
                     except Exception:
                         # 落库/发事件失败不能留半截 pending。
-                        _PENDING.pop(account_phone, None)
+                        self._clear_Pending(account_phone)
                         raise
                 else:
                     # 正常完成（含 approvals 为空的 DeferredToolRequests）。
@@ -353,13 +376,29 @@ class ChatService:
         pending = _PENDING.get(account_phone)
         fresh_events: list[dict[str, Any]] = []
         if pending is None:
-            # 进程重启后内存 pending 丢失：从已落库的部分回合恢复，并沿用
-            # 前端持有的 request_id。恢复只续接原确认，不额外发出一张已失效的新确认卡。
+            # 进程重启后按持久化索引精确恢复原 request/session/turn，不扫描并绑定
+            # 任意历史未回执调用。未注入持久化仓库的单元测试保留旧扫描回退。
+            stored = self._persisted_Pending(account_phone)
+            if self._pending_approvals is not None:
+                if stored is None:
+                    raise AuthError(ERROR_APPROVAL_NOT_FOUND, "确认请求不存在或已处理", 404)
+                if stored["session_id"] != session_id:
+                    raise AuthError(ERROR_SESSION_NOT_FOUND, "会话不存在", 404)
+                if stored["approval_request_id"] != approval_request_id:
+                    raise AuthError(
+                        ERROR_TOOL_APPROVAL_REQUIRED, "存在未处理的工具确认请求", 409
+                    )
             try:
                 pending = self._recover_PendingApproval(
-                    account_phone, session_id, approval_request_id
+                    account_phone,
+                    session_id,
+                    approval_request_id,
+                    turn_id=stored["turn_id"] if stored is not None else None,
                 )
             except DraftValidationError as exc:
+                self._clear_Pending(account_phone)
+                if self._pending_approvals is not None:
+                    self._pending_approvals.connection.commit()
                 raise AuthError(
                     ERROR_DRAFT_VALIDATION_FAILED,
                     exc.message,
@@ -386,14 +425,23 @@ class ChatService:
         )
 
     def _recover_PendingApproval(
-        self, account_phone: str, session_id: str, request_id: str
+        self,
+        account_phone: str,
+        session_id: str,
+        request_id: str,
+        *,
+        turn_id: str | None = None,
     ) -> PendingApproval:
         """从该会话已落库回合中恢复 pending；找不到可恢复调用 → approval_not_found。"""
         record = self._sessions.get_Session(session_id)
         if record is None or record["account_phone"] != account_phone:
             raise AuthError(ERROR_SESSION_NOT_FOUND, "会话不存在", 404)
 
-        rows, _ = self._turns.list_Turns(session_id, None, _RECOVERY_SCAN_LIMIT)
+        if turn_id is not None:
+            exact = self._turns.get_Turn(turn_id)
+            rows = [exact] if exact is not None and exact["session_id"] == session_id else []
+        else:
+            rows, _ = self._turns.list_Turns(session_id, None, _RECOVERY_SCAN_LIMIT)
         for row in rows:
             messages = ModelMessagesTypeAdapter.validate_json(row["messages_json"])
             requests = recover_PendingApprovals(messages)
@@ -464,6 +512,7 @@ class ChatService:
                     self._turns.upsert_Turn(
                         pending.turn_id, pending.session_id, all_messages_json
                     )
+                    self._persist_Pending(next_pending)
                     _PENDING[account_phone] = next_pending
                     yield _tool_confirm_event(next_pending)
                 else:
@@ -471,7 +520,7 @@ class ChatService:
                     self._turns.upsert_Turn(
                         pending.turn_id, pending.session_id, all_messages_json
                     )
-                    _PENDING.pop(account_phone, None)
+                    self._clear_Pending(account_phone)
                     yield {"type": "done", "turn_id": pending.turn_id, "error": None}
             except DraftValidationError as exc:
                 yield {
