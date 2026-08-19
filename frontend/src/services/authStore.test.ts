@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthStore, type AuthHooks } from './authStore'
-import { ApiClient, clearActiveAccount, getActiveAccount, setActiveAccount } from './apiClient'
+import { ApiClient, getActiveAccount, setActiveAccount } from './apiClient'
 import { metaDb } from '../db/db'
 
 // 被测缝：AuthStore（docs/auth-structure.md §2.9 / docs/sync-protocol.md §3）
@@ -75,7 +75,7 @@ describe('AuthStore 会话状态管理', () => {
   })
 
   it('login: 成功写入 meta 活跃账户并触发 onLoginSuccess', async () => {
-    vi.spyOn(api, 'login').mockResolvedValue('access-token-1')
+    vi.spyOn(api, 'login').mockResolvedValue({ accessToken: 'access-token-1' })
 
     const auth = new AuthStore(api, hooks)
     await auth.login('13800000000', 'cb123456')
