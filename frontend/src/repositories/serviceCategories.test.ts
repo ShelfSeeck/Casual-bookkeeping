@@ -59,6 +59,14 @@ describe('ServiceCategoriesRepository', () => {
     expect(list.map((c) => c.categoryName)).toEqual(['A大类', 'B大类', 'C大类'])
   })
 
+  it('list 按 sortOrder 升序，同值再按 categoryName 升序', async () => {
+    await repo.put(makeCategory('cat-a', { categoryName: 'A大类', sortOrder: 2 }))
+    await repo.put(makeCategory('cat-b', { categoryName: 'B大类', sortOrder: 1 }))
+    await repo.put(makeCategory('cat-c', { categoryName: 'C大类', sortOrder: 1 }))
+    const list = await repo.list()
+    expect(list.map((c) => c.categoryName)).toEqual(['B大类', 'C大类', 'A大类'])
+  })
+
   it('findByCategoryName 按大类名查找，不存在返回 undefined', async () => {
     await repo.put(makeCategory('cat-a', { categoryName: '洗水' }))
     expect((await repo.findByCategoryName('洗水'))?.syncId).toBe('cat-a')

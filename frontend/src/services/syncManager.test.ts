@@ -219,6 +219,93 @@ describe('SyncManager', () => {
     expect(pull).toHaveBeenCalledTimes(1)
   })
 
+  it('service_category 冲突自动采用服务端最新，不进入冲突中心', async () => {
+    const serverRecord = {
+      sync_id: 'cat-a',
+      account_phone: PHONE,
+      category_name: '服务端大类',
+      subcategories_json: '[]',
+      is_active: 1,
+      sort_order: 1,
+      row_version: 2,
+      created_at: '2026-08-08T00:00:00Z',
+      updated_at: '2026-08-08T00:00:00Z',
+    }
+    await db.serviceCategories.put({
+      syncId: 'cat-a',
+      accountPhone: PHONE,
+      categoryName: '本地大类',
+      subcategoriesJson: [],
+      isActive: true,
+      sortOrder: 2,
+      rowVersion: 1,
+      createdAt: '2026-08-08T00:00:00Z',
+      updatedAt: '2026-08-08T00:00:00Z',
+    })
+    await mutation.commit({
+      operationType: 'update_service_category',
+      entitySyncIds: ['cat-a'],
+      changes: [
+        {
+          entitySyncId: 'cat-a',
+          entityType: 'service_category',
+          baseVersion: 1,
+          patch: { sort_order: 2 },
+        },
+      ],
+      apply: (tx) => tx.serviceCategories.update('cat-a', { sortOrder: 2 }),
+      actorType: 'user',
+    })
+    const realOpId = (await db.outbox.toArray())[0].operationId
+    const pull = vi.fn(async () => ({
+      operations: [
+        {
+          serverSeq: 50,
+          operationId: 'op-remote-svc',
+          operationType: 'update_service_category',
+          actorType: 'user' as const,
+          deviceId: 'dev-remote',
+          revertsOperationId: null,
+          createdAt: '2026-08-08T00:00:00Z',
+          changes: [
+            {
+              entityType: 'service_category',
+              entitySyncId: 'cat-a',
+              changeType: 'update',
+              afterJson: JSON.stringify(serverRecord),
+              afterVersion: 2,
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+    }))
+    const api = makeApi({
+      push: vi.fn(async () => ({
+        results: [
+          {
+            operationId: realOpId,
+            status: 'conflict' as const,
+            conflictJson: { entity_sync_id: 'cat-a', theirs: serverRecord },
+          },
+        ],
+      })),
+      pull,
+    })
+    await buildManager(api).sync()
+
+    // 冲突操作被自动丢弃，不保留在 outbox
+    expect(await db.outbox.count()).toBe(0)
+    expect(await db.operations.get(realOpId)).toBeUndefined()
+    // Pull 后本地被服务端最新覆盖
+    const local = await db.serviceCategories.get('cat-a')
+    expect(local?.categoryName).toBe('服务端大类')
+    expect(local?.sortOrder).toBe(1)
+    expect(local?.rowVersion).toBe(2)
+    // 不触发冲突状态
+    expect(statuses.some((s) => s.state === 'conflict')).toBe(false)
+  })
+
   it('discardConflict 丢弃整条冲突：移除 outbox 与 operations 镜像', async () => {
     await commitOrder('sync-a')
     const realOpId = (await db.outbox.toArray())[0].operationId

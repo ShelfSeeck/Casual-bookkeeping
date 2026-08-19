@@ -19,8 +19,13 @@ export class ServiceCategoriesRepository {
   async list(includeInactive = false): Promise<ServiceCategory[]> {
     const rows = await this.db.serviceCategories.toArray()
     const visible = includeInactive ? rows : rows.filter((c) => c.isActive)
-    // 排序固定：categoryName 升序
-    return visible.sort((a, b) => a.categoryName.localeCompare(b.categoryName))
+    // 排序：sortOrder 升序（缺省按 0），同值再按 categoryName 升序兜底
+    return visible.sort((a, b) => {
+      const ao = a.sortOrder ?? 0
+      const bo = b.sortOrder ?? 0
+      if (ao !== bo) return ao - bo
+      return a.categoryName.localeCompare(b.categoryName)
+    })
   }
 
   async findByCategoryName(name: string): Promise<ServiceCategory | undefined> {

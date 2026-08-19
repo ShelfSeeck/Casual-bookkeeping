@@ -15,6 +15,7 @@ import {
   createServiceCategory,
   createWorkOrder,
   deleteWorkOrder,
+  reorderServiceCategories,
   revertOperation,
   updateCustomerCodeMapping,
   updateServiceCategory,
@@ -516,6 +517,25 @@ describe('createServiceCategory / updateServiceCategory（subcategoriesJson 序�
     )
   })
 
+  it('createServiceCategory 新大类追加到末尾（sortOrder = 当前最大 + 1）', async () => {
+    await db.serviceCategories.bulkPut([
+      { ...makeCategory('cat-a', 'A大类'), sortOrder: 1 },
+      { ...makeCategory('cat-b', 'B大类'), sortOrder: 2 },
+    ])
+    await createServiceCategory(db, {
+      categoryName: 'C大类',
+      subcategories: [],
+    })
+
+    const created = (await db.serviceCategories.toArray()).find((c) => c.categoryName === 'C大类')
+    expect(created?.sortOrder).toBe(3)
+
+    const cmd = (await db.outbox.toArray())[0].command as {
+      changes: { patch?: Record<string, unknown> }[]
+    }
+    expect(cmd.changes[0].patch?.sort_order).toBe(3)
+  })
+
   it('updateServiceCategory 本地更新为数组，outbox patch 的 subcategories_json 为字符串', async () => {
     await db.serviceCategories.put(makeCategory('sync-cat', '洗水'))
     await updateServiceCategory(db, 'sync-cat', {
@@ -574,6 +594,41 @@ describe('createServiceCategory / updateServiceCategory（subcategoriesJson 序�
         ],
       }),
     ).rejects.toMatchObject({ errorCode: 'subcategory_name_duplicate' })
+  })
+})
+
+describe('reorderServiceCategories（多 change 原子重排）', () => {
+  it('按新全局顺序重排，生成一条多 change 操作并更新本地', async () => {
+    await db.serviceCategories.bulkPut([
+      { ...makeCategory('cat-a', 'A大类'), sortOrder: 1 },
+      { ...makeCategory('cat-b', 'B大类'), sortOrder: 2 },
+      { ...makeCategory('cat-c', 'C大类'), sortOrder: 3 },
+    ])
+
+    await reorderServiceCategories(db, ['cat-c', 'cat-a', 'cat-b'])
+
+    const local = await db.serviceCategories.toArray()
+    const byId = Object.fromEntries(local.map((c) => [c.syncId, c]))
+    expect(byId['cat-a'].sortOrder).toBe(2)
+    expect(byId['cat-b'].sortOrder).toBe(3)
+    expect(byId['cat-c'].sortOrder).toBe(1)
+
+    const ops = await db.outbox.toArray()
+    expect(ops).toHaveLength(1)
+    const cmd = ops[0].command as {
+      changes: {
+        entitySyncId: string
+        baseVersion: number
+        patch?: Record<string, unknown>
+      }[]
+    }
+    expect(cmd.changes).toHaveLength(3)
+    const patchBySync = Object.fromEntries(
+      cmd.changes.map((c) => [c.entitySyncId, c.patch ?? {}]),
+    )
+    expect(patchBySync['cat-a'].sort_order).toBe(2)
+    expect(patchBySync['cat-b'].sort_order).toBe(3)
+    expect(patchBySync['cat-c'].sort_order).toBe(1)
   })
 })
 

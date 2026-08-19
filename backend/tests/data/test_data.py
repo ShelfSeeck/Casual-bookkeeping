@@ -73,6 +73,12 @@ def test_business_tables_carry_sync_columns(database):
         assert "row_version" in columns, f"{table} 缺 row_version"
 
 
+def test_service_categories_carries_sort_order_column(database):
+    # 大类优先级排序：service_categories 必须带 sort_order（默认 0），
+    # 否则旧库迁移后新库反而缺列，排序逻辑无法统一。
+    assert "sort_order" in _table_columns(database, "service_categories")
+
+
 # ---------- 缝 4：get_Connection 自动善后 ----------
 
 def test_get_Connection_commits_on_success(database):

@@ -260,6 +260,100 @@ def test_bootstrap_returns_active_records_and_snapshot_seq(client, seed_account)
     assert len(customer_records) == 1
 
 
+def test_bootstrap_carries_service_category_sort_order(client, seed_account):
+    # 大类排序值必须随同步协议透传：Push 写入 sort_order 后，
+    # bootstrap 快照里要能读到，否则新设备首次拉取会丢失排序。
+    seed_account()
+    headers = _login(client)
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={
+            "operations": [
+                {
+                    "operation_id": "op-sort-000000001",
+                    "operation_type": "create_service_category",
+                    "actor_type": "user",
+                    "source_turn_id": None,
+                    "changes": [
+                        {
+                            "entity_type": "service_category",
+                            "entity_sync_id": "sync-sort-000000001",
+                            "base_version": 0,
+                            "fields": {
+                                "category_name": "排序大类",
+                                "subcategories_json": "[]",
+                                "is_active": 1,
+                                "sort_order": 7,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["status"] == "accepted"
+
+    body = client.get("/sync/bootstrap", headers=headers).json()
+    records = [
+        r
+        for r in body.get("service_categories", [])
+        if r["sync_id"] == "sync-sort-000000001"
+    ]
+    assert len(records) == 1
+    assert records[0]["sort_order"] == 7
+
+
+def test_pull_carries_service_category_sort_order_in_after_json(client, seed_account):
+    # Pull 的操作快照同样要带 sort_order：其他设备靠 Pull 的 after_json
+    # 覆盖本地记录，丢了排序会让已同步设备顺序回退。
+    seed_account()
+    headers = _login(client)
+    resp = client.post(
+        "/sync/push",
+        headers=headers,
+        json={
+            "operations": [
+                {
+                    "operation_id": "op-sort-pull-0001",
+                    "operation_type": "create_service_category",
+                    "actor_type": "user",
+                    "source_turn_id": None,
+                    "changes": [
+                        {
+                            "entity_type": "service_category",
+                            "entity_sync_id": "sync-sort-pull-0001",
+                            "base_version": 0,
+                            "fields": {
+                                "category_name": "Pull排序",
+                                "subcategories_json": "[]",
+                                "is_active": 1,
+                                "sort_order": 9,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    pulled = client.get("/sync/pull", headers=headers, params={"after": 0}).json()[
+        "operations"
+    ]
+    change = next(
+        c
+        for op in pulled
+        for c in op["changes"]
+        if c["entity_sync_id"] == "sync-sort-pull-0001"
+    )
+    import json
+
+    after = json.loads(change["after_json"])
+    assert after["sort_order"] == 9
+
+
 def test_bootstrap_snapshot_seq_anchors_to_account(client, seed_account):
     # bootstrap 的 snapshot_seq 必须锚定当前账户：A 只 push 1 条时，
     # 即使 B 后续 push 了 2 条，A 的 snapshot_seq 也只应是 A 自己的最新序号。

@@ -13,6 +13,7 @@ export interface ServiceCategory {
   categoryName: string
   subcategoriesJson: Subcategory[]
   isActive: boolean
+  sortOrder?: number
   rowVersion: number
   createdAt: string
   updatedAt: string

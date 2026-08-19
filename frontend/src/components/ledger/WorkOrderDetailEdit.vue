@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { showFailToast, showSuccessToast } from 'vant'
+import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import type { WorkOrderUi } from '../../types/ui'
 import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
@@ -127,14 +127,11 @@ const filteredCustomers = computed(() => {
   })
 })
 
-// 可选大类列表（启用大类 + 当前工单若引用的停用大类）
+// 可选大类列表（启用大类在前，已停用大类在后）
 const selectableCategories = computed(() => {
-  const list = appState.categories.filter((c) => c.isActive)
-  const currentCat = appState.categories.find((c) => c.name === selectedCategoryName.value)
-  if (currentCat && !currentCat.isActive && !list.some((c) => c.name === currentCat.name)) {
-    return [currentCat, ...list]
-  }
-  return list
+  const activeList = appState.categories.filter((c) => c.isActive)
+  const inactiveList = appState.categories.filter((c) => !c.isActive)
+  return [...activeList, ...inactiveList]
 })
 
 // 当前激活的大类
@@ -148,11 +145,29 @@ const isSubcatMany = computed(() => {
   return activeCategory.value.subcategories.length > 6
 })
 
-// 切换大类
-function selectCategory(catName: string) {
-  selectedCategoryName.value = catName
+// 切换大类（若选择已停用大类，弹窗就地引导恢复启用）
+async function selectCategory(catName: string) {
   const cat = appState.categories.find((c) => c.name === catName)
-  if (cat && cat.subcategories.length > 0) {
+  if (!cat) return
+
+  // 若改选的大类已停用，且并非当前工单原始所属的大类，提示就地恢复启用
+  if (!cat.isActive && catName !== props.order.categoryName) {
+    try {
+      await showConfirmDialog({
+        title: '启用服务大类',
+        message: `大类「${catName}」当前处于停用状态。确认恢复启用该大类并应用到当前工单吗？`,
+        confirmButtonText: '恢复启用',
+        cancelButtonText: '取消',
+      })
+      await appState.updateCategory(cat.syncId!, { isActive: true })
+      showSuccessToast(`已恢复启用大类「${catName}」`)
+    } catch {
+      return
+    }
+  }
+
+  selectedCategoryName.value = catName
+  if (cat.subcategories.length > 0) {
     const activeSubs = cat.subcategories.filter((s) => s.isActive)
     if (activeSubs.length > 0) {
       selectedSubcategoryName.value = activeSubs[0].name

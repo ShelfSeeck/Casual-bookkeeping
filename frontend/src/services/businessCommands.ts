@@ -69,6 +69,7 @@ export interface ServiceCategoryPatch {
   categoryName?: string
   subcategories?: Subcategory[]
   isActive?: boolean
+  sortOrder?: number
 }
 
 export interface BuiltCustomerWithMappingCommand {
@@ -624,6 +625,9 @@ export async function createServiceCategory(
 ): Promise<void> {
   await validateServiceCategoryInput(db, fields)
 
+  const existing = await db.serviceCategories.toArray()
+  const maxSortOrder = existing.reduce((max, c) => Math.max(max, c.sortOrder ?? 0), 0)
+  const sortOrder = maxSortOrder + 1
   const syncId = newId('sync')
   const phone = accountPhoneFromDb(db)
   const now = new Date().toISOString()
@@ -634,6 +638,7 @@ export async function createServiceCategory(
     // 本地 Dexie 存数组；wire patch 里是 JSON 字符串（后端 TEXT 契约）
     subcategoriesJson: fields.subcategories,
     isActive: true,
+    sortOrder,
     rowVersion: 1,
     createdAt: now,
     updatedAt: now,
@@ -647,6 +652,7 @@ export async function createServiceCategory(
       category_name: fields.categoryName,
       subcategories_json: JSON.stringify(toWireSubcategories(fields.subcategories)),
       is_active: true,
+      sort_order: sortOrder,
     },
   }
 
@@ -677,6 +683,7 @@ export async function updateServiceCategory(
   if (patch.categoryName !== undefined) wirePatch.category_name = patch.categoryName
   if (patch.subcategories !== undefined) wirePatch.subcategories_json = JSON.stringify(toWireSubcategories(patch.subcategories))
   if (patch.isActive !== undefined) wirePatch.is_active = patch.isActive
+  if (patch.sortOrder !== undefined) wirePatch.sort_order = patch.sortOrder
 
   const change: MutationChange = {
     entitySyncId: syncId,
@@ -697,11 +704,63 @@ export async function updateServiceCategory(
       if (patch.categoryName !== undefined) localPatch.categoryName = patch.categoryName
       if (patch.subcategories !== undefined) localPatch.subcategoriesJson = patch.subcategories
       if (patch.isActive !== undefined) localPatch.isActive = patch.isActive
+      if (patch.sortOrder !== undefined) localPatch.sortOrder = patch.sortOrder
       await tx.serviceCategories.put({
         ...local,
         ...localPatch,
         updatedAt: new Date().toISOString(),
       })
+    },
+    actorType: 'user',
+  })
+}
+
+/** 按新的全局顺序重排大类：入参是全量顺序数组（启用 + 停用），
+ *  为所有 sortOrder 变化的记录生成一条 operation 多 change 原子提交。 */
+export async function reorderServiceCategories(
+  db: CbDatabase,
+  orderedSyncIds: string[],
+): Promise<void> {
+  const existing = await new ServiceCategoriesRepository(db).list(true)
+  if (orderedSyncIds.length !== existing.length) {
+    throw new BusinessRuleError('invalid_request')
+  }
+  const byId = new Map(existing.map((c) => [c.syncId, c]))
+  const changes: MutationChange[] = []
+  const updates: Array<{ syncId: string; sortOrder: number }> = []
+
+  orderedSyncIds.forEach((syncId, index) => {
+    const sortOrder = index + 1
+    const category = byId.get(syncId)
+    if (!category) throw new BusinessRuleError('entity_not_found')
+    if (category.sortOrder !== sortOrder) {
+      changes.push({
+        entitySyncId: syncId,
+        entityType: 'service_category',
+        baseVersion: category.rowVersion,
+        baseSnapshot: toWireRecord(category as unknown as Record<string, unknown>),
+        patch: { sort_order: sortOrder },
+      })
+      updates.push({ syncId, sortOrder })
+    }
+  })
+
+  if (changes.length === 0) return
+
+  await new MutationService(db).commit({
+    operationType: 'reorder_service_categories',
+    entitySyncIds: updates.map((u) => u.syncId),
+    changes,
+    apply: async (tx) => {
+      for (const u of updates) {
+        const local = await tx.serviceCategories.get(u.syncId)
+        if (!local) throw new BusinessRuleError('entity_not_found')
+        await tx.serviceCategories.put({
+          ...local,
+          sortOrder: u.sortOrder,
+          updatedAt: new Date().toISOString(),
+        })
+      }
     },
     actorType: 'user',
   })

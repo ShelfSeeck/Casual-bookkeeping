@@ -40,5 +40,16 @@ export class CbDatabase extends Dexie {
     this.version(2).stores({
       outbox: outboxSchema,
     })
+    // v3：service_categories 新增 sortOrder；旧记录按 categoryName 升序初始化 1..n，
+    // 与后端迁移规则一致。upgrade 只在旧库打开时执行一次。
+    this.version(3).stores({
+      serviceCategories: serviceCategoriesSchema,
+    }).upgrade(async (tx) => {
+      const rows = await tx.table('serviceCategories').toArray()
+      const sorted = rows.sort((a, b) => a.categoryName.localeCompare(b.categoryName))
+      for (let i = 0; i < sorted.length; i++) {
+        await tx.table('serviceCategories').put({ ...sorted[i], sortOrder: i + 1 })
+      }
+    })
   }
 }

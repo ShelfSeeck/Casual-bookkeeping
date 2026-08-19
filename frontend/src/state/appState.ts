@@ -15,6 +15,7 @@ import {
   createWorkOrder as createWorkOrderCommand,
   createServiceCategory,
   deleteWorkOrder as deleteWorkOrderCommand,
+  reorderServiceCategories,
   revertOperation,
   updateServiceCategory,
   updateWorkOrder as updateWorkOrderCommand,
@@ -254,6 +255,7 @@ class AppState {
           syncId: c.syncId,
           name: c.categoryName,
           isActive: c.isActive,
+          sortOrder: c.sortOrder,
           subcategories: subs.map((s) => {
             const raw = s as unknown as Record<string, unknown>
             return {
@@ -754,11 +756,21 @@ class AppState {
 
   async updateCategory(
     syncId: string,
-    patch: { categoryName?: string; subcategories?: Subcategory[]; isActive?: boolean },
+    patch: { categoryName?: string; subcategories?: Subcategory[]; isActive?: boolean; sortOrder?: number },
   ): Promise<void> {
     const db = this.db
     if (!db) throw new Error('业务库未打开')
     await updateServiceCategory(db, syncId, patch)
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+  }
+
+  async reorderCategories(orderedSyncIds: string[]): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    await reorderServiceCategories(db, orderedSyncIds)
     await this.reload()
     if (this.syncManager) {
       void this.syncManager.sync().then(() => this.reload())

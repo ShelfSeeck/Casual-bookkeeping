@@ -20,6 +20,10 @@ class ServiceCategoriesRepository(BusinessRepository):
     has_soft_delete = False  # 停用用 is_active=0 表达，不做软删时间戳
 
     def _validate_fields(self, fields):
+        if "sort_order" in fields and (
+            not isinstance(fields["sort_order"], int) or fields["sort_order"] < 0
+        ):
+            return "invalid_request"
         if "subcategories_json" in fields:
             try:
                 parsed = json.loads(fields["subcategories_json"])
@@ -72,7 +76,8 @@ class ServiceCategoriesRepository(BusinessRepository):
 
         where = " AND ".join(conditions)
         rows = self.connection.execute(
-            f"SELECT * FROM {self.table} WHERE {where} ORDER BY category_name ASC",
+            f"SELECT * FROM {self.table} WHERE {where}"
+            " ORDER BY sort_order ASC, category_name ASC",
             params,
         ).fetchall()
         return [dict(row) for row in rows]

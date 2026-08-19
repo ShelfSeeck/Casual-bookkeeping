@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { showFailToast, showSuccessToast } from 'vant'
+import draggable from 'vuedraggable'
 import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
 import { getActiveAccount } from '../../services/apiClient'
 import { getOrCreateDeviceId } from '../../db/device'
 import { applyTheme, getThemePreference, type ThemePreference } from '../../utils/theme'
+import { mergeCategoryOrders } from '../../utils/categoryReorder'
 import type { ServiceCategoryUi } from '../../types/ui'
 import ConflictCenter from './ConflictCenter.vue'
 
@@ -197,6 +199,78 @@ async function deleteSubcategory(cat: ServiceCategoryUi, subName: string) {
     showSuccessToast('项目已删除')
   } catch (e) {
     showFailToast(toErrorMessage(e))
+  }
+}
+
+// 排序模式：进入时拷贝至独立的响应式 ref 列表，拖拽只改本地 ref，点击“完成”统一保存
+const sortMode = ref(false)
+const sortableActiveCategories = ref<ServiceCategoryUi[]>([])
+const sortableInactiveCategories = ref<ServiceCategoryUi[]>([])
+const sortInitialSubNames = new Map<string, string[]>()
+
+function enterSortMode() {
+  activeAddingCatId.value = null
+  sortableActiveCategories.value = activeCategoriesList.value.map((c) => ({
+    ...c,
+    subcategories: c.subcategories.map((s) => ({ ...s })),
+  }))
+  sortableInactiveCategories.value = inactiveCategoriesList.value.map((c) => ({
+    ...c,
+    subcategories: c.subcategories.map((s) => ({ ...s })),
+  }))
+  sortInitialSubNames.clear()
+  for (const cat of appState.categories) {
+    sortInitialSubNames.set(cat.syncId!, cat.subcategories.map((s) => s.name))
+  }
+  sortMode.value = true
+}
+
+async function finishSortMode() {
+  if (!sortMode.value) return
+  const allIds = appState.categories.map((c) => c.syncId!)
+  const activeIds = sortableActiveCategories.value.map((c) => c.syncId!)
+  const inactiveIds = sortableInactiveCategories.value.map((c) => c.syncId!)
+  const newAllIds = mergeCategoryOrders(allIds, activeIds, inactiveIds)
+
+  const allDrafts = [...sortableActiveCategories.value, ...sortableInactiveCategories.value]
+  const subChanges: Array<{
+    syncId: string
+    subcategories: Array<{ name: string; defaultUnit: string; isActive: boolean }>
+  }> = []
+
+  for (const draft of allDrafts) {
+    const initial = sortInitialSubNames.get(draft.syncId!)
+    const current = draft.subcategories.map((s) => s.name)
+    if (initial && initial.join('\u0000') !== current.join('\u0000')) {
+      subChanges.push({
+        syncId: draft.syncId!,
+        subcategories: draft.subcategories.map((s) => ({
+          name: s.name,
+          defaultUnit: s.defaultUnit,
+          isActive: s.isActive,
+        })),
+      })
+    }
+  }
+
+  sortMode.value = false
+  try {
+    const orderChanged = newAllIds.join('\u0000') !== allIds.join('\u0000')
+    if (orderChanged) {
+      await appState.reorderCategories(newAllIds)
+    }
+    for (const change of subChanges) {
+      await appState.updateCategory(change.syncId, { subcategories: change.subcategories })
+    }
+    if (orderChanged || subChanges.length > 0) {
+      showSuccessToast('排序已保存')
+    }
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+    await appState.reload()
+  } finally {
+    sortableActiveCategories.value = []
+    sortableInactiveCategories.value = []
   }
 }
 
@@ -729,177 +803,305 @@ onMounted(async () => {
           type="button"
           class="md3-icon-button cb-pressable"
           aria-label="返回设置页"
-          @click="currentSubPage = 'main'"
+          @click="async () => { if (sortMode) await finishSortMode(); currentSubPage = 'main' }"
         >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
-        <h1 class="md3-top-app-bar-title">服务品类</h1>
-        <div style="width: 48px;"></div>
+        <h1 class="md3-top-app-bar-title">{{ sortMode ? '调整品类顺序' : '服务品类' }}</h1>
+        <button
+          v-if="!sortMode"
+          type="button"
+          class="cb-sort-btn cb-sort-btn--idle cb-pressable"
+          aria-label="调整排序"
+          @click="enterSortMode"
+        >
+          排序
+        </button>
+        <button
+          v-else
+          type="button"
+          class="cb-sort-btn cb-sort-btn--done cb-pressable"
+          aria-label="完成排序"
+          @click="finishSortMode"
+        >
+          完成
+        </button>
       </header>
 
       <main class="cb-subpage-body">
+        <!-- 排序模式操作指引条（平滑展开淡入） -->
+        <div class="cb-sort-banner-wrap" :class="{ 'cb-sort-banner-wrap--visible': sortMode }">
+          <div class="cb-sort-mode-banner">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M3 6h18v2H3zM3 11h18v2H3zM3 16h18v2H3z"/>
+            </svg>
+            <span>按住手柄可上下拖动大类或左右拖动具体项目</span>
+          </div>
+        </div>
+
         <div class="cb-category-card-list">
-          <!-- 1. 使用中的大类 -->
-          <div
-            v-for="cat in activeCategoriesList"
-            :key="cat.categoryId"
-            class="md3-card md3-card--outlined cb-cat-section-card"
+          <!-- 1. 使用中的大类（支持拖拽排序与常规展示平滑过渡） -->
+          <draggable
+            :list="sortMode ? sortableActiveCategories : activeCategoriesList"
+            item-key="syncId"
+            :disabled="!sortMode"
+            handle=".cb-drag-handle"
+            :animation="200"
+            :easing="'cubic-bezier(0.2, 0, 0, 1)'"
+            :force-fallback="true"
+            ghost-class="cb-drag-ghost"
+            chosen-class="cb-drag-chosen"
+            drag-class="cb-drag-item"
+            class="cb-drag-list"
           >
-            <div class="cb-cat-header-row">
-              <div class="cb-cat-header-left">
-                <span class="cb-cat-main-title">{{ cat.name }}</span>
-                <span class="md3-badge-tonal-small cb-tabular-nums">{{ cat.subcategories.length }} 个项目</span>
-              </div>
-              <button
-                type="button"
-                class="md3-text-button-error cb-pressable"
-                :aria-label="'停用大类 ' + cat.name"
-                @click="toggleCategoryActive(cat)"
-              >
-                停用大类
-              </button>
-            </div>
+            <template #item="{ element: cat }">
+              <div class="md3-card md3-card--outlined cb-cat-section-card">
+                <div class="cb-cat-header-row">
+                  <div class="cb-cat-header-left">
+                    <span class="cb-cat-main-title">{{ cat.name }}</span>
+                    <span class="md3-badge-tonal-small cb-tabular-nums">{{ cat.subcategories.length }} 个项目</span>
+                  </div>
+                  <div class="cb-cat-header-right">
+                    <button
+                      v-if="!sortMode"
+                      type="button"
+                      class="md3-text-button-error cb-pressable"
+                      :aria-label="'停用大类 ' + cat.name"
+                      @click="toggleCategoryActive(cat)"
+                    >
+                      停用大类
+                    </button>
+                    <span
+                      v-else
+                      class="cb-drag-handle"
+                      aria-label="拖拽调整大类顺序"
+                      title="按住拖拽排序"
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="4" y1="7" x2="20" y2="7"></line>
+                        <line x1="4" y1="12" x2="20" y2="12"></line>
+                        <line x1="4" y1="17" x2="20" y2="17"></line>
+                      </svg>
+                    </span>
+                  </div>
+                </div>
 
-            <!-- 小类项目 MD3 Input Chips (含默认单位与删除) -->
-            <div class="md3-chip-set">
-              <div
-                v-for="sub in cat.subcategories"
-                :key="sub.name"
-                class="md3-input-chip"
-              >
-                <span class="md3-input-chip-label">{{ sub.name }}</span>
-                <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
-                <button
-                  type="button"
-                  class="md3-input-chip-del"
-                  :aria-label="'删除项目 ' + sub.name"
-                  @click.stop="deleteSubcategory(cat, sub.name)"
+                <!-- 小类项目列表（支持拖拽排序与常规删除） -->
+                <draggable
+                  v-if="cat.subcategories.length > 0"
+                  :list="cat.subcategories"
+                  item-key="name"
+                  :disabled="!sortMode"
+                  handle=".cb-sub-drag-handle"
+                  :animation="200"
+                  :easing="'cubic-bezier(0.2, 0, 0, 1)'"
+                  :force-fallback="true"
+                  ghost-class="cb-drag-ghost"
+                  chosen-class="cb-drag-chosen"
+                  drag-class="cb-drag-item"
+                  class="md3-chip-set"
                 >
-                  ✕
-                </button>
-              </div>
-            </div>
+                  <template #item="{ element: sub }">
+                    <div class="md3-input-chip" :class="{ 'cb-input-chip--sortable': sortMode }">
+                      <div class="cb-sub-drag-wrap" :class="{ 'cb-sub-drag-wrap--visible': sortMode }">
+                        <span class="cb-sub-drag-handle" aria-label="拖拽调整项目顺序">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="4" y1="7" x2="20" y2="7"></line>
+                            <line x1="4" y1="12" x2="20" y2="12"></line>
+                            <line x1="4" y1="17" x2="20" y2="17"></line>
+                          </svg>
+                        </span>
+                      </div>
+                      <span class="md3-input-chip-label">{{ sub.name }}</span>
+                      <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
+                      <div class="cb-chip-del-wrap" :class="{ 'cb-chip-del-wrap--hidden': sortMode }">
+                        <button
+                          type="button"
+                          class="md3-input-chip-del"
+                          :aria-label="'删除项目 ' + sub.name"
+                          :tabindex="sortMode ? -1 : 0"
+                          @click.stop="deleteSubcategory(cat, sub.name)"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  </template>
+                </draggable>
+                <div v-else-if="sortMode" class="cb-subcat-empty-tip">暂无具体项目</div>
 
-            <!-- 内联添加小类项目表单（MD3 Outlined Container） -->
-            <div v-if="activeAddingCatId === cat.syncId" class="md3-inline-add-container">
-              <div class="md3-card-title">为「{{ cat.name }}」添加服务项目</div>
-              <div class="cb-form-2col-grid">
-                <div class="md3-text-field-container">
-                  <label class="md3-text-field-label">项目名称</label>
-                  <div class="md3-outlined-text-field">
-                    <input
-                      v-model="inlineSubName"
-                      type="text"
-                      name="subcategory_name"
-                      placeholder="如 标准 / 加急"
-                      class="md3-text-field-input"
-                      autocomplete="off"
-                      spellcheck="false"
-                      aria-label="项目名称"
-                    />
-                  </div>
-                </div>
-                <div class="md3-text-field-container">
-                  <label class="md3-text-field-label">默认单位</label>
-                  <div class="md3-outlined-text-field">
-                    <input
-                      v-model="inlineSubUnit"
-                      type="text"
-                      name="subcategory_unit"
-                      placeholder="件"
-                      class="md3-text-field-input"
-                      autocomplete="off"
-                      spellcheck="false"
-                      aria-label="默认单位"
-                    />
-                  </div>
-                </div>
-              </div>
+                <!-- 内联添加小类项目表单与展开按键（在排序模式下平滑淡出收起） -->
+                <div class="cb-cat-bottom-action-wrap" :class="{ 'cb-cat-bottom-action-wrap--hidden': sortMode }">
+                  <div v-if="activeAddingCatId === cat.syncId" class="md3-inline-add-container">
+                    <div class="md3-card-title">为「{{ cat.name }}」添加服务项目</div>
+                    <div class="cb-form-2col-grid">
+                      <div class="md3-text-field-container">
+                        <label class="md3-text-field-label">项目名称</label>
+                        <div class="md3-outlined-text-field">
+                          <input
+                            v-model="inlineSubName"
+                            type="text"
+                            name="subcategory_name"
+                            placeholder="如 标准 / 加急"
+                            class="md3-text-field-input"
+                            autocomplete="off"
+                            spellcheck="false"
+                            aria-label="项目名称"
+                          />
+                        </div>
+                      </div>
+                      <div class="md3-text-field-container">
+                        <label class="md3-text-field-label">默认单位</label>
+                        <div class="md3-outlined-text-field">
+                          <input
+                            v-model="inlineSubUnit"
+                            type="text"
+                            name="subcategory_unit"
+                            placeholder="件"
+                            class="md3-text-field-input"
+                            autocomplete="off"
+                            spellcheck="false"
+                            aria-label="默认单位"
+                          />
+                        </div>
+                      </div>
+                    </div>
 
-              <!-- MD3 Filter Chips: 快捷单位选择 -->
-              <div class="md3-field-group" style="margin-top: 4px;">
-                <label class="md3-text-field-label">快捷选取单位</label>
-                <div class="md3-chip-set">
+                    <!-- MD3 Filter Chips: 快捷单位选择 -->
+                    <div class="md3-field-group" style="margin-top: 4px;">
+                      <label class="md3-text-field-label">快捷选取单位</label>
+                      <div class="md3-chip-set">
+                        <button
+                          v-for="u in QUICK_UNITS"
+                          :key="u"
+                          type="button"
+                          class="md3-filter-chip cb-pressable"
+                          :class="{ 'md3-filter-chip--selected': inlineSubUnit === u }"
+                          @click="inlineSubUnit = u"
+                        >
+                          {{ u }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="md3-inline-actions">
+                      <button
+                        type="button"
+                        class="md3-outlined-button-small cb-pressable"
+                        @click="cancelAddSubcategory"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        class="md3-filled-button-small cb-pressable"
+                        @click="saveInlineSubcategory(cat)"
+                      >
+                        确认添加
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 未添加时显示的展开按键 -->
                   <button
-                    v-for="u in QUICK_UNITS"
-                    :key="u"
+                    v-else
                     type="button"
-                    class="md3-filter-chip cb-pressable"
-                    :class="{ 'md3-filter-chip--selected': inlineSubUnit === u }"
-                    @click="inlineSubUnit = u"
+                    class="md3-dashed-action-btn cb-pressable"
+                    :tabindex="sortMode ? -1 : 0"
+                    @click="startAddSubcategory(cat)"
                   >
-                    {{ u }}
+                    + 添加服务项目与默认单位
                   </button>
                 </div>
               </div>
-
-              <div class="md3-inline-actions">
-                <button
-                  type="button"
-                  class="md3-outlined-button-small cb-pressable"
-                  @click="cancelAddSubcategory"
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  class="md3-filled-button-small cb-pressable"
-                  @click="saveInlineSubcategory(cat)"
-                >
-                  确认添加
-                </button>
-              </div>
-            </div>
-
-            <!-- 未添加时显示的展开按键 -->
-            <button
-              v-else
-              type="button"
-              class="md3-dashed-action-btn cb-pressable"
-              @click="startAddSubcategory(cat)"
-            >
-              + 添加服务项目与默认单位
-            </button>
-          </div>
+            </template>
+          </draggable>
 
           <!-- 2. 已停用的大类 -->
-          <template v-if="inactiveCategoriesList.length > 0">
+          <template v-if="(sortMode ? sortableInactiveCategories : inactiveCategoriesList).length > 0">
             <div class="cb-section-divider-title">
-              已停用大类 ({{ inactiveCategoriesList.length }})
+              已停用大类 ({{ (sortMode ? sortableInactiveCategories : inactiveCategoriesList).length }})
             </div>
-            <div
-              v-for="cat in inactiveCategoriesList"
-              :key="cat.categoryId"
-              class="md3-card md3-card--outlined cb-cat-section-card cb-cat-section-card--inactive"
+            <draggable
+              :list="sortMode ? sortableInactiveCategories : inactiveCategoriesList"
+              item-key="syncId"
+              :disabled="!sortMode"
+              handle=".cb-drag-handle"
+              :animation="200"
+              :easing="'cubic-bezier(0.2, 0, 0, 1)'"
+              :force-fallback="true"
+              ghost-class="cb-drag-ghost"
+              chosen-class="cb-drag-chosen"
+              drag-class="cb-drag-item"
+              class="cb-drag-list"
             >
-              <div class="cb-cat-header-row">
-                <div class="cb-cat-header-left">
-                  <span class="cb-cat-main-title">{{ cat.name }}</span>
-                  <span class="md3-badge-tonal-small cb-tabular-nums">已停用 · {{ cat.subcategories.length }} 个项目</span>
-                </div>
-                <button
-                  type="button"
-                  class="md3-text-button-primary cb-pressable"
-                  :aria-label="'恢复启用大类 ' + cat.name"
-                  @click="toggleCategoryActive(cat)"
-                >
-                  恢复启用
-                </button>
-              </div>
+              <template #item="{ element: cat }">
+                <div class="md3-card md3-card--outlined cb-cat-section-card cb-cat-section-card--inactive">
+                  <div class="cb-cat-header-row">
+                    <div class="cb-cat-header-left">
+                      <span class="cb-cat-main-title">{{ cat.name }}</span>
+                      <span class="md3-badge-tonal-small cb-tabular-nums">已停用 · {{ cat.subcategories.length }} 个项目</span>
+                    </div>
+                    <div class="cb-cat-header-right">
+                      <button
+                        v-if="!sortMode"
+                        type="button"
+                        class="md3-text-button-primary cb-pressable"
+                        :aria-label="'恢复启用大类 ' + cat.name"
+                        @click="toggleCategoryActive(cat)"
+                      >
+                        恢复启用
+                      </button>
+                      <span
+                        v-else
+                        class="cb-drag-handle"
+                        aria-label="拖拽调整已停用大类顺序"
+                        title="按住拖拽排序"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                          <line x1="4" y1="7" x2="20" y2="7"></line>
+                          <line x1="4" y1="12" x2="20" y2="12"></line>
+                          <line x1="4" y1="17" x2="20" y2="17"></line>
+                        </svg>
+                      </span>
+                    </div>
+                  </div>
 
-              <div v-if="cat.subcategories.length > 0" class="md3-chip-set">
-                <div
-                  v-for="sub in cat.subcategories"
-                  :key="sub.name"
-                  class="md3-input-chip"
-                >
-                  <span class="md3-input-chip-label">{{ sub.name }}</span>
-                  <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
+                  <draggable
+                    v-if="cat.subcategories.length > 0"
+                    :list="cat.subcategories"
+                    item-key="name"
+                    :disabled="!sortMode"
+                    handle=".cb-sub-drag-handle"
+                    :animation="200"
+                    :easing="'cubic-bezier(0.2, 0, 0, 1)'"
+                    :force-fallback="true"
+                    ghost-class="cb-drag-ghost"
+                    chosen-class="cb-drag-chosen"
+                    drag-class="cb-drag-item"
+                    class="md3-chip-set"
+                  >
+                    <template #item="{ element: sub }">
+                      <div class="md3-input-chip" :class="{ 'cb-input-chip--sortable': sortMode }">
+                        <div class="cb-sub-drag-wrap" :class="{ 'cb-sub-drag-wrap--visible': sortMode }">
+                          <span class="cb-sub-drag-handle" aria-label="拖拽调整项目顺序">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                              <line x1="4" y1="7" x2="20" y2="7"></line>
+                              <line x1="4" y1="12" x2="20" y2="12"></line>
+                              <line x1="4" y1="17" x2="20" y2="17"></line>
+                            </svg>
+                          </span>
+                        </div>
+                        <span class="md3-input-chip-label">{{ sub.name }}</span>
+                        <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
+                      </div>
+                    </template>
+                  </draggable>
                 </div>
-              </div>
-            </div>
+              </template>
+            </draggable>
           </template>
 
           <div v-if="appState.categories.length === 0" class="cb-empty-state">
@@ -909,11 +1111,15 @@ onMounted(async () => {
         </div>
       </main>
 
-      <footer class="md3-bottom-app-bar-cta">
+      <footer
+        class="md3-bottom-app-bar-cta"
+        :class="{ 'md3-bottom-app-bar-cta--hidden': sortMode }"
+      >
         <button
           type="button"
           class="md3-filled-button cb-pressable"
           aria-label="新增服务大类"
+          :tabindex="sortMode ? -1 : 0"
           @click="openNewCategoryPage"
         >
           + 新增服务大类
@@ -1552,38 +1758,46 @@ onMounted(async () => {
 }
 
 .md3-input-chip {
-  height: 32px;
-  padding: 0 8px 0 12px;
+  height: 38px;
+  padding: 0 10px 0 14px;
   background: var(--md-sys-color-surface-container-low);
   border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: var(--md-sys-shape-corner-small);
+  border-radius: var(--md-sys-shape-corner-medium);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  box-sizing: border-box;
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .md3-input-chip-label {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--md-sys-color-on-surface);
 }
 
 .md3-input-chip-unit {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--md-sys-color-outline);
 }
 
 .md3-input-chip-del {
-  background: none;
+  background: transparent;
   border: none;
   color: var(--md-sys-color-outline);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
-  padding: 2px 4px;
+  padding: 4px 6px;
+  border-radius: var(--md-sys-shape-corner-full);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .md3-input-chip-del:hover {
   color: var(--md-sys-color-error);
+  background: var(--md-sys-color-error-container);
 }
 
 .md3-filter-chip {
@@ -1785,6 +1999,16 @@ onMounted(async () => {
   left: 16px;
   right: 16px;
   z-index: 90;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.22s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.24s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.md3-bottom-app-bar-cta--hidden {
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
 }
 
 .md3-filled-button {
@@ -1826,5 +2050,217 @@ onMounted(async () => {
 .cb-empty-text {
   font-size: 14px;
   color: var(--md-sys-color-outline);
+}
+
+/* ==========================================================================
+   10. 排序模式：指引条 + 拖拽手柄 + 让位动画 + 平滑过渡
+   ========================================================================== */
+.cb-sort-banner-wrap {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateY(-8px);
+  transition: max-height 0.26s cubic-bezier(0.2, 0, 0, 1),
+    opacity 0.22s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.24s cubic-bezier(0.2, 0, 0, 1),
+    margin 0.24s cubic-bezier(0.2, 0, 0, 1);
+  margin-bottom: 0;
+}
+.cb-sort-banner-wrap--visible {
+  max-height: 80px;
+  opacity: 1;
+  transform: translateY(0);
+  margin-bottom: 8px;
+}
+
+.cb-sort-mode-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--md-sys-color-surface-container-high);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-medium);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--md-sys-color-primary);
+}
+
+.cb-sort-btn {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: var(--md-sys-shape-corner-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-sizing: border-box;
+  outline: none;
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+
+.cb-sort-btn--idle {
+  background: var(--md-sys-color-surface-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-primary);
+}
+.cb-sort-btn--idle:hover {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.cb-sort-btn--done {
+  background: var(--md-sys-color-primary);
+  border: 1px solid var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-weight: 800;
+}
+
+.cb-drag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cb-cat-header-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 36px;
+  min-width: 36px;
+}
+
+/* 1. 小类 Chip 内部手柄容器平滑淡入 */
+.cb-sub-drag-wrap {
+  width: 0;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  transform: scale(0.6);
+  transition: max-width 0.22s cubic-bezier(0.2, 0, 0, 1),
+    width 0.22s cubic-bezier(0.2, 0, 0, 1),
+    opacity 0.18s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.22s cubic-bezier(0.2, 0, 0, 1);
+  pointer-events: none;
+}
+.cb-sub-drag-wrap--visible {
+  width: 20px;
+  max-width: 20px;
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+/* 2. 小类 Chip 内部删除按钮平滑淡出 */
+.cb-chip-del-wrap {
+  opacity: 1;
+  max-width: 30px;
+  transform: scale(1);
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  transition: opacity 0.18s cubic-bezier(0.2, 0, 0, 1),
+    max-width 0.22s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+}
+.cb-chip-del-wrap--hidden {
+  opacity: 0;
+  max-width: 0;
+  transform: scale(0.8);
+  pointer-events: none;
+}
+
+/* 3. 卡片底部添加按钮平滑折叠淡出 */
+.cb-cat-bottom-action-wrap {
+  opacity: 1;
+  max-height: 140px;
+  overflow: hidden;
+  transform: translateY(0);
+  transition: opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+    max-height 0.26s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.22s cubic-bezier(0.2, 0, 0, 1),
+    margin 0.24s cubic-bezier(0.2, 0, 0, 1);
+}
+.cb-cat-bottom-action-wrap--hidden {
+  opacity: 0;
+  max-height: 0;
+  transform: translateY(-8px);
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  pointer-events: none;
+}
+
+.cb-drag-handle,
+.cb-sub-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+
+.cb-drag-handle {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--md-sys-shape-corner-small);
+}
+
+.cb-sub-drag-handle {
+  width: 20px;
+  height: 20px;
+  margin-right: 2px;
+  border-radius: var(--md-sys-shape-corner-extra-small);
+}
+
+.cb-drag-handle:active,
+.cb-sub-drag-handle:active {
+  cursor: grabbing;
+  transform: scale(0.92);
+}
+
+.cb-drag-handle:hover,
+.cb-sub-drag-handle:hover {
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-primary);
+}
+
+.cb-input-chip--sortable {
+  cursor: grab;
+  padding-left: 6px;
+  border-style: dashed;
+}
+
+.cb-subcat-empty-tip {
+  font-size: 12px;
+  color: var(--md-sys-color-outline);
+  padding: 4px 2px;
+}
+
+/* Sortable 让位动画与拖拽高亮 */
+.cb-drag-ghost {
+  opacity: 0.35;
+  border: 2px dashed var(--md-sys-color-primary) !important;
+  border-radius: var(--md-sys-shape-corner-medium) !important;
+  background: var(--md-sys-color-surface-container-high) !important;
+}
+
+.cb-drag-chosen {
+  background: var(--md-sys-color-surface-container-high) !important;
+  box-shadow: var(--md-sys-elevation-3) !important;
+  border-color: var(--md-sys-color-primary) !important;
+}
+
+.cb-drag-item {
+  transition: transform 200ms cubic-bezier(0.2, 0, 0, 1);
 }
 </style>

@@ -182,6 +182,48 @@ def test_list_Active_excludes_archived(customer_repo):
 
 # ---------- 服务选项 service_categories ----------
 
+def test_service_categories_list_sorts_by_sort_order_then_name(connection):
+    # 大类优先级：list_Categories 先按 sort_order 升序，同值再按 category_name 升序。
+    # 构造名称顺序与 sort_order 不一致的数据，避免测试被旧的“纯按名称排序”碰巧通过。
+    repo = ServiceCategoriesRepository(connection)
+    repo.apply_Write(
+        "13800000000",
+        "sync-000000000001",
+        {"category_name": "Z", "subcategories_json": "[]", "is_active": 1, "sort_order": 1},
+        0,
+    )
+    repo.apply_Write(
+        "13800000000",
+        "sync-000000000002",
+        {"category_name": "Y", "subcategories_json": "[]", "is_active": 1, "sort_order": 1},
+        0,
+    )
+    repo.apply_Write(
+        "13800000000",
+        "sync-000000000003",
+        {"category_name": "X", "subcategories_json": "[]", "is_active": 1, "sort_order": 2},
+        0,
+    )
+
+    names = [r["category_name"] for r in repo.list_Categories("13800000000")]
+    assert names == ["Y", "Z", "X"]
+
+
+def test_service_categories_rejects_invalid_sort_order(connection):
+    # 大类排序值必须是非负整数：负数或字符串会让排序规则失效，
+    # 不能裸进库，统一映射为 invalid_request。
+    repo = ServiceCategoriesRepository(connection)
+    for bad in (-1, "abc"):
+        result = repo.apply_Write(
+            "13800000000",
+            f"sync-bad-{bad}",
+            {"category_name": "排序", "subcategories_json": "[]", "is_active": 1, "sort_order": bad},
+            0,
+        )
+        assert result.status == "rejected"
+        assert result.error_code == "invalid_request"
+
+
 def test_service_categories_rejects_duplicate_category_name(connection):
     # 本表校验：同账户内大类重名 → rejected（UNIQUE(account_phone, category_name)）
     repo = ServiceCategoriesRepository(connection)

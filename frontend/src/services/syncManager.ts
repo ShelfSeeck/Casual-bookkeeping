@@ -503,11 +503,18 @@ export class SyncManager {
             updatedAt: now,
           })
         } else if (result.status === 'conflict') {
-          await this.db.outbox.update(entry.queueId, {
-            status: 'conflict',
-            conflictJson: result.conflictJson ?? null,
-          })
-          hadConflict = true
+          // 服务品类采用“自动采用服务端最新”：冲突直接丢弃本地操作，
+          // 不进入冲突中心；后续 Pull 会用服务端快照覆盖本地记录。
+          if (entityTypeFor(entry.operationType) === 'service_category') {
+            await this.db.outbox.delete(entry.queueId)
+            await this.db.operations.delete(entry.operationId)
+          } else {
+            await this.db.outbox.update(entry.queueId, {
+              status: 'conflict',
+              conflictJson: result.conflictJson ?? null,
+            })
+            hadConflict = true
+          }
         } else if (result.status === 'rejected') {
           await this.db.outbox.update(entry.queueId, {
             status: 'rejected',

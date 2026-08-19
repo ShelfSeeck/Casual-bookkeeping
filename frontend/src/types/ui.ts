@@ -23,6 +23,7 @@ export interface ServiceCategoryUi {
   syncId?: string
   name: string
   isActive: boolean
+  sortOrder?: number
   subcategories: SubcategoryUi[]
 }
 
