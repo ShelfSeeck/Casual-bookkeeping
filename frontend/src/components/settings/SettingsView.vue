@@ -1800,7 +1800,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 32px);
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 84px);
 }
 
 .cb-cust-item-card {
@@ -1946,7 +1946,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 32px);
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 84px);
 }
 
 .cb-cat-section-card {
@@ -2291,11 +2291,11 @@ onMounted(async () => {
 /* 3. 卡片底部添加按钮平滑折叠淡出 */
 .cb-cat-bottom-action-wrap {
   opacity: 1;
-  max-height: 140px;
+  max-height: 500px;
   overflow: hidden;
   transform: translateY(0);
   transition: opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
-    max-height 0.26s cubic-bezier(0.2, 0, 0, 1),
+    max-height 0.3s cubic-bezier(0.2, 0, 0, 1),
     transform 0.22s cubic-bezier(0.2, 0, 0, 1),
     margin 0.24s cubic-bezier(0.2, 0, 0, 1);
 }
