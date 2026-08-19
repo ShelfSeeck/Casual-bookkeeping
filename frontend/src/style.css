@@ -38,6 +38,13 @@ body {
   overscroll-behavior: none;
 }
 
+/* 全局子元素锁定 touch-action，禁止双击缩放与手势缩放 */
+*,
+*::before,
+*::after {
+  touch-action: manipulation;
+}
+
 /* 禁止图片、链接、SVG 等元素的原生幽灵拖拽 */
 img,
 a,

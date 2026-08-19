@@ -13,8 +13,17 @@ export interface TouchGuardsOptions {
 }
 
 export function installTouchGuards(options: TouchGuardsOptions = {}): () => void {
-  const doc = options.target || (typeof document !== 'undefined' ? document : null)
-  if (!doc) {
+  const targets: EventTarget[] = []
+  if (options.target) {
+    targets.push(options.target)
+  } else if (typeof window !== 'undefined') {
+    targets.push(window)
+    if (typeof document !== 'undefined' && document !== (window as unknown)) {
+      targets.push(document)
+    }
+  }
+
+  if (targets.length === 0) {
     return () => {}
   }
 
@@ -24,28 +33,39 @@ export function installTouchGuards(options: TouchGuardsOptions = {}): () => void
     }
   }
 
-  // 1. iOS WebKit 专有手势缩放拦截（二指捏合/旋转）
-  doc.addEventListener('gesturestart', preventDefaultHandler, { passive: false })
-  doc.addEventListener('gesturechange', preventDefaultHandler, { passive: false })
-  doc.addEventListener('gestureend', preventDefaultHandler, { passive: false })
-
-  // 2. 多指滑动防缩放（仅在 touchmove 阶段拦截多指缩放手势，不影响 touchstart 多指点击）
-  const onTouchMove = (e: Event) => {
+  // 多指手势判定（当屏幕上有超过 1 个触点时，拦截触摸与滑动，杜绝二指捏合缩放）
+  const onMultiTouch = (e: Event) => {
     const touchEvent = e as TouchEvent
     if (touchEvent.touches && touchEvent.touches.length > 1 && touchEvent.cancelable) {
       touchEvent.preventDefault()
     }
   }
-  doc.addEventListener('touchmove', onTouchMove, { passive: false })
 
-  // 3. 阻止全局网页原生拖拽（图片、链接、选中文本的幽灵拖拽）
-  doc.addEventListener('dragstart', preventDefaultHandler, { passive: false })
+  const listenerOpts: AddEventListenerOptions = { passive: false, capture: true }
+
+  for (const t of targets) {
+    // 1. iOS WebKit 专有二指缩放/旋转手势拦截
+    t.addEventListener('gesturestart', preventDefaultHandler, listenerOpts)
+    t.addEventListener('gesturechange', preventDefaultHandler, listenerOpts)
+    t.addEventListener('gestureend', preventDefaultHandler, listenerOpts)
+
+    // 2. 多点触控拦截（touchstart 起手式 + touchmove 移动过程双重锁死）
+    t.addEventListener('touchstart', onMultiTouch, listenerOpts)
+    t.addEventListener('touchmove', onMultiTouch, listenerOpts)
+
+    // 3. 阻止原生幽灵拖拽
+    t.addEventListener('dragstart', preventDefaultHandler, listenerOpts)
+  }
 
   return () => {
-    doc.removeEventListener('gesturestart', preventDefaultHandler)
-    doc.removeEventListener('gesturechange', preventDefaultHandler)
-    doc.removeEventListener('gestureend', preventDefaultHandler)
-    doc.removeEventListener('touchmove', onTouchMove)
-    doc.removeEventListener('dragstart', preventDefaultHandler)
+    const removeOpts: EventListenerOptions = { capture: true }
+    for (const t of targets) {
+      t.removeEventListener('gesturestart', preventDefaultHandler, removeOpts)
+      t.removeEventListener('gesturechange', preventDefaultHandler, removeOpts)
+      t.removeEventListener('gestureend', preventDefaultHandler, removeOpts)
+      t.removeEventListener('touchstart', onMultiTouch, removeOpts)
+      t.removeEventListener('touchmove', onMultiTouch, removeOpts)
+      t.removeEventListener('dragstart', preventDefaultHandler, removeOpts)
+    }
   }
 }
