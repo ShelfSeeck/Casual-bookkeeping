@@ -254,7 +254,7 @@ class AppState {
           categoryId: Number.parseInt(c.syncId.slice(5), 16),
           syncId: c.syncId,
           name: c.categoryName,
-          isActive: c.isActive,
+          isActive: Boolean(c.isActive),
           sortOrder: c.sortOrder,
           subcategories: subs.map((s) => {
             const raw = s as unknown as Record<string, unknown>
@@ -299,7 +299,7 @@ class AppState {
 
   /**
    * 自愈清理本地因历史并发误写产生的重复同名大类：
-   * 保留子项目更丰富或最新的一条，清理冗余副本及 outbox 中的多余提交。
+   * 保留子项目更丰富或最新的一条，清理冗余副本及 outbox / operations 中的多余提交。
    */
   private async autoDeduplicateCategories(db: CbDatabase): Promise<void> {
     const rawCategories = await db.serviceCategories.toArray()
@@ -328,14 +328,29 @@ class AppState {
     }
 
     if (duplicatesToRemove.length > 0) {
-      await db.transaction('rw', [db.serviceCategories, db.outbox], async () => {
+      const removeSet = new Set(duplicatesToRemove)
+      await db.transaction('rw', [db.serviceCategories, db.outbox, db.operations], async () => {
         for (const syncId of duplicatesToRemove) {
           await db.serviceCategories.delete(syncId)
         }
+        // 清理 outbox 中引用了被删重复记录的条目
         const outboxItems = await db.outbox.toArray()
         for (const item of outboxItems) {
-          if (item.entitySyncIds.some((id) => duplicatesToRemove.includes(id))) {
+          if (item.entitySyncIds.some((id) => removeSet.has(id))) {
             await db.outbox.delete(item.queueId)
+          }
+        }
+        // 清理 operations 中引用了被删重复记录的条目，防止残留历史引发同步冲突
+        const ops = await db.operations.toArray()
+        for (const op of ops) {
+          try {
+            const parsed = JSON.parse(op.changesJson ?? '{}')
+            const ids: string[] = parsed.entitySyncIds ?? []
+            if (ids.some((id) => removeSet.has(id))) {
+              await db.operations.delete(op.operationId)
+            }
+          } catch {
+            // changesJson 解析失败则跳过
           }
         }
       })

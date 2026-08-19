@@ -84,6 +84,10 @@ function confirmDateRange() {
 function selectCustomer(id: number | null) {
   appState.ledgerFilters.customerId = id
 }
+
+function selectCategory(name: string | null) {
+  appState.ledgerFilters.categoryName = name
+}
 </script>
 
 <template>
@@ -189,6 +193,34 @@ function selectCustomer(id: number | null) {
         >
           <span class="cb-bubble-code">{{ c.code }}</span>
           <span>{{ c.displayName }}</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 第 3 行：服务品类选择行（通栏横向滑动，M3 药丸） -->
+    <div v-if="appState.activeCategories.length > 0" class="cb-category-full-row">
+      <div class="cb-category-pills-scroll" role="radiogroup" aria-label="按品类筛选">
+        <button
+          type="button"
+          class="cb-category-pill cb-pressable"
+          :class="{ 'cb-category-pill--active': appState.ledgerFilters.categoryName === null }"
+          role="radio"
+          :aria-checked="appState.ledgerFilters.categoryName === null"
+          @click="selectCategory(null)"
+        >
+          全部品类
+        </button>
+        <button
+          v-for="cat in appState.activeCategories"
+          :key="cat.syncId"
+          type="button"
+          class="cb-category-pill cb-pressable"
+          :class="{ 'cb-category-pill--active': appState.ledgerFilters.categoryName === cat.name }"
+          role="radio"
+          :aria-checked="appState.ledgerFilters.categoryName === cat.name"
+          @click="selectCategory(cat.name)"
+        >
+          {{ cat.name }}
         </button>
       </div>
     </div>
@@ -504,6 +536,48 @@ function selectCustomer(id: number | null) {
 .cb-filter-bubble--active .cb-bubble-code {
   background: var(--md-sys-color-surface);
   color: var(--md-sys-color-on-surface);
+}
+
+/* 服务品类横滑药丸筛选行 */
+.cb-category-full-row {
+  width: 100%;
+  overflow: hidden;
+}
+
+.cb-category-pills-scroll {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
+}
+.cb-category-pills-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.cb-category-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 14px;
+  background: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+
+.cb-category-pill--active {
+  background: var(--md-sys-color-primary-container);
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary-container);
+  box-shadow: var(--md-sys-elevation-1);
 }
 
 /* ==========================================================================

@@ -660,7 +660,14 @@ export async function createServiceCategory(
     operationType: 'create_service_category',
     entitySyncIds: [syncId],
     changes: [change],
-    apply: (tx) => tx.serviceCategories.put(record),
+    apply: async (tx) => {
+      // 事务内重名校验：消除事务外 validateServiceCategoryInput 与此处的 TOCTOU 窗口
+      const all = await tx.serviceCategories.toArray()
+      if (all.some((c) => c.categoryName === fields.categoryName)) {
+        throw new BusinessRuleError('category_name_duplicate')
+      }
+      await tx.serviceCategories.put(record)
+    },
     actorType: 'user',
   })
 }

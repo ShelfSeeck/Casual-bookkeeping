@@ -119,12 +119,12 @@ function openNewCategoryPage() {
 }
 
 async function submitNewCategory() {
+  if (isCategorySubmitting.value) return
   const catName = formNewCatName.value.trim()
   if (!catName) {
     showFailToast('请填写大类名称')
     return
   }
-  if (isCategorySubmitting.value) return
   isCategorySubmitting.value = true
 
   try {
@@ -1294,9 +1294,10 @@ onMounted(async () => {
           form="new-category-form"
           type="submit"
           class="md3-filled-button cb-pressable"
+          :disabled="isCategorySubmitting"
           aria-label="保存大类"
         >
-          保存大类
+          {{ isCategorySubmitting ? '保存中…' : '保存大类' }}
         </button>
       </footer>
     </div>
