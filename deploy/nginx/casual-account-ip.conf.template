@@ -1,0 +1,46 @@
+# Casual Account Nginx configuration template.
+# Replace the __CB_*__ placeholders before installing this file.
+
+upstream casual_account_backend {
+    server 127.0.0.1:__CB_BACKEND_PORT__;
+}
+
+server {
+    listen __CB_PUBLIC_PORT__ ssl default_server;
+    listen [::]:__CB_PUBLIC_PORT__ ssl default_server;
+    server_name __CB_PUBLIC_HOST__;
+
+    ssl_certificate     /etc/nginx/ssl/casual-account-ip/fullchain.crt;
+    ssl_certificate_key /etc/nginx/ssl/casual-account-ip/private.key;
+
+    # HTTP 误访问 HTTPS 端口时自动 301 重定向到 HTTPS
+    error_page 497 =301 https://$host:$server_port$request_uri;
+
+    root __CB_DEPLOY_ROOT__/frontend/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /auth/ {
+        proxy_pass http://casual_account_backend;
+        include /etc/nginx/proxy_params;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location /sync/ {
+        proxy_pass http://casual_account_backend;
+        include /etc/nginx/proxy_params;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location /chat/ {
+        proxy_pass http://casual_account_backend;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 600s;
+        include /etc/nginx/proxy_params;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}

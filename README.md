@@ -131,7 +131,12 @@ Useful commands: `list-accounts`, `list-devices <phone>`,
 `revoke-device <phone> <device_id>`, `set-password`, `set-account-status`.
 See `docs/manage-cli.md` for the full manual.
 
-### 7. Post-deploy smoke test
+### 7. GitHub Actions CI/CD
+
+前端的 Pull Request 检查和 `main` 分支自动部署由 GitHub Actions workflow 负责。
+变量命名、Environment/Secrets 配置和 SSH 部署步骤见 [`docs/frontend-cicd.md`](docs/frontend-cicd.md)。
+
+### 8. Post-deploy smoke test
 
 1. Open the site over HTTPS and log in with the account created above.
 2. Record one work order on the desk page.

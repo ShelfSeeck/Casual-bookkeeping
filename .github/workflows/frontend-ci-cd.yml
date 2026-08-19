@@ -1,0 +1,140 @@
+name: Frontend CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci-cd.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci-cd.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  ci:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Build PWA
+        run: npm run build
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: Deploy frontend
+    needs: ci
+    # PR 只做 CI；只有 main 分支 push 或 main 分支手动运行才部署。
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    environment:
+      name: First_CB_NORMAL
+    env:
+      CB_DEPLOY_HOST: ${{ secrets.CB_DEPLOY_HOST }}
+      CB_DEPLOY_SSH_PORT: ${{ secrets.CB_DEPLOY_SSH_PORT }}
+      CB_DEPLOY_USER: ${{ secrets.CB_DEPLOY_USER }}
+      CB_DEPLOY_ROOT: ${{ secrets.CB_DEPLOY_ROOT }}
+      CB_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.CB_DEPLOY_SSH_PRIVATE_KEY }}
+      CB_DEPLOY_KNOWN_HOSTS: ${{ secrets.CB_DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${CB_DEPLOY_HOST:?Missing GitHub secret CB_DEPLOY_HOST}"
+          : "${CB_DEPLOY_SSH_PORT:?Missing GitHub secret CB_DEPLOY_SSH_PORT}"
+          : "${CB_DEPLOY_USER:?Missing GitHub secret CB_DEPLOY_USER}"
+          : "${CB_DEPLOY_ROOT:?Missing GitHub secret CB_DEPLOY_ROOT}"
+          : "${CB_DEPLOY_SSH_PRIVATE_KEY:?Missing GitHub secret CB_DEPLOY_SSH_PRIVATE_KEY}"
+          : "${CB_DEPLOY_KNOWN_HOSTS:?Missing GitHub secret CB_DEPLOY_KNOWN_HOSTS}"
+          [[ "$CB_DEPLOY_SSH_PORT" =~ ^[0-9]+$ ]] || {
+            echo "CB_DEPLOY_SSH_PORT must be a number" >&2
+            exit 1
+          }
+          [[ "$CB_DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]] || {
+            echo "CB_DEPLOY_USER contains unsupported characters" >&2
+            exit 1
+          }
+          [[ "$CB_DEPLOY_HOST" =~ ^[A-Za-z0-9._-]+$ ]] || {
+            echo "CB_DEPLOY_HOST must be a hostname or IPv4 address" >&2
+            exit 1
+          }
+          [[ "$CB_DEPLOY_ROOT" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+            echo "CB_DEPLOY_ROOT must be an absolute path without spaces" >&2
+            exit 1
+          }
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$CB_DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/cb_deploy_key"
+          chmod 600 "$HOME/.ssh/cb_deploy_key"
+          printf '%s\n' "$CB_DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      - name: Prepare remote directory
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          remote_root_q=$(printf '%q' "$CB_DEPLOY_ROOT")
+          ssh \
+            -i "$HOME/.ssh/cb_deploy_key" \
+            -p "$CB_DEPLOY_SSH_PORT" \
+            -o BatchMode=yes \
+            "$CB_DEPLOY_USER@$CB_DEPLOY_HOST" \
+            "mkdir -p ${remote_root_q}/frontend/dist"
+
+      - name: Sync static files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rsync -az --delete \
+            -e "ssh -i $HOME/.ssh/cb_deploy_key -p $CB_DEPLOY_SSH_PORT -o BatchMode=yes" \
+            frontend/dist/ \
+            "$CB_DEPLOY_USER@$CB_DEPLOY_HOST:$CB_DEPLOY_ROOT/frontend/dist/"

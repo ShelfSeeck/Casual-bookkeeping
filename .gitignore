@@ -29,3 +29,5 @@ AGENTS.md
 .idea/
 .vscode/
 
+# Local production deployment config may contain the server address.
+deploy/nginx/*.local.conf
