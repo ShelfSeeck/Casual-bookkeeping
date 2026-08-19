@@ -726,7 +726,7 @@ onMounted(async () => {
 
 <style scoped>
 .cb-conflict-center {
-  min-height: 100vh;
+  min-height: 100%;
   padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 24px);
   background: var(--md-sys-color-surface);
 }
@@ -734,7 +734,7 @@ onMounted(async () => {
 .cb-page-container {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: 100%;
 }
 
 /* ==========================================================================

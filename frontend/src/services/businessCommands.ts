@@ -673,11 +673,15 @@ export async function updateServiceCategory(
   const existing = await db.serviceCategories.get(syncId)
   if (!existing) throw new BusinessRuleError('entity_not_found')
 
-  await validateServiceCategoryInput(db, {
-    categoryName: patch.categoryName ?? existing.categoryName,
-    subcategories: patch.subcategories,
-    excludeSyncId: syncId,
-  })
+  if (patch.categoryName !== undefined && patch.categoryName !== existing.categoryName) {
+    await validateServiceCategoryInput(db, {
+      categoryName: patch.categoryName,
+      subcategories: patch.subcategories,
+      excludeSyncId: syncId,
+    })
+  } else if (patch.subcategories !== undefined) {
+    validateSubcategories(patch.subcategories)
+  }
 
   const wirePatch: Record<string, unknown> = {}
   if (patch.categoryName !== undefined) wirePatch.category_name = patch.categoryName

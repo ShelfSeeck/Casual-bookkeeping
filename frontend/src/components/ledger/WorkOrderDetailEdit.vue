@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import type { WorkOrderUi } from '../../types/ui'
 import { appState } from '../../state/appState'
@@ -32,12 +32,21 @@ const unitPriceStr = ref(
 const quantityError = ref('')
 const unitPriceError = ref('')
 const orderDate = ref(props.order.orderDate)
+const isCompleted = ref<boolean>(Boolean(props.order.isCompleted))
 const today = computed(() => localDateToday())
 const yesterday = computed(() => shiftLocalDate(today.value, -1))
 const dayBefore = computed(() => shiftLocalDate(today.value, -2))
 
+// 内部操作中标志位，防止 appState.reload() 触发 watch 误重置表单
+let isInternalAction = false
+
+// 记忆每个大类下用户选择的小类名称
+const categorySubcategoryMemory = reactive<Record<string, string>>({
+  [props.order.categoryName]: props.order.subcategoryName,
+})
+
 // activeOrder 改为 computed 后，reload 会用新对象替换 props.order；表单 refs 需在外部变化时重新初始化，
-// 否则面板仍显示旧值。以 orderId + updatedAt 为触发条件：同单外部更新会刷新，本地编辑不触发。
+// 否则面板仍显示旧值。以 orderId 为唯一切换重置触发条件（避免同单由于局部更新 reload 导致编辑中的表单被覆盖）。
 function syncFormFromOrder() {
   selectedCustomerId.value = props.order.customerId
   selectedCategoryName.value = props.order.categoryName
@@ -47,13 +56,20 @@ function syncFormFromOrder() {
   unitPriceStr.value =
     props.order.unitPriceCents != null ? (props.order.unitPriceCents / 100).toFixed(2) : ''
   orderDate.value = props.order.orderDate
+  isCompleted.value = Boolean(props.order.isCompleted)
   quantityError.value = ''
   unitPriceError.value = ''
+  categorySubcategoryMemory[props.order.categoryName] = props.order.subcategoryName
 }
 
-watch(() => [props.order.orderId, props.order.updatedAt] as const, () => {
-  syncFormFromOrder()
-})
+watch(
+  () => props.order.orderId,
+  (newId, oldId) => {
+    if (newId !== oldId && !isInternalAction) {
+      syncFormFromOrder()
+    }
+  },
+)
 
 // 弹窗控制
 const showCustomerSheet = ref(false)
@@ -145,9 +161,9 @@ const isSubcatMany = computed(() => {
   return activeCategory.value.subcategories.length > 6
 })
 
-// 切换大类（若选择已停用大类，弹窗就地引导恢复启用）
+// 切换大类（若选择已停用大类，弹窗就地引导恢复启用，并保持记忆的小类）
 async function selectCategory(catName: string) {
-  const cat = appState.categories.find((c) => c.name === catName)
+  let cat = appState.categories.find((c) => c.name === catName)
   if (!cat) return
 
   // 若改选的大类已停用，且并非当前工单原始所属的大类，提示就地恢复启用
@@ -159,26 +175,47 @@ async function selectCategory(catName: string) {
         confirmButtonText: '恢复启用',
         cancelButtonText: '取消',
       })
+      isInternalAction = true
       await appState.updateCategory(cat.syncId!, { isActive: true })
       showSuccessToast(`已恢复启用大类「${catName}」`)
+      // reload 之后重新获取最新的类别对象
+      const updatedCat = appState.categories.find((c) => c.name === catName)
+      if (updatedCat) cat = updatedCat
     } catch {
       return
+    } finally {
+      isInternalAction = false
     }
   }
 
   selectedCategoryName.value = catName
+
+  // 记忆与恢复小类
   if (cat.subcategories.length > 0) {
-    const activeSubs = cat.subcategories.filter((s) => s.isActive)
-    if (activeSubs.length > 0) {
-      selectedSubcategoryName.value = activeSubs[0].name
-      unit.value = activeSubs[0].defaultUnit
+    // 优先 1：如果是切回工单原始大类，优先选择工单原始小类
+    const originalSubName = props.order.categoryName === catName ? props.order.subcategoryName : null
+    // 优先 2：使用此大类之前记录过的小类选择
+    const rememberedSubName = categorySubcategoryMemory[catName]
+    const targetSubName = originalSubName || rememberedSubName
+
+    const foundSub = targetSubName ? cat.subcategories.find((s) => s.name === targetSubName) : null
+    if (foundSub) {
+      selectedSubcategoryName.value = foundSub.name
+      unit.value = foundSub.defaultUnit
     } else {
-      selectedSubcategoryName.value = cat.subcategories[0].name
-      unit.value = cat.subcategories[0].defaultUnit
+      const activeSubs = cat.subcategories.filter((s) => s.isActive)
+      const fallback = activeSubs.length > 0 ? activeSubs[0] : cat.subcategories[0]
+      selectedSubcategoryName.value = fallback.name
+      unit.value = fallback.defaultUnit
     }
   } else {
     selectedSubcategoryName.value = ''
     unit.value = '件'
+  }
+
+  // 记录选择
+  if (selectedSubcategoryName.value) {
+    categorySubcategoryMemory[catName] = selectedSubcategoryName.value
   }
 }
 
@@ -192,7 +229,61 @@ function chooseSubcategory(subName: string, defaultUnit: string) {
   selectedSubcategoryName.value = subName
   unit.value = defaultUnit
   showSubcategorySheet.value = false
+  if (selectedCategoryName.value) {
+    categorySubcategoryMemory[selectedCategoryName.value] = subName
+  }
 }
+
+// ---------- 实时变更 Diff 状态计算（反色黄色高亮） ----------
+
+// 1. 日期是否已修改
+const isDateDirty = computed(() => orderDate.value !== props.order.orderDate)
+
+// 2. 客户是否已修改
+const isCustomerDirty = computed(() => selectedCustomerId.value !== props.order.customerId)
+
+// 3. 服务大类是否已修改
+const isCategoryDirty = computed(() => selectedCategoryName.value !== props.order.categoryName)
+
+// 4. 服务小类是否已修改（只要大类变更，或小类名称变更，小类均属于修改状态）
+const isSubcategoryDirty = computed(
+  () =>
+    selectedCategoryName.value !== props.order.categoryName ||
+    selectedSubcategoryName.value !== props.order.subcategoryName
+)
+
+// 5. 数量是否已修改
+const isQuantityDirty = computed(() => {
+  const current = parseInt(quantityStr.value, 10)
+  return !isNaN(current) && current !== props.order.quantity
+})
+
+// 6. 单价是否已修改
+const parsedPriceCents = computed(() => {
+  if (unitPriceStr.value.trim() === '') return null
+  const p = parseFloat(unitPriceStr.value)
+  return !isNaN(p) && p > 0 ? Math.round(p * 100) : null
+})
+
+const isUnitPriceDirty = computed(() => {
+  return parsedPriceCents.value !== props.order.unitPriceCents
+})
+
+// 7. 是否完成状态是否已修改
+const isCompletedDirty = computed(() => isCompleted.value !== props.order.isCompleted)
+
+// 8. 统计已修改字段数量
+const dirtyFieldsCount = computed(() => {
+  let count = 0
+  if (isDateDirty.value) count++
+  if (isCustomerDirty.value) count++
+  if (isCategoryDirty.value) count++
+  if (isSubcategoryDirty.value) count++
+  if (isQuantityDirty.value) count++
+  if (isUnitPriceDirty.value) count++
+  if (isCompletedDirty.value) count++
+  return count
+})
 
 // 动态总价计算
 const computedTotalAmount = computed(() => {
@@ -275,6 +366,9 @@ async function handleSave() {
   if (priceCents !== props.order.unitPriceCents) {
     patch.unitPriceCents = priceCents
   }
+  if (isCompleted.value !== props.order.isCompleted) {
+    patch.isCompleted = isCompleted.value
+  }
 
   if (Object.keys(patch).length === 0) {
     showSuccessToast('工单内容未变更')
@@ -291,15 +385,9 @@ async function handleSave() {
   }
 }
 
-// 完成标记切换
-async function toggleComplete() {
-  try {
-    await appState.toggleComplete(props.order.orderId, !props.order.isCompleted)
-    showSuccessToast(props.order.isCompleted ? '已标记为完成' : '已标记为未完成')
-    await refreshHistory()
-  } catch (e) {
-    showFailToast(toErrorMessage(e))
-  }
+// 完成标记切换（纳入统一修改流，只在本地响应式切换状态）
+function toggleComplete() {
+  isCompleted.value = !isCompleted.value
 }
 
 // 删除工单（软删，提交后由 UndoSnackbar 提供即时撤回）
@@ -367,7 +455,7 @@ async function handleRevert(operationId: string) {
     <!-- 主编辑控制面板（与首页工单台完全一致） -->
     <div class="cb-console-panel">
       <!-- 顶部时间大字监控行 -->
-      <div class="cb-top-time-bar">
+      <div class="cb-top-time-bar" :class="{ 'cb-top-time-bar--dirty': isDateDirty }">
         <button
           type="button"
           class="cb-time-big-trigger cb-pressable"
@@ -375,11 +463,11 @@ async function handleRevert(operationId: string) {
           @click="showDatePickerSheet = true"
         >
           <div class="cb-time-big-group cb-tabular-nums">
-            <span class="cb-time-big-date">{{ orderDate }}</span>
-            <span v-if="orderDate === today" class="cb-time-today-tag">今天</span>
-            <span v-else-if="orderDate === yesterday" class="cb-time-today-tag">昨天</span>
+            <span class="cb-time-big-date" :class="{ 'cb-text-dirty': isDateDirty }">{{ orderDate }}</span>
+            <span v-if="orderDate === today" class="cb-time-today-tag" :class="{ 'cb-time-today-tag--dirty': isDateDirty }">今天</span>
+            <span v-else-if="orderDate === yesterday" class="cb-time-today-tag" :class="{ 'cb-time-today-tag--dirty': isDateDirty }">昨天</span>
           </div>
-          <span class="cb-time-switch-icon" aria-hidden="true">切换日期 ▾</span>
+          <span class="cb-time-switch-icon" :class="{ 'cb-text-dirty': isDateDirty }" aria-hidden="true">切换日期 ▾</span>
         </button>
       </div>
 
@@ -389,20 +477,21 @@ async function handleRevert(operationId: string) {
         <button
           type="button"
           class="cb-cust-placard-btn cb-pressable"
+          :class="{ 'cb-cust-placard-btn--dirty': isCustomerDirty }"
           aria-label="选择客户"
           @click="showCustomerSheet = true"
         >
           <div class="cb-placard-left">
             <div class="cb-placard-code-box">
-              <span class="cb-placard-code-val">{{ currentCustomer.code }}</span>
+              <span class="cb-placard-code-val" :class="{ 'cb-text-dirty': isCustomerDirty }">{{ currentCustomer.code }}</span>
             </div>
             <div class="cb-placard-names-col">
-              <span class="cb-placard-name-main">{{ currentCustomer.displayName }}</span>
+              <span class="cb-placard-name-main" :class="{ 'cb-text-dirty': isCustomerDirty }">{{ currentCustomer.displayName }}</span>
               <span class="cb-placard-fullname-sub">{{ currentCustomer.customerName }}</span>
             </div>
           </div>
           <div class="cb-placard-right">
-            <span class="cb-clean-switch-text">切换 ▾</span>
+            <span class="cb-clean-switch-text" :class="{ 'cb-text-dirty': isCustomerDirty }">切换 ▾</span>
           </div>
         </button>
       </div>
@@ -417,7 +506,8 @@ async function handleRevert(operationId: string) {
             type="button"
             class="cb-major-third-tab cb-pressable"
             :class="{
-              'cb-major-third-tab--active': selectedCategoryName === cat.name,
+              'cb-major-third-tab--active': selectedCategoryName === cat.name && !isCategoryDirty,
+              'cb-major-third-tab--dirty-active': selectedCategoryName === cat.name && isCategoryDirty,
               'cb-major-third-tab--inactive': !cat.isActive
             }"
             role="tab"
@@ -435,7 +525,7 @@ async function handleRevert(operationId: string) {
       <div v-if="activeCategory" class="cb-monitor-section">
         <div class="cb-subcat-section-header">
           <label class="cb-section-tag">具体小类 ({{ selectedCategoryName }})</label>
-          <span class="cb-unit-reminder">默认单位: <strong>{{ unit }}</strong></span>
+          <span class="cb-unit-reminder">默认单位: <strong :class="{ 'cb-text-dirty': isSubcategoryDirty }">{{ unit }}</strong></span>
         </div>
 
         <!-- 数量 <= 6 时，无边界 + 微阴影直选卡片平铺 -->
@@ -445,7 +535,10 @@ async function handleRevert(operationId: string) {
             :key="sub.name"
             type="button"
             class="cb-subcat-direct-btn cb-pressable"
-            :class="{ 'cb-subcat-direct-btn--active': selectedSubcategoryName === sub.name }"
+            :class="{
+              'cb-subcat-direct-btn--active': selectedSubcategoryName === sub.name && !isSubcategoryDirty,
+              'cb-subcat-direct-btn--dirty-active': selectedSubcategoryName === sub.name && isSubcategoryDirty,
+            }"
             @click="chooseSubcategory(sub.name, sub.defaultUnit)"
           >
             <span class="cb-direct-name">{{ sub.name }}</span>
@@ -458,14 +551,15 @@ async function handleRevert(operationId: string) {
           v-else
           type="button"
           class="cb-subcat-dropdown-row cb-pressable"
+          :class="{ 'cb-subcat-dropdown-row--dirty': isSubcategoryDirty }"
           aria-label="选择具体小类"
           @click="showSubcategorySheet = true"
         >
           <div class="cb-dropdown-row-left">
-            <span class="cb-subcat-focus-name">{{ selectedSubcategoryName }}</span>
-            <span class="cb-subcat-focus-unit">单位: {{ unit }}</span>
+            <span class="cb-subcat-focus-name" :class="{ 'cb-text-dirty': isSubcategoryDirty }">{{ selectedSubcategoryName }}</span>
+            <span class="cb-subcat-focus-unit" :class="{ 'cb-text-dirty': isSubcategoryDirty }">单位: {{ unit }}</span>
           </div>
-          <span class="cb-clean-switch-text" aria-hidden="true">切换小类 ▾</span>
+          <span class="cb-clean-switch-text" :class="{ 'cb-text-dirty': isSubcategoryDirty }" aria-hidden="true">切换小类 ▾</span>
         </button>
       </div>
 
@@ -473,7 +567,7 @@ async function handleRevert(operationId: string) {
       <div class="cb-monitor-section">
         <div class="cb-field-header-row">
           <label for="edit-order-qty-input" class="cb-section-tag">工单数量 *</label>
-          <span class="cb-unit-reminder">单位: <strong>{{ unit }}</strong></span>
+          <span class="cb-unit-reminder">单位: <strong :class="{ 'cb-text-dirty': isQuantityDirty }">{{ unit }}</strong></span>
         </div>
         <div class="m3-underline-field">
           <div class="m3-underline-input-box">
@@ -484,16 +578,17 @@ async function handleRevert(operationId: string) {
               inputmode="numeric"
               pattern="[0-9]*"
               class="m3-native-input cb-tabular-nums"
+              :class="{ 'cb-input--dirty': isQuantityDirty }"
               placeholder="0"
               autocomplete="off"
               aria-label="工单数量"
               @keydown="onQuantityKeydown"
               @input="onQuantityInput"
             />
-            <span class="m3-unit-suffix">{{ unit }}</span>
+            <span class="m3-unit-suffix" :class="{ 'cb-text-dirty': isQuantityDirty }">{{ unit }}</span>
           </div>
           <p v-if="quantityError" class="cb-inline-error" role="alert">{{ quantityError }}</p>
-          <div class="m3-bottom-line" aria-hidden="true"></div>
+          <div class="m3-bottom-line" :class="{ 'm3-bottom-line--dirty': isQuantityDirty }" aria-hidden="true"></div>
         </div>
       </div>
 
@@ -503,19 +598,24 @@ async function handleRevert(operationId: string) {
           <label for="edit-order-price-input" class="cb-section-tag">
             单价 <span class="cb-tag-optional">可选 (元/{{ unit }})</span>
           </label>
-          <span v-if="computedTotalAmount != null" class="cb-computed-total-tag cb-tabular-nums">
+          <span
+            v-if="computedTotalAmount != null"
+            class="cb-computed-total-tag cb-tabular-nums"
+            :class="{ 'cb-computed-total-tag--dirty': isUnitPriceDirty || isQuantityDirty }"
+          >
             合计: <strong>¥{{ computedTotalAmount }}</strong>
           </span>
         </div>
         <div class="m3-underline-field">
           <div class="m3-underline-input-box">
-            <span class="m3-currency-prefix">¥</span>
+            <span class="m3-currency-prefix" :class="{ 'cb-text-dirty': isUnitPriceDirty }">¥</span>
             <input
               id="edit-order-price-input"
               :value="unitPriceStr"
               type="text"
               inputmode="decimal"
               class="m3-native-input cb-tabular-nums"
+              :class="{ 'cb-input--dirty': isUnitPriceDirty }"
               placeholder="未定价"
               autocomplete="off"
               aria-label="工单单价"
@@ -524,7 +624,7 @@ async function handleRevert(operationId: string) {
             />
           </div>
           <p v-if="unitPriceError" class="cb-inline-error" role="alert">{{ unitPriceError }}</p>
-          <div class="m3-bottom-line" aria-hidden="true"></div>
+          <div class="m3-bottom-line" :class="{ 'm3-bottom-line--dirty': isUnitPriceDirty }" aria-hidden="true"></div>
         </div>
       </div>
 
@@ -532,51 +632,137 @@ async function handleRevert(operationId: string) {
       <button
         type="button"
         class="cb-complete-toggle-btn cb-pressable"
-        :aria-label="order.isCompleted ? '标记为未完成' : '标记为完成'"
+        :class="{ 'cb-complete-toggle-btn--dirty': isCompletedDirty }"
+        :aria-label="isCompleted ? '标记为未完成' : '标记为完成'"
         @click="toggleComplete"
       >
-        {{ order.isCompleted ? '✓ 已完成，点击标记未完成' : '○ 未完成，点击标记完成' }}
+        {{ isCompleted ? '✓ 已完成，点击改为未完成' : '○ 未完成，点击改为已完成' }}
       </button>
 
       <button
         type="button"
         class="cb-large-submit-btn cb-pressable"
+        :class="{ 'cb-large-submit-btn--dirty': dirtyFieldsCount > 0 }"
         aria-label="保存工单修改"
         @click="handleSave"
       >
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
-        <span>保存工单修改</span>
+        <span>{{ dirtyFieldsCount > 0 ? `保存工单修改 (${dirtyFieldsCount} 处变更)` : '保存工单修改' }}</span>
       </button>
 
       <!-- 7. 修改轨迹追溯 -->
       <div class="cb-history-card">
-        <div class="cb-history-title">修改轨迹追溯</div>
-        <div v-if="orderHistory.length === 0" class="cb-history-empty">
-          暂无历史记录
-        </div>
-        <div v-else class="cb-history-list">
-          <div v-for="h in orderHistory" :key="h.operationId" class="cb-history-row">
-            <div class="cb-history-row-main">
-              <span class="cb-history-time cb-tabular-nums">{{ h.timestamp }}</span>
-              <span class="cb-history-summary">{{ h.summary }}</span>
-              <span class="cb-history-meta">
-                {{ h.device ?? '本机' }} · {{ h.actorType === 'ai' ? 'AI' : '本人' }}
-              </span>
-            </div>
-            <button
-              v-if="h.canRevert"
-              type="button"
-              class="cb-history-revert-btn cb-pressable"
-              @click="handleRevert(h.operationId)"
-            >
-              撤回这次修改
-            </button>
-            <span v-else-if="h.operationType === 'revert_operation'" class="cb-history-revert-tag">
-              撤回记录
+        <div class="cb-history-header">
+          <div class="cb-history-header-left">
+            <span class="cb-history-title">修改轨迹追溯</span>
+            <span v-if="orderHistory.length > 0" class="cb-history-count-badge">
+              {{ orderHistory.length }} 次记录
             </span>
-            <span v-else class="cb-history-revert-tag">已撤回</span>
+          </div>
+          <span class="cb-history-tip">可追溯历史并一键撤回</span>
+        </div>
+
+        <div v-if="orderHistory.length === 0" class="cb-history-empty">
+          <div class="cb-history-empty-icon" aria-hidden="true">📋</div>
+          <span>暂无历史修改记录</span>
+        </div>
+
+        <div v-else class="cb-timeline-list">
+          <div
+            v-for="(h, idx) in orderHistory"
+            :key="h.operationId"
+            class="cb-timeline-item"
+            :class="{ 'cb-timeline-item--reverted': h.isReverted }"
+          >
+            <!-- 左侧时间轴轨道与图标 -->
+            <div class="cb-timeline-rail">
+              <div
+                class="cb-timeline-node"
+                :class="`cb-timeline-node--${h.iconType || 'update'}`"
+                aria-hidden="true"
+              >
+                <span v-if="h.iconType === 'create'">➕</span>
+                <span v-else-if="h.iconType === 'price'">💰</span>
+                <span v-else-if="h.iconType === 'complete'">✓</span>
+                <span v-else-if="h.iconType === 'revert'">↩️</span>
+                <span v-else>✏️</span>
+              </div>
+              <div
+                v-if="idx < orderHistory.length - 1"
+                class="cb-timeline-line"
+                aria-hidden="true"
+              ></div>
+            </div>
+
+            <!-- 右侧卡片内容 -->
+            <div class="cb-timeline-content">
+              <div class="cb-timeline-content-top">
+                <div class="cb-timeline-title-wrap">
+                  <span class="cb-timeline-summary" :class="{ 'cb-line-through': h.isReverted }">
+                    {{ h.summary }}
+                  </span>
+                  <div class="cb-timeline-badges">
+                    <span
+                      class="cb-actor-tag"
+                      :class="{ 'cb-actor-tag--ai': h.actorType === 'ai' }"
+                    >
+                      {{ h.actorLabel || (h.actorType === 'ai' ? 'AI 助手' : '本人') }}
+                    </span>
+                    <span class="cb-device-tag">{{ h.deviceLabel || '本机' }}</span>
+                  </div>
+                </div>
+
+                <!-- 撤回按钮 / 状态标签 -->
+                <div class="cb-timeline-action">
+                  <button
+                    v-if="h.canRevert"
+                    type="button"
+                    class="cb-history-revert-btn cb-pressable"
+                    aria-label="撤回这次修改"
+                    @click="handleRevert(h.operationId)"
+                  >
+                    撤回这次修改
+                  </button>
+                  <span
+                    v-else-if="h.isReverted"
+                    class="cb-history-revert-tag cb-history-revert-tag--dim"
+                  >
+                    已撤回
+                  </span>
+                  <span
+                    v-else-if="h.operationType === 'revert_operation'"
+                    class="cb-history-revert-tag"
+                  >
+                    撤回记录
+                  </span>
+                </div>
+              </div>
+
+              <!-- 时间行 -->
+              <div class="cb-timeline-time-row">
+                <span class="cb-timeline-time cb-tabular-nums">
+                  {{ h.formattedTime || h.timestamp }}
+                </span>
+              </div>
+
+              <!-- 变更前后对比 (Diffs) -->
+              <div v-if="h.diffs && h.diffs.length > 0" class="cb-timeline-diffs">
+                <div
+                  v-for="diff in h.diffs"
+                  :key="diff.fieldKey"
+                  class="cb-diff-pill"
+                >
+                  <span class="cb-diff-label">{{ diff.fieldLabel }}</span>
+                  <div class="cb-diff-comparison cb-tabular-nums">
+                    <span class="cb-diff-before">{{ diff.beforeText }}</span>
+                    <span class="cb-diff-arrow" aria-hidden="true">→</span>
+                    <span class="cb-diff-after">{{ diff.afterText }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -653,7 +839,10 @@ async function handleRevert(operationId: string) {
             :key="sub.name"
             type="button"
             class="cb-sheet-option-item cb-pressable"
-            :class="{ 'cb-sheet-option-item--active': sub.name === selectedSubcategoryName }"
+            :class="{
+              'cb-sheet-option-item--active': sub.name === selectedSubcategoryName && !isSubcategoryDirty,
+              'cb-sheet-option-item--dirty-active': sub.name === selectedSubcategoryName && isSubcategoryDirty,
+            }"
             role="option"
             :aria-selected="sub.name === selectedSubcategoryName"
             @click="chooseSubcategory(sub.name, sub.defaultUnit)"
@@ -741,7 +930,7 @@ async function handleRevert(operationId: string) {
 
 <style scoped>
 .cb-order-edit-page {
-  min-height: 100vh;
+  min-height: 100%;
   padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 24px);
   background: var(--md-sys-color-surface-dim);
   display: flex;
@@ -1212,19 +1401,31 @@ async function handleRevert(operationId: string) {
   width: 100%;
   height: 48px;
   background: var(--md-sys-color-surface-container);
-  border: 1px solid var(--md-sys-color-outline-variant);
+  border: none;
   border-radius: var(--md-sys-shape-corner-medium);
   font-size: 15px;
   font-weight: 700;
   color: var(--md-sys-color-on-surface);
   cursor: pointer;
+  box-shadow: var(--md-sys-elevation-1);
   transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
     color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
-    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
     box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .cb-complete-toggle-btn:hover {
   background: var(--md-sys-color-surface-container-high);
+  box-shadow: var(--md-sys-elevation-2);
+}
+
+.cb-complete-toggle-btn--dirty {
+  background: var(--cb-status-warning-text, #d97706) !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: var(--md-sys-elevation-2);
+}
+.cb-complete-toggle-btn--dirty:hover {
+  background: #b45309 !important;
+  box-shadow: var(--md-sys-elevation-3);
 }
 
 /* M3 Filled Button 保存按钮 */
@@ -1253,7 +1454,102 @@ async function handleRevert(operationId: string) {
   box-shadow: var(--md-sys-elevation-3);
 }
 
-/* 历史轨迹卡片 */
+/* ==========================================================================
+   实时变更状态高亮 (Live Diff / Dirty Fields - Amber / Warning High Contrast)
+   ========================================================================== */
+
+/* ==========================================================================
+   实时变更状态高亮 (Live Diff / M3 Warning Tonal Container - 无生硬边线)
+   ========================================================================== */
+
+/* 顶部日期修改高亮 */
+.cb-top-time-bar--dirty {
+  border-bottom-color: var(--cb-status-warning-text, #d97706);
+}
+
+.cb-time-today-tag--dirty {
+  background: var(--cb-status-warning-bg, #fef3c7) !important;
+  color: var(--cb-status-warning-text, #b45309) !important;
+}
+
+/* 文本与数字反色黄高亮 */
+.cb-text-dirty {
+  color: var(--cb-status-warning-text, #d97706) !important;
+}
+
+/* 客户卡片脏状态：保持 M3 Elevated 纯净卡片，无边框，采用 Tonal 浅暖底色与强调文字 */
+.cb-cust-placard-btn--dirty {
+  background: var(--cb-status-warning-bg, #fffbeb) !important;
+  border: none !important;
+}
+
+/* 服务大类 Tab 脏状态：激活下划线指示条切换为暖黄色 */
+.cb-major-third-tab--dirty-active {
+  color: var(--cb-status-warning-text, #d97706) !important;
+  font-weight: 800;
+}
+
+.cb-major-third-tab--dirty-active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 15%;
+  right: 15%;
+  height: 3.5px;
+  background: var(--cb-status-warning-text, #d97706);
+  border-radius: 2px;
+}
+
+/* 小类按钮脏状态：与下方保存按钮完全统一的中性黄实色填充 (#d97706) */
+.cb-subcat-direct-btn--dirty-active {
+  background: var(--cb-status-warning-text, #d97706) !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: var(--md-sys-elevation-2);
+}
+.cb-subcat-direct-btn--dirty-active .cb-direct-name {
+  color: #ffffff !important;
+  font-weight: 800;
+}
+.cb-subcat-direct-btn--dirty-active .cb-direct-unit {
+  color: rgba(255, 255, 255, 0.9) !important;
+  opacity: 1;
+}
+
+.cb-subcat-dropdown-row--dirty {
+  background: var(--cb-status-warning-bg, #fffbeb) !important;
+  border: none !important;
+}
+
+/* 输入框数字变色 */
+.cb-input--dirty {
+  color: var(--cb-status-warning-text, #d97706) !important;
+}
+
+/* 下划线变色 */
+.m3-bottom-line--dirty {
+  background-color: var(--cb-status-warning-text, #d97706) !important;
+  height: 2.5px !important;
+}
+
+/* 合计标签变色 */
+.cb-computed-total-tag--dirty strong {
+  color: var(--cb-status-warning-text, #d97706) !important;
+}
+
+/* 保存按钮脏状态：M3 Filled Button 切换为强调填充色 */
+.cb-large-submit-btn--dirty {
+  background: var(--cb-status-warning-text, #d97706) !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: var(--md-sys-elevation-2);
+}
+.cb-large-submit-btn--dirty:hover {
+  background: #b45309 !important;
+  box-shadow: var(--md-sys-elevation-3);
+}
+
+/* 历史轨迹卡片容器 */
 .cb-history-card {
   padding: 16px;
   background: var(--md-sys-color-surface-container-low);
@@ -1261,72 +1557,220 @@ async function handleRevert(operationId: string) {
   border-radius: var(--md-sys-shape-corner-medium);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   margin-top: 10px;
 }
 
-.cb-history-title {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--md-sys-color-outline);
-  letter-spacing: 0.3px;
-}
-
-.cb-history-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cb-history-row {
-  padding: 10px 12px;
-  background: var(--md-sys-color-surface);
-  border-radius: var(--md-sys-shape-corner-small);
+.cb-history-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: 8px;
 }
 
-.cb-history-row-main {
+.cb-history-header-left {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
 
-.cb-history-time {
-  font-family: var(--cb-font-numeric);
-  color: var(--md-sys-color-outline);
-}
-
-.cb-history-summary {
-  font-weight: 700;
+.cb-history-title {
+  font-size: 14px;
+  font-weight: 800;
   color: var(--md-sys-color-on-surface);
+  letter-spacing: 0.2px;
 }
 
-.cb-history-meta {
+.cb-history-count-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-primary-container);
+  padding: 2px 8px;
+  border-radius: var(--md-sys-shape-corner-full);
+}
+
+.cb-history-tip {
+  font-size: 11px;
   color: var(--md-sys-color-outline);
 }
 
 .cb-history-empty {
-  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 20px 0;
   color: var(--md-sys-color-outline);
-  padding: 8px 4px;
+  font-size: 13px;
+}
+
+.cb-history-empty-icon {
+  font-size: 24px;
+}
+
+/* 时间轴列表 */
+.cb-timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cb-timeline-item {
+  display: flex;
+  gap: 12px;
+  position: relative;
+}
+
+.cb-timeline-item--reverted {
+  opacity: 0.65;
+}
+
+/* 左侧轨道 */
+.cb-timeline-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.cb-timeline-node {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--md-sys-shape-corner-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  border: 1.5px solid var(--md-sys-color-outline-variant);
+  box-sizing: border-box;
+  z-index: 1;
+}
+
+.cb-timeline-node--create {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-primary);
+  border-color: var(--md-sys-color-primary);
+}
+
+.cb-timeline-node--price {
+  background: var(--cb-accent-soft, #fef3c7);
+  color: var(--cb-accent, #d97706);
+  border-color: var(--cb-accent, #f59e0b);
+}
+
+.cb-timeline-node--complete {
+  background: #dcfce7;
+  color: #16a34a;
+  border-color: #22c55e;
+}
+
+.cb-timeline-node--revert {
+  background: var(--md-sys-color-surface-variant);
+  color: var(--md-sys-color-outline);
+  border-color: var(--md-sys-color-outline);
+}
+
+.cb-timeline-line {
+  flex: 1;
+  width: 2px;
+  background: var(--md-sys-color-outline-variant);
+  margin: 4px 0;
+  min-height: 18px;
+}
+
+/* 右侧内容 */
+.cb-timeline-content {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cb-timeline-content-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.cb-timeline-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cb-timeline-summary {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--md-sys-color-on-surface);
+  line-height: 1.3;
+}
+
+.cb-line-through {
+  text-decoration: line-through;
+  color: var(--md-sys-color-outline);
+}
+
+.cb-timeline-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cb-actor-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.cb-actor-tag--ai {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.cb-device-tag {
+  font-size: 10px;
+  color: var(--md-sys-color-outline);
+}
+
+.cb-timeline-time-row {
+  display: flex;
+  align-items: center;
+}
+
+.cb-timeline-time {
+  font-size: 11px;
+  font-family: var(--cb-font-numeric);
+  color: var(--md-sys-color-outline);
+}
+
+.cb-timeline-action {
+  flex-shrink: 0;
 }
 
 .cb-history-revert-btn {
-  flex-shrink: 0;
-  height: 32px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   background: var(--md-sys-color-primary-container);
-  border: none;
+  border: 1px solid var(--md-sys-color-primary);
   border-radius: var(--md-sys-shape-corner-full);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--md-sys-color-on-primary-container);
   cursor: pointer;
+  white-space: nowrap;
   transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .cb-history-revert-btn:hover {
@@ -1335,13 +1779,76 @@ async function handleRevert(operationId: string) {
 }
 
 .cb-history-revert-tag {
-  flex-shrink: 0;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   color: var(--md-sys-color-outline);
   background: var(--md-sys-color-surface-container);
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: var(--md-sys-shape-corner-full);
+  white-space: nowrap;
+}
+
+.cb-history-revert-tag--dim {
+  background: var(--md-sys-color-surface-variant);
+  color: var(--md-sys-color-outline);
+}
+
+/* Diffs 胶囊对比块 */
+.cb-timeline-diffs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+  background: var(--md-sys-color-surface);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-small);
+  padding: 8px 10px;
+}
+
+.cb-diff-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.cb-diff-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--md-sys-color-outline);
+  flex-shrink: 0;
+  min-width: 52px;
+}
+
+.cb-diff-comparison {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.cb-diff-before {
+  color: var(--md-sys-color-outline);
+  background: var(--md-sys-color-surface-container);
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-decoration: line-through;
+  font-size: 11px;
+}
+
+.cb-diff-arrow {
+  color: var(--md-sys-color-outline);
+  font-size: 11px;
+}
+
+.cb-diff-after {
+  font-weight: 700;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-high);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 
 /* 底部滑出抽屉通用样式 (M3 Modal Bottom Sheet) */
@@ -1446,6 +1953,15 @@ async function handleRevert(operationId: string) {
 .cb-sheet-option-item--active {
   background: var(--md-sys-color-primary-container);
   border-color: var(--md-sys-color-primary);
+}
+
+.cb-sheet-option-item--dirty-active {
+  background: var(--cb-status-warning-text, #d97706) !important;
+  border-color: var(--cb-status-warning-text, #d97706) !important;
+}
+.cb-sheet-option-item--dirty-active .cb-option-sub-name,
+.cb-sheet-option-item--dirty-active .cb-option-sub-unit {
+  color: #ffffff !important;
 }
 
 .cb-option-left-group {

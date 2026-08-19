@@ -5,6 +5,7 @@ import type { Customer } from '../db/schema/business/customers'
 import type { CustomerCodeMapping } from '../db/schema/business/customerCodeMappings'
 import type { ServiceCategory } from '../db/schema/business/serviceCategories'
 import type { WorkOrder } from '../db/schema/business/workOrders'
+import { appState } from '../state/appState'
 import { MutationService } from './mutation'
 import {
   BusinessRuleError,
@@ -595,6 +596,17 @@ describe('createServiceCategory / updateServiceCategory（subcategoriesJson 序�
       }),
     ).rejects.toMatchObject({ errorCode: 'subcategory_name_duplicate' })
   })
+
+  it('updateServiceCategory 仅切换 isActive 时不触发重名校验，允许正常停用', async () => {
+    await db.serviceCategories.bulkPut([
+      makeCategory('sync-cat-1', '洗水'),
+      makeCategory('sync-cat-2', '洗水'),
+    ])
+    await expect(
+      updateServiceCategory(db, 'sync-cat-2', { isActive: false }),
+    ).resolves.toBeUndefined()
+    expect((await db.serviceCategories.get('sync-cat-2'))?.isActive).toBe(false)
+  })
 })
 
 describe('reorderServiceCategories（多 change 原子重排）', () => {
@@ -819,5 +831,59 @@ describe('batchPriceWorkOrders', () => {
   it('本地行不存在 → entity_not_found', async () => {
     await expect(batchPriceWorkOrders(db, [{ syncId: 'sync-nope', quantity: 1 }])).rejects
       .toMatchObject({ errorCode: 'entity_not_found' })
+  })
+})
+
+describe('appState autoDeduplicateCategories 自愈机制', () => {
+  it('发现重复同名大类时，保留小类更多的一条，并在 reload 时自动清理冗余记录与 outbox', async () => {
+    await seedBase()
+    // 注入两条同名“干洗”大类（一条只有1个小类，一条有3个小类）
+    await db.serviceCategories.bulkPut([
+      {
+        ...makeCategory('sync-cat-less', '干洗'),
+        subcategoriesJson: [{ name: '单洗', defaultUnit: '件', isActive: true }],
+      },
+      {
+        ...makeCategory('sync-cat-more', '干洗'),
+        subcategoriesJson: [
+          { name: '单洗', defaultUnit: '件', isActive: true },
+          { name: '精洗', defaultUnit: '件', isActive: true },
+          { name: '烘干', defaultUnit: '件', isActive: true },
+        ],
+      },
+    ])
+
+    await db.outbox.put({
+      queueId: 1,
+      operationId: 'op-dup',
+      operationType: 'create_service_category',
+      entitySyncIds: ['sync-cat-less'],
+      command: { changes: [{ entitySyncId: 'sync-cat-less' }] },
+      status: 'pending',
+      attempts: 0,
+      nextRetryAt: null,
+      sendingStartedAt: null,
+      lastErrorJson: null,
+      actorType: 'user',
+      sourceTurnId: null,
+      conflictJson: null,
+      createdAt: '2026-08-08T00:00:00Z',
+    })
+
+    await appState.init(db)
+
+    // 验证本地数据库中“干洗”只剩 1 条，且为小类更多的 sync-cat-more
+    const remainingCats = await db.serviceCategories.toArray()
+    const dryCleans = remainingCats.filter((c) => c.categoryName === '干洗')
+    expect(dryCleans).toHaveLength(1)
+    expect(dryCleans[0].syncId).toBe('sync-cat-more')
+    expect(dryCleans[0].subcategoriesJson).toHaveLength(3)
+
+    // 验证 outbox 中关于 sync-cat-less 的待发记录已被自动移除
+    const remainingOutbox = await db.outbox.toArray()
+    expect(remainingOutbox.find((o) => o.entitySyncIds.includes('sync-cat-less'))).toBeUndefined()
+
+    // 验证 reactive categories 列表中只有 1 个“干洗”
+    expect(appState.categories.filter((c) => c.name === '干洗')).toHaveLength(1)
   })
 })

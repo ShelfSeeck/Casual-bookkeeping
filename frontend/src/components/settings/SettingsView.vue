@@ -77,11 +77,15 @@ function openNewCustomerPage() {
   currentSubPage.value = 'customer_new'
 }
 
+const isCustomerSubmitting = ref(false)
+
 async function submitNewCustomer() {
+  if (isCustomerSubmitting.value) return
   if (!formCode.value.trim() || !formDisplayName.value.trim() || !formCustomerName.value.trim()) {
     showFailToast('请完整填写速记编号、客户简称与正式全称')
     return
   }
+  isCustomerSubmitting.value = true
   try {
     await appState.addCustomerWithMapping({
       canonicalName: formCustomerName.value.trim(),
@@ -95,6 +99,8 @@ async function submitNewCustomer() {
     showSuccessToast('客户档案添加成功')
   } catch (e) {
     showFailToast(toErrorMessage(e))
+  } finally {
+    isCustomerSubmitting.value = false
   }
 }
 
@@ -102,6 +108,7 @@ async function submitNewCustomer() {
 const QUICK_UNITS = ['件', '打', '条', '套', '包', '公斤', '米', '双']
 
 const formNewCatName = ref('')
+const isCategorySubmitting = ref(false)
 
 const activeCategoriesList = computed(() => appState.categories.filter((c) => c.isActive))
 const inactiveCategoriesList = computed(() => appState.categories.filter((c) => !c.isActive))
@@ -117,28 +124,40 @@ async function submitNewCategory() {
     showFailToast('请填写大类名称')
     return
   }
-  const existingInactive = appState.categories.find(
-    (c) => c.name === catName && !c.isActive,
-  )
-  if (existingInactive) {
-    try {
+  if (isCategorySubmitting.value) return
+  isCategorySubmitting.value = true
+
+  try {
+    // 1. 若存在同名且已启用的大类，拒绝重复创建
+    const existingActive = appState.categories.find(
+      (c) => c.name === catName && c.isActive,
+    )
+    if (existingActive) {
+      showFailToast(`服务大类「${catName}」已存在`)
+      return
+    }
+
+    // 2. 若存在同名但已停用的大类，就地恢复启用
+    const existingInactive = appState.categories.find(
+      (c) => c.name === catName && !c.isActive,
+    )
+    if (existingInactive) {
       await appState.updateCategory(existingInactive.syncId!, { isActive: true })
       formNewCatName.value = ''
       currentSubPage.value = 'categories'
       showSuccessToast(`大类「${catName}」此前已停用，已为您恢复启用`)
       return
-    } catch (e) {
-      showFailToast(toErrorMessage(e))
-      return
     }
-  }
-  try {
+
+    // 3. 正常新建
     await appState.addCategory(catName)
     formNewCatName.value = ''
     currentSubPage.value = 'categories'
     showSuccessToast(`服务大类「${catName}」创建成功`)
   } catch (e) {
     showFailToast(toErrorMessage(e))
+  } finally {
+    isCategorySubmitting.value = false
   }
 }
 
@@ -275,6 +294,27 @@ async function finishSortMode() {
   } finally {
     sortableActiveCategories.value = []
     sortableInactiveCategories.value = []
+  }
+}
+
+// 拖拽手势触觉反馈与状态
+function onDragStart() {
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      navigator.vibrate(20)
+    } catch {
+      // 忽略不支持设备
+    }
+  }
+}
+
+function onDragEnd() {
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      navigator.vibrate(12)
+    } catch {
+      // 忽略不支持设备
+    }
   }
 }
 
@@ -843,7 +883,6 @@ onMounted(async () => {
           type="submit"
           class="md3-filled-button cb-pressable"
           aria-label="保存客户档案"
-          @click="submitNewCustomer"
         >
           保存客户档案
         </button>
@@ -904,13 +943,22 @@ onMounted(async () => {
             item-key="syncId"
             :disabled="!sortMode"
             handle=".cb-drag-handle"
-            :animation="200"
+            :animation="250"
             :easing="'cubic-bezier(0.2, 0, 0, 1)'"
             :force-fallback="true"
+            :fallback-tolerance="3"
+            :touch-start-threshold="5"
+            :delay="80"
+            :delay-on-touch-only="true"
+            :scroll="true"
+            :scroll-sensitivity="80"
+            :scroll-speed="15"
             ghost-class="cb-drag-ghost"
             chosen-class="cb-drag-chosen"
             drag-class="cb-drag-item"
             class="cb-drag-list"
+            @start="onDragStart"
+            @end="onDragEnd"
           >
             <template #item="{ element: cat }">
               <div class="md3-card md3-card--outlined cb-cat-section-card">
@@ -935,7 +983,7 @@ onMounted(async () => {
                       aria-label="拖拽调整大类顺序"
                       title="按住拖拽排序"
                     >
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="4" y1="7" x2="20" y2="7"></line>
                         <line x1="4" y1="12" x2="20" y2="12"></line>
                         <line x1="4" y1="17" x2="20" y2="17"></line>
@@ -950,20 +998,26 @@ onMounted(async () => {
                   :list="cat.subcategories"
                   item-key="name"
                   :disabled="!sortMode"
-                  handle=".cb-sub-drag-handle"
-                  :animation="200"
+                  handle=".cb-sub-drag-handle, .cb-input-chip--sortable"
+                  :animation="250"
                   :easing="'cubic-bezier(0.2, 0, 0, 1)'"
                   :force-fallback="true"
+                  :fallback-tolerance="3"
+                  :touch-start-threshold="5"
+                  :delay="60"
+                  :delay-on-touch-only="true"
                   ghost-class="cb-drag-ghost"
                   chosen-class="cb-drag-chosen"
                   drag-class="cb-drag-item"
                   class="md3-chip-set"
+                  @start="onDragStart"
+                  @end="onDragEnd"
                 >
                   <template #item="{ element: sub }">
                     <div class="md3-input-chip" :class="{ 'cb-input-chip--sortable': sortMode }">
                       <div class="cb-sub-drag-wrap" :class="{ 'cb-sub-drag-wrap--visible': sortMode }">
                         <span class="cb-sub-drag-handle" aria-label="拖拽调整项目顺序">
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="4" y1="7" x2="20" y2="7"></line>
                             <line x1="4" y1="12" x2="20" y2="12"></line>
                             <line x1="4" y1="17" x2="20" y2="17"></line>
@@ -999,8 +1053,7 @@ onMounted(async () => {
                           <input
                             v-model="inlineSubName"
                             type="text"
-                            name="subcategory_name"
-                            placeholder="如 标准 / 加急"
+                            placeholder="例如 西服上衣"
                             class="md3-text-field-input"
                             autocomplete="off"
                             spellcheck="false"
@@ -1014,8 +1067,7 @@ onMounted(async () => {
                           <input
                             v-model="inlineSubUnit"
                             type="text"
-                            name="subcategory_unit"
-                            placeholder="件"
+                            placeholder="例如 件"
                             class="md3-text-field-input"
                             autocomplete="off"
                             spellcheck="false"
@@ -1025,8 +1077,7 @@ onMounted(async () => {
                       </div>
                     </div>
 
-                    <!-- MD3 Filter Chips: 快捷单位选择 -->
-                    <div class="md3-field-group" style="margin-top: 4px;">
+                    <div class="md3-text-field-container" style="margin-top: 10px;">
                       <label class="md3-text-field-label">快捷选取单位</label>
                       <div class="md3-chip-set">
                         <button
@@ -1085,13 +1136,22 @@ onMounted(async () => {
               item-key="syncId"
               :disabled="!sortMode"
               handle=".cb-drag-handle"
-              :animation="200"
+              :animation="250"
               :easing="'cubic-bezier(0.2, 0, 0, 1)'"
               :force-fallback="true"
+              :fallback-tolerance="3"
+              :touch-start-threshold="5"
+              :delay="80"
+              :delay-on-touch-only="true"
+              :scroll="true"
+              :scroll-sensitivity="80"
+              :scroll-speed="15"
               ghost-class="cb-drag-ghost"
               chosen-class="cb-drag-chosen"
               drag-class="cb-drag-item"
               class="cb-drag-list"
+              @start="onDragStart"
+              @end="onDragEnd"
             >
               <template #item="{ element: cat }">
                 <div class="md3-card md3-card--outlined cb-cat-section-card cb-cat-section-card--inactive">
@@ -1235,7 +1295,6 @@ onMounted(async () => {
           type="submit"
           class="md3-filled-button cb-pressable"
           aria-label="保存大类"
-          @click="submitNewCategory"
         >
           保存大类
         </button>
@@ -1331,7 +1390,7 @@ onMounted(async () => {
 
 <style scoped>
 .cb-settings-view {
-  min-height: 100vh;
+  min-height: 100%;
   padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 24px);
   background: var(--md-sys-color-surface);
 }
@@ -1339,7 +1398,7 @@ onMounted(async () => {
 .cb-page-container {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: 100%;
 }
 
 /* ==========================================================================
@@ -2257,6 +2316,7 @@ onMounted(async () => {
   color: var(--md-sys-color-on-surface-variant);
   cursor: grab;
   touch-action: none;
+  -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
   flex-shrink: 0;
@@ -2265,15 +2325,17 @@ onMounted(async () => {
     color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
+/* 大类拖拽手柄：满 44px 触控舒适热区 */
 .cb-drag-handle {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--md-sys-shape-corner-small);
 }
 
+/* 小类拖拽手柄：满 28px 触控舒适热区 */
 .cb-sub-drag-handle {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   margin-right: 2px;
   border-radius: var(--md-sys-shape-corner-extra-small);
 }
@@ -2292,8 +2354,12 @@ onMounted(async () => {
 
 .cb-input-chip--sortable {
   cursor: grab;
-  padding-left: 6px;
+  padding: 0 10px 0 6px;
   border-style: dashed;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .cb-subcat-empty-tip {
@@ -2302,22 +2368,25 @@ onMounted(async () => {
   padding: 4px 2px;
 }
 
-/* Sortable 让位动画与拖拽高亮 */
+/* Sortable 让位动画与拖拽高亮 (M3 Elevation & Lift Animation) */
 .cb-drag-ghost {
-  opacity: 0.35;
+  opacity: 0.3 !important;
   border: 2px dashed var(--md-sys-color-primary) !important;
   border-radius: var(--md-sys-shape-corner-medium) !important;
-  background: var(--md-sys-color-surface-container-high) !important;
+  background: var(--md-sys-color-primary-container) !important;
 }
 
 .cb-drag-chosen {
-  background: var(--md-sys-color-surface-container-high) !important;
-  box-shadow: var(--md-sys-elevation-3) !important;
+  background: var(--md-sys-color-surface) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08) !important;
+  transform: scale(1.025) translateY(-2px) !important;
   border-color: var(--md-sys-color-primary) !important;
+  z-index: 9999 !important;
+  cursor: grabbing !important;
 }
 
 .cb-drag-item {
-  transition: transform 200ms cubic-bezier(0.2, 0, 0, 1);
+  transition: transform 250ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* ==========================================================================

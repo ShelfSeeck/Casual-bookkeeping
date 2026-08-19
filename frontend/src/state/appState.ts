@@ -23,14 +23,13 @@ import {
 import { MutationService } from '../services/mutation'
 import { getRecordSyncStatus, getSyncCounts } from '../services/syncStatus'
 import {
-  WIRE_META_FIELDS,
   analyzeConflict,
   stripWireMetaFields,
   type ConflictAnalysis,
   type ConflictResolution,
 } from '../services/conflictResolver'
 import type { SyncManager } from '../services/syncManager'
-import type { Subcategory } from '../db/schema/business/serviceCategories'
+import type { Subcategory, ServiceCategory } from '../db/schema/business/serviceCategories'
 import { ChatApi, type ChatSession, type ChatSseEvent, type ToolDecision } from '../services/chatApi'
 import {
   buildAiBatchOperation,
@@ -48,6 +47,13 @@ import { showFailToast, showSuccessToast } from 'vant'
 
 export type TabKey = 'desk' | 'ledger' | 'chat' | 'settings'
 
+import { getOrCreateDeviceId } from '../db/device'
+import {
+  buildHistoryItemViewModel,
+  type HistoryItemViewModel,
+  type HistoryDiffItem,
+} from '../utils/historyFormatter'
+
 export interface UndoItem {
   undoId: string
   operationId: string
@@ -59,15 +65,8 @@ export interface UndoItem {
 }
 
 /** 工单历史条目（appState.loadOrderHistory 组装，供查账本历史面板展示）。 */
-export interface HistoryItem {
-  operationId: string
-  summary: string
-  timestamp: string
-  device: string | null
-  actorType: 'user' | 'ai' | 'system'
-  operationType: string
-  canRevert: boolean
-}
+export type HistoryItem = HistoryItemViewModel
+export type { HistoryDiffItem }
 
 /** 冲突队列条目（appState.refreshConflicts 组装，供冲突解决 UI 逐项显式决策）。 */
 export interface ConflictEntry {
@@ -208,6 +207,7 @@ class AppState {
   async reload(): Promise<void> {
     const db = this.db
     if (!db) return
+    await this.autoDeduplicateCategories(db)
     const [customers, mappings, categories, orders] = await Promise.all([
       new CustomersRepository(db).list(),
       new CustomerCodeMappingsRepository(db).list(),
@@ -298,6 +298,51 @@ class AppState {
   }
 
   /**
+   * 自愈清理本地因历史并发误写产生的重复同名大类：
+   * 保留子项目更丰富或最新的一条，清理冗余副本及 outbox 中的多余提交。
+   */
+  private async autoDeduplicateCategories(db: CbDatabase): Promise<void> {
+    const rawCategories = await db.serviceCategories.toArray()
+    const seenNames = new Map<string, ServiceCategory>()
+    const duplicatesToRemove: string[] = []
+
+    for (const cat of rawCategories) {
+      const existing = seenNames.get(cat.categoryName)
+      if (!existing) {
+        seenNames.set(cat.categoryName, cat)
+      } else {
+        const existingSubCount = Array.isArray(existing.subcategoriesJson)
+          ? existing.subcategoriesJson.length
+          : 0
+        const currentSubCount = Array.isArray(cat.subcategoriesJson)
+          ? cat.subcategoriesJson.length
+          : 0
+
+        if (currentSubCount > existingSubCount) {
+          duplicatesToRemove.push(existing.syncId)
+          seenNames.set(cat.categoryName, cat)
+        } else {
+          duplicatesToRemove.push(cat.syncId)
+        }
+      }
+    }
+
+    if (duplicatesToRemove.length > 0) {
+      await db.transaction('rw', [db.serviceCategories, db.outbox], async () => {
+        for (const syncId of duplicatesToRemove) {
+          await db.serviceCategories.delete(syncId)
+        }
+        const outboxItems = await db.outbox.toArray()
+        for (const item of outboxItems) {
+          if (item.entitySyncIds.some((id) => duplicatesToRemove.includes(id))) {
+            await db.outbox.delete(item.queueId)
+          }
+        }
+      })
+    }
+  }
+
+  /**
    * 加载指定工单的历史操作（docs/data-model.md §5.2 operations 镜像）。
    * changesJson 新形状 {entitySyncIds, changes}；旧形状只有 serverSeq 时兼容跳过。
    * 结果写回 reactive workOrders 数组内对应 order 的 history。
@@ -305,7 +350,20 @@ class AppState {
   async loadOrderHistory(orderId: string): Promise<void> {
     const db = this.db
     if (!db) return
-    const rows = await db.operations.toArray()
+    const [rows, outboxEntries, currentDeviceId] = await Promise.all([
+      db.operations.toArray(),
+      db.outbox.toArray(),
+      getOrCreateDeviceId().catch(() => null),
+    ])
+
+    const outboxMap = new Map<string, Array<Record<string, unknown>>>()
+    for (const entry of outboxEntries) {
+      const cmd = entry.command as { changes?: Array<Record<string, unknown>> } | null
+      if (cmd && Array.isArray(cmd.changes)) {
+        outboxMap.set(entry.operationId, cmd.changes)
+      }
+    }
+
     const items: HistoryItem[] = []
     for (const op of rows) {
       let parsed: { entitySyncIds?: unknown; changes?: unknown }
@@ -319,24 +377,30 @@ class AppState {
         continue
       }
 
-      let summary = operationSummary(op.operationType)
-      const fieldNames = changedFieldNames(parsed.changes).slice(0, 4)
-      if (fieldNames.length > 0) {
-        summary = `${summary}（${fieldNames.join(', ')}）`
-      }
+      const isReverted = rows.some((other) => other.revertsOperationId === op.operationId)
       const canRevert =
         op.operationType !== 'revert_operation' &&
         op.revertsOperationId === null &&
-        !rows.some((other) => other.revertsOperationId === op.operationId)
-      items.push({
+        !isReverted
+
+      const outboxChanges = outboxMap.get(op.operationId)
+
+      const vm = buildHistoryItemViewModel({
         operationId: op.operationId,
-        summary,
-        timestamp: op.createdAt,
-        device: op.deviceId,
-        actorType: op.actorType,
         operationType: op.operationType,
+        actorType: op.actorType,
+        deviceId: op.deviceId,
+        createdAt: op.createdAt,
+        changesJson: op.changesJson,
+        currentDeviceId,
         canRevert,
+        isReverted,
+        revertsOperationId: op.revertsOperationId,
+        customers: this.customers,
+        outboxChanges,
       })
+
+      items.push(vm)
     }
     items.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
 
@@ -1143,7 +1207,7 @@ class AppState {
 
   private saveLocalChatMessages(sessionId: string): void {
     const key = this.chatMessagesStorageKey(sessionId)
-    if (!key) return
+    if (!key || typeof localStorage === 'undefined') return
     try {
       localStorage.setItem(key, JSON.stringify(this.chatMessages))
     } catch {}
@@ -1151,7 +1215,7 @@ class AppState {
 
   private loadLocalChatMessages(sessionId: string): ChatMessage[] | null {
     const key = this.chatMessagesStorageKey(sessionId)
-    if (!key) return null
+    if (!key || typeof localStorage === 'undefined') return null
     try {
       const raw = localStorage.getItem(key)
       return raw ? (JSON.parse(raw) as ChatMessage[]) : null
@@ -1198,7 +1262,7 @@ class AppState {
 
   private persistPendingAiApproval(): void {
     const key = this.aiApprovalStorageKey()
-    if (!key) return
+    if (!key || typeof localStorage === 'undefined') return
     const value = this.pendingApproval.value
     if (value) localStorage.setItem(key, JSON.stringify(value))
     else localStorage.removeItem(key)
@@ -1207,7 +1271,7 @@ class AppState {
   private async restorePendingAiApproval(): Promise<void> {
     const key = this.aiApprovalStorageKey()
     const db = this.db
-    if (!key || !db) return
+    if (!key || !db || typeof localStorage === 'undefined') return
     const raw = localStorage.getItem(key)
     if (!raw) return
     try {
@@ -1241,53 +1305,6 @@ class AppState {
     if (msg) msg.content = content
   }
 
-}
-
-function operationSummary(operationType: string): string {
-  const map: Record<string, string> = {
-    create_work_order: '新建工单',
-    update_work_order: '修改工单',
-    batch_price_work_orders: '批量定价',
-    revert_operation: '撤回操作',
-  }
-  return map[operationType] ?? operationType
-}
-
-/** 摘要展示时排除的字段：账本元字段 + 软删标记（deleted_at/archived_at 只表示删除状态，
- *  不作为“修改了哪些字段”展示）。只用于摘要，不加入冲突 strip 集合。 */
-const SUMMARY_EXCLUDED_FIELDS = new Set<string>([...WIRE_META_FIELDS, 'deleted_at', 'archived_at'])
-
-/** 从 Pull changes 里提取 changedFieldsJson 的字段名（snake_case 原样）。 */
-function changedFieldNames(changes: unknown): string[] {
-  if (!Array.isArray(changes)) return []
-  const names: string[] = []
-  for (const change of changes) {
-    if (typeof change !== 'object' || change === null) continue
-    const raw = (change as Record<string, unknown>).changedFieldsJson
-    if (raw === null || raw === undefined) continue
-    const parsed = normalizeFieldNames(raw)
-    for (const name of parsed) {
-      if (!SUMMARY_EXCLUDED_FIELDS.has(name) && !names.includes(name)) names.push(name)
-    }
-  }
-  return names
-}
-
-function normalizeFieldNames(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    return raw.filter((x): x is string => typeof x === 'string')
-  }
-  if (typeof raw === 'string') {
-    try {
-      return normalizeFieldNames(JSON.parse(raw))
-    } catch {
-      return []
-    }
-  }
-  if (typeof raw === 'object' && raw !== null) {
-    return Object.keys(raw as Record<string, unknown>)
-  }
-  return []
 }
 
 export const appState = new AppState()

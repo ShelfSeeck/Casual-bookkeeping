@@ -27,6 +27,34 @@ export interface ServiceCategoryUi {
   subcategories: SubcategoryUi[]
 }
 
+export interface HistoryDiffUi {
+  fieldKey: string
+  fieldLabel: string
+  beforeValue?: unknown
+  afterValue?: unknown
+  beforeText: string
+  afterText: string
+}
+
+export type HistoryIconType = 'create' | 'update' | 'price' | 'complete' | 'revert' | 'other'
+
+export interface HistoryItemUi {
+  operationId: string
+  summary: string
+  timestamp: string
+  formattedTime?: string
+  device: string | null
+  deviceLabel?: string
+  actorType: 'user' | 'ai' | 'system'
+  actorLabel?: string
+  operationType: string
+  iconType?: HistoryIconType
+  canRevert: boolean
+  isReverted?: boolean
+  revertsOperationId?: string | null
+  diffs?: HistoryDiffUi[]
+}
+
 export interface WorkOrderUi {
   orderId: string
   /** 工单 syncId（真实数据层用） */
@@ -45,13 +73,6 @@ export interface WorkOrderUi {
   isCompleted?: boolean
   createdAt: string
   updatedAt: string
-  history?: Array<{
-    operationId: string
-    summary: string
-    timestamp: string
-    device: string | null
-    actorType: 'user' | 'ai' | 'system'
-    operationType: string
-    canRevert: boolean
-  }>
+  history?: HistoryItemUi[]
 }
+
