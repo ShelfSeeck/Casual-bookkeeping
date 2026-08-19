@@ -50,7 +50,7 @@ export class AuthStore {
     // 在线尝试 refresh 判活；失败由 onSessionInvalid 处理（不清本地数据）
     await this.api
       .refreshNow()
-      .catch(() => this.hooks.onSessionInvalid())
+      .catch(() => this.onSessionInvalid())
   }
 
   async login(phone: string, password: string): Promise<void> {

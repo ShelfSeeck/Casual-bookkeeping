@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, shallowRef, watch } from 'vue'
 import LoginView from './components/LoginView.vue'
 import AppShell from './views/AppShell.vue'
 import { ApiClient } from './services/apiClient'
@@ -15,6 +15,8 @@ import { appState } from './state/appState'
 // ref() 会把类实例代理化，LoginView 里 this.state 被解包成普通对象，
 // login 中 this.state.value 的更新写不进真正的 ref（UI 永远停在登录页）。
 const store = shallowRef<AuthStore | null>(null)
+provide('authStore', store)
+
 // 模板需要稳定追踪登录态；显式 computed 比模板链式解包（store.state.status）
 // 更明确，避免登录成功/失效时界面不切换。
 const isSignedIn = computed(() => store.value?.state.value.status === 'signed_in')
@@ -92,6 +94,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AppShell v-if="store && isSignedIn" />
+  <AppShell v-if="store && isSignedIn" :store="store" />
   <LoginView v-else-if="store" :store="store" />
 </template>

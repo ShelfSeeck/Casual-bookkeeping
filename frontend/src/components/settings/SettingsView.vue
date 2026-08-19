@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { showFailToast, showSuccessToast } from 'vant'
+import { ref, computed, onMounted, inject, type ShallowRef } from 'vue'
+import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import draggable from 'vuedraggable'
 import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
@@ -9,7 +9,11 @@ import { getOrCreateDeviceId } from '../../db/device'
 import { applyTheme, getThemePreference, type ThemePreference } from '../../utils/theme'
 import { mergeCategoryOrders } from '../../utils/categoryReorder'
 import type { ServiceCategoryUi } from '../../types/ui'
+import type { AuthStore } from '../../services/authStore'
 import ConflictCenter from './ConflictCenter.vue'
+
+const props = defineProps<{ store?: Pick<AuthStore, 'logout'> }>()
+const injectedStoreRef = inject<ShallowRef<AuthStore | null> | AuthStore | null>('authStore', null)
 
 type SubPageKey =
   | 'main'
@@ -329,6 +333,40 @@ async function openConflictCenter() {
   currentSubPage.value = 'conflicts'
 }
 
+// ==================== 5. 退出登录 ====================
+const logoutLoading = ref(false)
+
+async function handleLogout() {
+  try {
+    await showConfirmDialog({
+      title: '退出登录',
+      message: '确定要退出当前账号吗？\n本地已保存的数据将完整保留。',
+      confirmButtonText: '退出登录',
+      cancelButtonText: '取消',
+      confirmButtonColor: 'var(--md-sys-color-error, #ba1a1a)',
+    })
+  } catch {
+    return
+  }
+
+  logoutLoading.value = true
+  try {
+    const store =
+      props.store ??
+      (injectedStoreRef && typeof injectedStoreRef === 'object' && 'value' in injectedStoreRef
+        ? injectedStoreRef.value
+        : injectedStoreRef)
+    if (store?.logout) {
+      await store.logout()
+    }
+    showSuccessToast('已退出登录')
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  } finally {
+    logoutLoading.value = false
+  }
+}
+
 onMounted(async () => {
   void loadSyncInfo()
   activePhone.value = (await getActiveAccount()) ?? ''
@@ -542,6 +580,24 @@ onMounted(async () => {
               </div>
             </button>
           </div>
+        </section>
+
+        <!-- 组 5：退出登录 -->
+        <section class="cb-logout-section" aria-label="退出登录">
+          <button
+            type="button"
+            class="md3-outlined-button-error cb-pressable"
+            :disabled="logoutLoading"
+            aria-label="退出当前账号"
+            @click="handleLogout"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            {{ logoutLoading ? '正在退出…' : '退出登录' }}
+          </button>
         </section>
       </main>
     </div>
@@ -2262,5 +2318,40 @@ onMounted(async () => {
 
 .cb-drag-item {
   transition: transform 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ==========================================================================
+   11. 退出登录按钮
+   ========================================================================== */
+.cb-logout-section {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.md3-outlined-button-error {
+  width: 100%;
+  height: 48px;
+  background: transparent;
+  border: 1.5px solid var(--md-sys-color-error, #ba1a1a);
+  border-radius: var(--md-sys-shape-corner-full, 9999px);
+  color: var(--md-sys-color-error, #ba1a1a);
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    opacity var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-outlined-button-error:hover {
+  background: var(--md-sys-color-error-container, #ffdad6);
+}
+.md3-outlined-button-error:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

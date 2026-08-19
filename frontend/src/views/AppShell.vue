@@ -7,6 +7,9 @@ import WorkOrderDesk from '../components/desk/WorkOrderDesk.vue'
 import LedgerView from '../components/ledger/LedgerView.vue'
 import AiChatView from '../components/chat/AiChatView.vue'
 import SettingsView from '../components/settings/SettingsView.vue'
+import type { AuthStore } from '../services/authStore'
+
+const props = defineProps<{ store?: Pick<AuthStore, 'logout'> }>()
 
 const views = {
   desk: WorkOrderDesk,
@@ -23,7 +26,7 @@ const currentView = computed(() => views[appState.currentTab.value as keyof type
     <!-- 主视图区域：Tab 切换时轻量淡入上移 -->
     <main class="cb-main-content">
       <Transition name="cb-tab" mode="out-in">
-        <component :is="currentView" :key="appState.currentTab.value" />
+        <component :is="currentView" :key="appState.currentTab.value" :store="props.store" />
       </Transition>
     </main>
 
