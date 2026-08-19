@@ -1,24 +1,69 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
 }
 
 body {
   margin: 0;
-  min-height: 100vh;
-  min-height: 100dvh;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
   background: var(--md-sys-color-surface-dim);
   color: var(--md-sys-color-on-surface);
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
 
-/* 全屏 PWA 内避免系统手势区误触 */
-html,
-body {
+#app {
   width: 100%;
-  overflow-x: hidden;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* 禁止图片、链接、SVG 等元素的原生幽灵拖拽 */
+img,
+a,
+svg,
+button {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+/* 允许文本输入与显式标记区域的文本选中 */
+input,
+textarea,
+select,
+[contenteditable='true'],
+.cb-selectable-text {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* 全局保底：所有常规输入控件字号统一 >= 16px，防止 iOS WebKit 自动缩放视口（Auto-Zoom） */
+input,
+textarea,
+select,
+.van-field__control {
+  font-size: 16px;
 }
 
 /* 底部弹层过渡（遮罩淡入淡出 + 面板上滑/下滑） */

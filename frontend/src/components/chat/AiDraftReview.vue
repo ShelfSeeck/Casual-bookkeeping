@@ -365,7 +365,7 @@ function changeRows(draft: PreparedAiDraft): ChangeRow[] {
 .cb-ai-draft__reason { margin-bottom: 16px; background: var(--md-sys-color-surface-container); }
 .cb-ai-draft__reason-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .cb-ai-draft__note { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; }
-.cb-ai-draft__note textarea { box-sizing: border-box; width: 100%; min-height: 88px; resize: vertical; padding: 12px; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-small); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font: inherit; line-height: 1.5; }
+.cb-ai-draft__note textarea { box-sizing: border-box; width: 100%; min-height: 88px; resize: vertical; padding: 12px; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-small); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font: inherit; font-size: 16px; line-height: 1.5; }
 .cb-ai-draft__note textarea:focus-visible { outline: 3px solid color-mix(in srgb, var(--md-sys-color-primary) 35%, transparent); outline-offset: 1px; border-color: var(--md-sys-color-primary); }
 .cb-ai-draft__inline-error { margin: 0; color: var(--md-sys-color-error); font-size: 12px; font-weight: 700; }
 .cb-ai-review__footer { position: absolute; inset-inline: 0; bottom: 0; z-index: 2; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 12px; background: color-mix(in srgb, var(--md-sys-color-surface) 94%, transparent); border-top: 1px solid var(--md-sys-color-outline-variant); backdrop-filter: blur(16px); }

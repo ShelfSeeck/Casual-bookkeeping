@@ -799,7 +799,7 @@ watch(
   border: 1.5px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-medium);
   padding: 0 16px;
-  font-size: 15px;
+  font-size: 16px;
   color: var(--md-sys-color-on-surface);
   outline: none;
   transition: border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),

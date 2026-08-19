@@ -386,7 +386,7 @@ function selectCustomer(id: number | null) {
   border: 1.5px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-medium);
   padding: 0 36px 0 14px;
-  font-size: 15px;
+  font-size: 16px;
   color: var(--md-sys-color-on-surface);
   outline: none;
   box-sizing: border-box;

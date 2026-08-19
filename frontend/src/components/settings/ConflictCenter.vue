@@ -1285,7 +1285,7 @@ onMounted(async () => {
   border-radius: var(--md-sys-shape-corner-small);
   background: var(--md-sys-color-surface);
   color: var(--md-sys-color-on-surface);
-  font-size: 14px;
+  font-size: 16px;
   outline: none;
   box-sizing: border-box;
 }

@@ -39,11 +39,12 @@ const currentView = computed(() => views[appState.currentTab.value as keyof type
 .cb-main-content {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   max-width: 540px;
   width: 100%;
   margin: 0 auto;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100%;
   box-sizing: border-box;
   background: var(--cb-bg-app);
 }

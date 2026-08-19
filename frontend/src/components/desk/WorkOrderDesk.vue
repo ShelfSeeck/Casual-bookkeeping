@@ -1292,7 +1292,7 @@ function scrollToTodayFlow() {
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-medium);
   padding: 0 14px;
-  font-size: 14px;
+  font-size: 16px;
   box-sizing: border-box;
   outline: none;
   color: var(--md-sys-color-on-surface);
