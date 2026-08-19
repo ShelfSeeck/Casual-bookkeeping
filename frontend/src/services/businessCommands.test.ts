@@ -593,6 +593,40 @@ describe('updateWorkOrder 返回 operationId', () => {
     expect(operationId).toBe((await db.outbox.toArray())[0].operationId)
     expect((await db.workOrders.get('sync-order'))?.quantity).toBe(8)
   })
+
+  it('大类停用后，update 未变更大类小类（如改数量/单价）仍能成功', async () => {
+    // 停用大类
+    await db.serviceCategories.put({ ...makeCategory('sync-cat', '洗水'), isActive: false })
+    // 更新数量与单价，并附带未变更的 serviceCategory / serviceItem
+    await expect(
+      updateWorkOrder(db, 'sync-order', {
+        serviceCategory: '洗水',
+        serviceItem: '单洗',
+        quantity: 15,
+        unitPriceCents: 300,
+      }),
+    ).resolves.toMatch(/^op-[0-9a-f]{12}$/)
+    expect((await db.workOrders.get('sync-order'))?.quantity).toBe(15)
+  })
+
+  it('若 update 将工单改成已停用大类，抛出 service_option_disabled', async () => {
+    // 新放大类“刷毛”，停用“洗水”
+    await db.serviceCategories.put(makeCategory('sync-cat-2', '刷毛'))
+    await db.serviceCategories.put({ ...makeCategory('sync-cat', '洗水'), isActive: false })
+    // 初始工单在刷毛
+    await db.workOrders.put({
+      ...makeWorkOrder('sync-order-2'),
+      serviceCategory: '刷毛',
+      serviceItem: '背心',
+    })
+    // 尝试改成停用的“洗水”
+    await expect(
+      updateWorkOrder(db, 'sync-order-2', {
+        serviceCategory: '洗水',
+        serviceItem: '单洗',
+      }),
+    ).rejects.toMatchObject({ errorCode: 'service_option_disabled' })
+  })
 })
 
 describe('deleteWorkOrder', () => {

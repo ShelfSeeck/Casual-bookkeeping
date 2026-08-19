@@ -71,23 +71,34 @@ const filteredCustomers = computed(() => {
   })
 })
 
+// 启用中的大类列表
+const activeCategories = computed(() => {
+  return appState.categories.filter((c) => c.isActive)
+})
+
 // 当前激活的大类
 const activeCategory = computed(() => {
-  return appState.categories.find((c) => c.name === selectedCategoryName.value)
+  return activeCategories.value.find((c) => c.name === selectedCategoryName.value)
 })
 
 // 小类数量是否较多（大于 6 个走下拉弹窗，少于等于 6 个直接大按钮平铺直选）
 const isSubcatMany = computed(() => {
   if (!activeCategory.value) return false
-  return activeCategory.value.subcategories.length > 6
+  return activeCategory.value.subcategories.filter((s) => s.isActive).length > 6
 })
 
 function selectCategory(catName: string) {
   selectedCategoryName.value = catName
-  const cat = appState.categories.find((c) => c.name === catName)
-  if (cat && cat.subcategories.length > 0) {
-    selectedSubcategoryName.value = cat.subcategories[0].name
-    unit.value = cat.subcategories[0].defaultUnit
+  const cat = activeCategories.value.find((c) => c.name === catName)
+  if (cat) {
+    const activeSubs = cat.subcategories.filter((s) => s.isActive)
+    if (activeSubs.length > 0) {
+      selectedSubcategoryName.value = activeSubs[0].name
+      unit.value = activeSubs[0].defaultUnit
+    } else {
+      selectedSubcategoryName.value = null
+      unit.value = '件'
+    }
   } else {
     selectedSubcategoryName.value = null
     unit.value = '件'
@@ -118,12 +129,12 @@ watch(
 )
 
 watch(
-  () => appState.categories.length,
+  () => activeCategories.value.length,
   () => {
-    if (appState.categories.length === 0) return
-    const exists = appState.categories.some((c) => c.name === selectedCategoryName.value)
+    if (activeCategories.value.length === 0) return
+    const exists = activeCategories.value.some((c) => c.name === selectedCategoryName.value)
     if (!selectedCategoryName.value || !exists) {
-      selectCategory(appState.categories[0].name)
+      selectCategory(activeCategories.value[0].name)
     }
   },
   { immediate: true },
@@ -209,7 +220,7 @@ function scrollToTodayFlow() {
 
 <template>
   <div
-    v-if="appState.customers.length === 0 || appState.categories.length === 0"
+    v-if="appState.customers.length === 0 || activeCategories.length === 0"
     class="cb-empty-console"
   >
     <div class="cb-empty-console-icon" aria-hidden="true">📋</div>
@@ -276,7 +287,7 @@ function scrollToTodayFlow() {
         <label class="cb-section-tag">服务大类</label>
         <div class="cb-major-tabs-third-grid" role="tablist" aria-label="服务大类">
           <button
-            v-for="cat in appState.categories"
+            v-for="cat in activeCategories"
             :key="cat.categoryId"
             type="button"
             class="cb-major-third-tab cb-pressable"
@@ -900,7 +911,10 @@ function scrollToTodayFlow() {
   gap: 6px;
   padding: 0 12px;
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-direct-name {
@@ -1059,7 +1073,10 @@ function scrollToTodayFlow() {
   box-shadow: var(--md-sys-elevation-2);
   margin-top: 6px;
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .cb-large-submit-btn:hover {
   box-shadow: var(--md-sys-elevation-3);
@@ -1318,7 +1335,10 @@ function scrollToTodayFlow() {
   border-radius: var(--md-sys-shape-corner-medium);
   text-align: left;
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-sheet-option-item--active {
@@ -1383,7 +1403,10 @@ function scrollToTodayFlow() {
   align-items: center;
   box-sizing: border-box;
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .cb-custom-date-picker-row:hover {
   background: var(--md-sys-color-surface);

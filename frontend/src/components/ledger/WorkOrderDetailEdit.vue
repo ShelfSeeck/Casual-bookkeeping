@@ -127,6 +127,16 @@ const filteredCustomers = computed(() => {
   })
 })
 
+// 可选大类列表（启用大类 + 当前工单若引用的停用大类）
+const selectableCategories = computed(() => {
+  const list = appState.categories.filter((c) => c.isActive)
+  const currentCat = appState.categories.find((c) => c.name === selectedCategoryName.value)
+  if (currentCat && !currentCat.isActive && !list.some((c) => c.name === currentCat.name)) {
+    return [currentCat, ...list]
+  }
+  return list
+})
+
 // 当前激活的大类
 const activeCategory = computed(() => {
   return appState.categories.find((c) => c.name === selectedCategoryName.value)
@@ -143,8 +153,17 @@ function selectCategory(catName: string) {
   selectedCategoryName.value = catName
   const cat = appState.categories.find((c) => c.name === catName)
   if (cat && cat.subcategories.length > 0) {
-    selectedSubcategoryName.value = cat.subcategories[0].name
-    unit.value = cat.subcategories[0].defaultUnit
+    const activeSubs = cat.subcategories.filter((s) => s.isActive)
+    if (activeSubs.length > 0) {
+      selectedSubcategoryName.value = activeSubs[0].name
+      unit.value = activeSubs[0].defaultUnit
+    } else {
+      selectedSubcategoryName.value = cat.subcategories[0].name
+      unit.value = cat.subcategories[0].defaultUnit
+    }
+  } else {
+    selectedSubcategoryName.value = ''
+    unit.value = '件'
   }
 }
 
@@ -196,7 +215,7 @@ function onUnitPriceInput(e: Event) {
   unitPriceError.value = raw !== cleaned ? '只能输入数字和小数点' : ''
 }
 
-// 保存修改
+// 保存修改：按需提交差异字段（Surgical Patch）
 async function handleSave() {
   const qty = parseInt(quantityStr.value, 10)
   if (isNaN(qty) || qty <= 0) {
@@ -218,16 +237,38 @@ async function handleSave() {
     }
   }
 
+  const patch: Partial<WorkOrderUi> = {}
+
+  if (orderDate.value !== props.order.orderDate) {
+    patch.orderDate = orderDate.value
+  }
+  if (cust.customerId !== props.order.customerId) {
+    patch.customerId = cust.customerId
+  }
+  if (selectedCategoryName.value !== props.order.categoryName) {
+    patch.categoryName = selectedCategoryName.value
+  }
+  if (selectedSubcategoryName.value !== props.order.subcategoryName) {
+    patch.subcategoryName = selectedSubcategoryName.value
+  }
+  if (qty !== props.order.quantity) {
+    patch.quantity = qty
+  }
+  if (unit.value !== props.order.unit) {
+    patch.unit = unit.value
+  }
+  if (priceCents !== props.order.unitPriceCents) {
+    patch.unitPriceCents = priceCents
+  }
+
+  if (Object.keys(patch).length === 0) {
+    showSuccessToast('工单内容未变更')
+    emit('back')
+    return
+  }
+
   try {
-    await appState.updateWorkOrder(props.order.orderId, {
-      orderDate: orderDate.value,
-      customerId: cust.customerId,
-      categoryName: selectedCategoryName.value,
-      subcategoryName: selectedSubcategoryName.value,
-      quantity: qty,
-      unit: unit.value,
-      unitPriceCents: priceCents,
-    })
+    await appState.updateWorkOrder(props.order.orderId, patch)
     showSuccessToast('工单修改已保存')
     emit('back')
   } catch (e) {
@@ -356,16 +397,21 @@ async function handleRevert(operationId: string) {
         <label class="cb-section-tag">服务大类</label>
         <div class="cb-major-tabs-third-grid" role="tablist" aria-label="服务大类">
           <button
-            v-for="cat in appState.categories"
+            v-for="cat in selectableCategories"
             :key="cat.categoryId"
             type="button"
             class="cb-major-third-tab cb-pressable"
-            :class="{ 'cb-major-third-tab--active': selectedCategoryName === cat.name }"
+            :class="{
+              'cb-major-third-tab--active': selectedCategoryName === cat.name,
+              'cb-major-third-tab--inactive': !cat.isActive
+            }"
             role="tab"
             :aria-selected="selectedCategoryName === cat.name"
             @click="selectCategory(cat.name)"
           >
-            <span class="cb-tab-name-text">{{ cat.name }}</span>
+            <span class="cb-tab-name-text">
+              {{ cat.name }}<span v-if="!cat.isActive" class="cb-inactive-tag"> (已停用)</span>
+            </span>
           </button>
         </div>
       </div>
@@ -950,6 +996,17 @@ async function handleRevert(operationId: string) {
   font-weight: 800;
 }
 
+.cb-major-third-tab--inactive {
+  color: var(--md-sys-color-outline);
+}
+
+.cb-inactive-tag {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--md-sys-color-outline);
+  margin-left: 4px;
+}
+
 .cb-major-third-tab--active::after {
   content: '';
   position: absolute;
@@ -996,7 +1053,10 @@ async function handleRevert(operationId: string) {
   gap: 6px;
   padding: 0 12px;
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-direct-name {
@@ -1143,7 +1203,10 @@ async function handleRevert(operationId: string) {
   font-weight: 700;
   color: var(--md-sys-color-on-surface);
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .cb-complete-toggle-btn:hover {
   background: var(--md-sys-color-surface-container-high);
@@ -1165,7 +1228,10 @@ async function handleRevert(operationId: string) {
   gap: 8px;
   cursor: pointer;
   box-shadow: var(--md-sys-elevation-2);
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
   margin-top: 10px;
 }
 .cb-large-submit-btn:hover {
@@ -1356,7 +1422,10 @@ async function handleRevert(operationId: string) {
   align-items: center;
   cursor: pointer;
   text-align: left;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-sheet-option-item--active {
@@ -1420,7 +1489,10 @@ async function handleRevert(operationId: string) {
   align-items: center;
   box-sizing: border-box;
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .cb-custom-date-picker-row:hover {
   background: var(--md-sys-color-surface);

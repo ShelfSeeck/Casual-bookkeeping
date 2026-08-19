@@ -375,9 +375,18 @@ class BusinessCommandService:
             if customer_id is not None and not self._customer_exists(account_phone, customer_id):
                 return "customer_not_found"
 
-        # 大小类匹配 + 大类启用 + 小类启用：create 同现状；update 仅当 patch
-        # 触及 service_category 或 service_item。合并后 service_item 为空（空小类）合法。
-        if base_version == 0 or "service_category" in fields or "service_item" in fields:
+        # 大小类匹配 + 大类启用 + 小类启用：create 必校验；update 仅当 patch 改变了
+        # service_category 或 service_item 时校验（避免历史工单只改数量/单价时被停用的大类误拦）。
+        # 合并后 service_item 为空（空小类）合法。
+        should_check_service = False
+        if base_version == 0:
+            should_check_service = True
+        elif "service_category" in fields or "service_item" in fields:
+            cat_changed = "service_category" in fields and (existing is None or fields["service_category"] != existing.get("service_category"))
+            item_changed = "service_item" in fields and (existing is None or fields["service_item"] != existing.get("service_item"))
+            should_check_service = cat_changed or item_changed
+
+        if should_check_service:
             category_name = merged.get("service_category")
             item_name = merged.get("service_item")
             if category_name and item_name:

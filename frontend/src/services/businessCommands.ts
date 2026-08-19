@@ -806,8 +806,14 @@ async function validateWorkOrderPatch(
   }
 
   if (patch.serviceCategory !== undefined || patch.serviceItem !== undefined) {
-    if (merged.serviceCategory && merged.serviceItem) {
-      await validateServiceOption(db, merged.serviceCategory, merged.serviceItem)
+    const categoryChanged =
+      patch.serviceCategory !== undefined && patch.serviceCategory !== existing.serviceCategory
+    const itemChanged =
+      patch.serviceItem !== undefined && patch.serviceItem !== existing.serviceItem
+    if (categoryChanged || itemChanged) {
+      if (merged.serviceCategory && merged.serviceItem) {
+        await validateServiceOption(db, merged.serviceCategory, merged.serviceItem)
+      }
     }
   }
 

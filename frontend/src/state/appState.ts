@@ -166,6 +166,10 @@ class AppState {
   categories = reactive<ServiceCategoryUi[]>([])
   workOrders = reactive<WorkOrderUi[]>([])
 
+  get activeCategories(): ServiceCategoryUi[] {
+    return this.categories.filter((c) => c.isActive)
+  }
+
   private db: CbDatabase | null = null
   private syncManager: SyncManager | null = null
   private chatApi: ChatApi | null = null
@@ -206,7 +210,7 @@ class AppState {
     const [customers, mappings, categories, orders] = await Promise.all([
       new CustomersRepository(db).list(),
       new CustomerCodeMappingsRepository(db).list(),
-      new ServiceCategoriesRepository(db).list(),
+      new ServiceCategoriesRepository(db).list(true),
       new WorkOrdersRepository(db).query(),
     ])
 

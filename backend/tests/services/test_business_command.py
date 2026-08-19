@@ -506,3 +506,207 @@ def test_changed_fields_json_records_business_diff(service, connection):
     assert diff["canonical_name"] == {"before": "某某厂", "after": "新名字"}
     assert "row_version" not in diff
     assert "updated_at" not in diff
+
+
+def test_work_order_update_allows_unchanged_disabled_category(service, connection):
+    # 历史工单所属大类停用后，若 update 仅修改数量/单价（未改变大类/小类），应正常通过
+    ServiceCategoriesRepository(connection).apply_Write(
+        "13800000000",
+        "sync-cat-01",
+        {
+            "category_name": "洗水",
+            "subcategories_json": '[{"name": "单洗", "default_unit": "件", "is_active": true}]',
+            "is_active": 1,
+        },
+        0,
+    )
+    service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        {
+            "operation_id": "op-cust-01",
+            "operation_type": "create_customer_with_mapping",
+            "actor_type": "user",
+            "source_turn_id": None,
+            "changes": [
+                {
+                    "entity_type": "customer",
+                    "entity_sync_id": "sync-cust-01",
+                    "base_version": 0,
+                    "fields": {"customer_id": 1, "canonical_name": "测试客户"},
+                },
+                {
+                    "entity_type": "customer_code_mapping",
+                    "entity_sync_id": "sync-map-01",
+                    "base_version": 0,
+                    "fields": {
+                        "customer_id": 1,
+                        "customer_code": "001",
+                        "customer_name": "测试客户",
+                        "valid_from": "2026-08-01",
+                        "valid_to": None,
+                    },
+                },
+            ],
+        },
+    )
+    # 创建工单（此时大类启用）
+    create_op = {
+        "operation_id": "op-wo-01",
+        "operation_type": "create_work_order",
+        "actor_type": "user",
+        "source_turn_id": None,
+        "changes": [
+            {
+                "entity_type": "work_order",
+                "entity_sync_id": "sync-wo-01",
+                "base_version": 0,
+                "fields": {
+                    "work_order_date": "2026-08-10",
+                    "customer_id": 1,
+                    "customer_code": "001",
+                    "customer_name": "测试客户",
+                    "service_category": "洗水",
+                    "service_item": "单洗",
+                    "quantity": 10,
+                    "unit": "件",
+                    "unit_price_cents": 100,
+                    "is_completed": 0,
+                },
+            }
+        ],
+    }
+    assert service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", create_op).status == "accepted"
+
+    # 停用大类
+    ServiceCategoriesRepository(connection).apply_Write(
+        "13800000000",
+        "sync-cat-01",
+        {"is_active": 0},
+        1,
+    )
+
+    # 修改工单数量（即使包含原 service_category / service_item，只要未变更即可通过）
+    update_op = {
+        "operation_id": "op-wo-02",
+        "operation_type": "update_work_order",
+        "actor_type": "user",
+        "source_turn_id": None,
+        "changes": [
+            {
+                "entity_type": "work_order",
+                "entity_sync_id": "sync-wo-01",
+                "base_version": 1,
+                "fields": {
+                    "service_category": "洗水",
+                    "service_item": "单洗",
+                    "quantity": 20,
+                    "unit_price_cents": 200,
+                },
+            }
+        ],
+    }
+    result = service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", update_op)
+    assert result.status == "accepted"
+
+
+def test_work_order_update_rejects_changing_to_disabled_category(service, connection):
+    # 若 update 将工单改成已停用的大类，应拒绝（service_option_disabled）
+    ServiceCategoriesRepository(connection).apply_Write(
+        "13800000000",
+        "sync-cat-active",
+        {
+            "category_name": "刷毛",
+            "subcategories_json": '[{"name": "背心", "default_unit": "件", "is_active": true}]',
+            "is_active": 1,
+        },
+        0,
+    )
+    ServiceCategoriesRepository(connection).apply_Write(
+        "13800000000",
+        "sync-cat-inactive",
+        {
+            "category_name": "洗水",
+            "subcategories_json": '[{"name": "单洗", "default_unit": "件", "is_active": true}]',
+            "is_active": 0,
+        },
+        0,
+    )
+    service.execute_Operation(
+        "13800000000", "dev-a1b2c3d4e5f6",
+        {
+            "operation_id": "op-cust-02",
+            "operation_type": "create_customer_with_mapping",
+            "actor_type": "user",
+            "source_turn_id": None,
+            "changes": [
+                {
+                    "entity_type": "customer",
+                    "entity_sync_id": "sync-cust-02",
+                    "base_version": 0,
+                    "fields": {"customer_id": 2, "canonical_name": "测试客户2"},
+                },
+                {
+                    "entity_type": "customer_code_mapping",
+                    "entity_sync_id": "sync-map-02",
+                    "base_version": 0,
+                    "fields": {
+                        "customer_id": 2,
+                        "customer_code": "002",
+                        "customer_name": "测试客户2",
+                        "valid_from": "2026-08-01",
+                        "valid_to": None,
+                    },
+                },
+            ],
+        },
+    )
+    # 创建工单（在大类“刷毛”下）
+    create_op = {
+        "operation_id": "op-wo-03",
+        "operation_type": "create_work_order",
+        "actor_type": "user",
+        "source_turn_id": None,
+        "changes": [
+            {
+                "entity_type": "work_order",
+                "entity_sync_id": "sync-wo-03",
+                "base_version": 0,
+                "fields": {
+                    "work_order_date": "2026-08-10",
+                    "customer_id": 2,
+                    "customer_code": "002",
+                    "customer_name": "测试客户2",
+                    "service_category": "刷毛",
+                    "service_item": "背心",
+                    "quantity": 10,
+                    "unit": "件",
+                    "unit_price_cents": 100,
+                    "is_completed": 0,
+                },
+            }
+        ],
+    }
+    assert service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", create_op).status == "accepted"
+
+    # 尝试把大类改成已停用的“洗水”
+    update_op = {
+        "operation_id": "op-wo-04",
+        "operation_type": "update_work_order",
+        "actor_type": "user",
+        "source_turn_id": None,
+        "changes": [
+            {
+                "entity_type": "work_order",
+                "entity_sync_id": "sync-wo-03",
+                "base_version": 1,
+                "fields": {
+                    "service_category": "洗水",
+                    "service_item": "单洗",
+                },
+            }
+        ],
+    }
+    result = service.execute_Operation("13800000000", "dev-a1b2c3d4e5f6", update_op)
+    assert result.status == "rejected"
+    assert result.errors[0]["error_code"] == "service_option_disabled"
+

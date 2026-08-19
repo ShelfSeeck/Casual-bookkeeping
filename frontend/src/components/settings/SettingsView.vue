@@ -97,6 +97,9 @@ const QUICK_UNITS = ['件', '打', '条', '套', '包', '公斤', '米', '双']
 
 const formNewCatName = ref('')
 
+const activeCategoriesList = computed(() => appState.categories.filter((c) => c.isActive))
+const inactiveCategoriesList = computed(() => appState.categories.filter((c) => !c.isActive))
+
 function openNewCategoryPage() {
   formNewCatName.value = ''
   currentSubPage.value = 'category_new'
@@ -107,6 +110,21 @@ async function submitNewCategory() {
   if (!catName) {
     showFailToast('请填写大类名称')
     return
+  }
+  const existingInactive = appState.categories.find(
+    (c) => c.name === catName && !c.isActive,
+  )
+  if (existingInactive) {
+    try {
+      await appState.updateCategory(existingInactive.syncId!, { isActive: true })
+      formNewCatName.value = ''
+      currentSubPage.value = 'categories'
+      showSuccessToast(`大类「${catName}」此前已停用，已为您恢复启用`)
+      return
+    } catch (e) {
+      showFailToast(toErrorMessage(e))
+      return
+    }
   }
   try {
     await appState.addCategory(catName)
@@ -121,7 +139,7 @@ async function submitNewCategory() {
 async function toggleCategoryActive(cat: ServiceCategoryUi) {
   try {
     await appState.updateCategory(cat.syncId!, { isActive: !cat.isActive })
-    showSuccessToast(cat.isActive ? '已停用该大类' : '已启用该大类')
+    showSuccessToast(cat.isActive ? '已停用该大类' : '已恢复启用该大类')
   } catch (e) {
     showFailToast(toErrorMessage(e))
   }
@@ -525,8 +543,11 @@ onMounted(async () => {
           <input
             v-model="customerSearchKeyword"
             type="text"
-            placeholder="搜索编号或客户名称..."
+            name="customer_search"
+            placeholder="搜索编号或客户名称…"
             class="md3-search-input"
+            autocomplete="off"
+            spellcheck="false"
             aria-label="搜索客户"
           />
           <button
@@ -720,8 +741,9 @@ onMounted(async () => {
 
       <main class="cb-subpage-body">
         <div class="cb-category-card-list">
+          <!-- 1. 使用中的大类 -->
           <div
-            v-for="cat in appState.categories"
+            v-for="cat in activeCategoriesList"
             :key="cat.categoryId"
             class="md3-card md3-card--outlined cb-cat-section-card"
           >
@@ -733,10 +755,10 @@ onMounted(async () => {
               <button
                 type="button"
                 class="md3-text-button-error cb-pressable"
-                :aria-label="(cat.isActive ? '停用大类 ' : '启用大类 ') + cat.name"
+                :aria-label="'停用大类 ' + cat.name"
                 @click="toggleCategoryActive(cat)"
               >
-                {{ cat.isActive ? '停用大类' : '启用大类' }}
+                停用大类
               </button>
             </div>
 
@@ -770,9 +792,11 @@ onMounted(async () => {
                     <input
                       v-model="inlineSubName"
                       type="text"
+                      name="subcategory_name"
                       placeholder="如 标准 / 加急"
                       class="md3-text-field-input"
                       autocomplete="off"
+                      spellcheck="false"
                       aria-label="项目名称"
                     />
                   </div>
@@ -783,8 +807,11 @@ onMounted(async () => {
                     <input
                       v-model="inlineSubUnit"
                       type="text"
+                      name="subcategory_unit"
                       placeholder="件"
                       class="md3-text-field-input"
+                      autocomplete="off"
+                      spellcheck="false"
                       aria-label="默认单位"
                     />
                   </div>
@@ -836,6 +863,44 @@ onMounted(async () => {
               + 添加服务项目与默认单位
             </button>
           </div>
+
+          <!-- 2. 已停用的大类 -->
+          <template v-if="inactiveCategoriesList.length > 0">
+            <div class="cb-section-divider-title">
+              已停用大类 ({{ inactiveCategoriesList.length }})
+            </div>
+            <div
+              v-for="cat in inactiveCategoriesList"
+              :key="cat.categoryId"
+              class="md3-card md3-card--outlined cb-cat-section-card cb-cat-section-card--inactive"
+            >
+              <div class="cb-cat-header-row">
+                <div class="cb-cat-header-left">
+                  <span class="cb-cat-main-title">{{ cat.name }}</span>
+                  <span class="md3-badge-tonal-small cb-tabular-nums">已停用 · {{ cat.subcategories.length }} 个项目</span>
+                </div>
+                <button
+                  type="button"
+                  class="md3-text-button-primary cb-pressable"
+                  :aria-label="'恢复启用大类 ' + cat.name"
+                  @click="toggleCategoryActive(cat)"
+                >
+                  恢复启用
+                </button>
+              </div>
+
+              <div v-if="cat.subcategories.length > 0" class="md3-chip-set">
+                <div
+                  v-for="sub in cat.subcategories"
+                  :key="sub.name"
+                  class="md3-input-chip"
+                >
+                  <span class="md3-input-chip-label">{{ sub.name }}</span>
+                  <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
 
           <div v-if="appState.categories.length === 0" class="cb-empty-state">
             <span class="cb-empty-icon">🏷️</span>
@@ -1204,7 +1269,10 @@ onMounted(async () => {
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .md3-segment--selected {
@@ -1317,7 +1385,10 @@ onMounted(async () => {
   align-items: center;
   padding: 0 14px;
   box-sizing: border-box;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .md3-outlined-text-field:focus-within {
   border-color: var(--md-sys-color-primary);
@@ -1368,7 +1439,10 @@ onMounted(async () => {
   padding: 0 16px;
   box-sizing: border-box;
   box-shadow: var(--md-sys-elevation-1);
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .md3-search-bar:focus-within {
   border-color: var(--md-sys-color-primary);
@@ -1524,7 +1598,10 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .md3-filter-chip--selected {
   background: var(--md-sys-color-primary);
@@ -1547,6 +1624,34 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.cb-cat-section-card--inactive {
+  opacity: 0.78;
+  background: var(--md-sys-color-surface-container-low);
+  border-style: dashed;
+}
+
+.cb-section-divider-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--md-sys-color-outline);
+  margin: 16px 4px 4px 4px;
+}
+
+.md3-text-button-primary {
+  background: var(--md-sys-color-primary-container);
+  border: none;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--md-sys-color-on-primary-container);
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: var(--md-sys-shape-corner-full);
+}
+.md3-text-button-primary:hover {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
 }
 
 .cb-cat-header-row {
@@ -1632,7 +1737,10 @@ onMounted(async () => {
   font-weight: 700;
   color: var(--md-sys-color-primary);
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .md3-dashed-action-btn:hover {
   background: var(--md-sys-color-surface-container-low);
@@ -1690,7 +1798,10 @@ onMounted(async () => {
   font-weight: 800;
   box-shadow: var(--md-sys-elevation-2);
   cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
   display: flex;
   align-items: center;
   justify-content: center;
