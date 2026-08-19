@@ -599,7 +599,7 @@ onMounted(async () => {
       </header>
 
       <main class="cb-subpage-body">
-        <form class="cb-form-sections" @submit.prevent="submitNewCustomer">
+        <form id="new-customer-form" class="cb-form-sections" @submit.prevent="submitNewCustomer">
           <!-- 分组 1：日常速记信息 (MD3 Outlined Card) -->
           <section class="md3-card md3-card--outlined" aria-label="速记与日常显示">
             <div class="md3-card-title">速记与日常显示</div>
@@ -682,19 +682,21 @@ onMounted(async () => {
               </div>
             </div>
           </section>
-
-          <!-- 底部常驻 MD3 Filled Button -->
-          <div class="md3-bottom-app-bar-cta">
-            <button
-              type="submit"
-              class="md3-filled-button cb-pressable"
-              aria-label="保存客户档案"
-            >
-              保存客户档案
-            </button>
-          </div>
         </form>
       </main>
+
+      <!-- 底部常驻 MD3 Filled Button -->
+      <footer class="md3-bottom-app-bar-cta">
+        <button
+          form="new-customer-form"
+          type="submit"
+          class="md3-filled-button cb-pressable"
+          aria-label="保存客户档案"
+          @click="submitNewCustomer"
+        >
+          保存客户档案
+        </button>
+      </footer>
     </div>
 
     <!-- ====================================================================
@@ -874,7 +876,7 @@ onMounted(async () => {
       </header>
 
       <main class="cb-subpage-body">
-        <form class="cb-form-sections" @submit.prevent="submitNewCategory">
+        <form id="new-category-form" class="cb-form-sections" @submit.prevent="submitNewCategory">
           <section class="md3-card md3-card--outlined" aria-label="大类名称配置">
             <div class="md3-card-title">大类基础信息</div>
 
@@ -897,18 +899,20 @@ onMounted(async () => {
               <span class="md3-supporting-text">大类仅作为分组容器。创建完成后可在该大类卡片下添加具体项目与默认单位。</span>
             </div>
           </section>
-
-          <div class="md3-bottom-app-bar-cta">
-            <button
-              type="submit"
-              class="md3-filled-button cb-pressable"
-              aria-label="保存大类"
-            >
-              保存大类
-            </button>
-          </div>
         </form>
       </main>
+
+      <footer class="md3-bottom-app-bar-cta">
+        <button
+          form="new-category-form"
+          type="submit"
+          class="md3-filled-button cb-pressable"
+          aria-label="保存大类"
+          @click="submitNewCategory"
+        >
+          保存大类
+        </button>
+      </footer>
     </div>
 
     <!-- ====================================================================
@@ -1001,7 +1005,7 @@ onMounted(async () => {
 <style scoped>
 .cb-settings-view {
   min-height: 100vh;
-  padding-bottom: calc(var(--cb-tabbar-height) + 24px);
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 24px);
   background: var(--md-sys-color-surface);
 }
 
@@ -1340,7 +1344,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding-bottom: 70px;
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 32px);
 }
 
 .cb-form-2col-grid {
@@ -1401,7 +1405,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 70px;
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 32px);
 }
 
 .cb-cust-item-card {
@@ -1536,7 +1540,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-bottom: 70px;
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 32px);
 }
 
 .cb-cat-section-card {
@@ -1669,7 +1673,7 @@ onMounted(async () => {
    ========================================================================== */
 .md3-bottom-app-bar-cta {
   position: fixed;
-  bottom: calc(var(--cb-tabbar-height) + 10px);
+  bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 12px);
   left: 16px;
   right: 16px;
   z-index: 90;

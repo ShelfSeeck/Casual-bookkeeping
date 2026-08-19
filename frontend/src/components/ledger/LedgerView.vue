@@ -397,7 +397,7 @@ async function confirmBatchPrice() {
 
 <style scoped>
 .cb-ledger-view {
-  padding-bottom: calc(var(--cb-tabbar-height) + 20px);
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 24px);
 }
 
 .cb-ledger-header {

@@ -72,8 +72,9 @@ onBeforeUnmount(() => {
   bottom: 0;
   left: 0;
   right: 0;
+  box-sizing: content-box;
   height: var(--cb-tabbar-height);
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   background: var(--md-sys-color-surface-container);
   border-top: 1px solid var(--md-sys-color-outline-variant);
   display: flex;

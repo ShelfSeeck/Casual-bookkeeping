@@ -1084,7 +1084,7 @@ function scrollToTodayFlow() {
 
 /* 下方流水明细面板 */
 .cb-flow-stream-panel {
-  padding: 16px 14px calc(var(--cb-tabbar-height) + 24px);
+  padding: 16px 14px calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 24px);
   background: var(--md-sys-color-surface-dim);
 }
 

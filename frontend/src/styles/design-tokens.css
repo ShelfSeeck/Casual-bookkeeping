@@ -150,6 +150,7 @@
   --cb-control-height: 52px;
   --cb-btn-height: 56px;
   --cb-tabbar-height: 74px;
+  --cb-tabbar-total-height: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px));
 
   /* 宋体/衬线字体与数字排版：思源宋体 (Noto Serif SC / Source Han Serif SC) */
   --cb-font-serif: "Noto Serif SC", "Source Han Serif SC", "Source Han Serif CN", "Songti SC", "STSong", "SimSun", Georgia, serif;

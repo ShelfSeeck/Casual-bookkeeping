@@ -378,7 +378,7 @@ watch(
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
-  padding-bottom: var(--cb-tabbar-height);
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
   background: var(--md-sys-color-surface-dim);
 }

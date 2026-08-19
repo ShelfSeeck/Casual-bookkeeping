@@ -727,7 +727,7 @@ onMounted(async () => {
 <style scoped>
 .cb-conflict-center {
   min-height: 100vh;
-  padding-bottom: calc(var(--cb-tabbar-height) + 8px);
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 24px);
   background: var(--md-sys-color-surface);
 }
 

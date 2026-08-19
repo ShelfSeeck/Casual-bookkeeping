@@ -681,7 +681,7 @@ async function handleRevert(operationId: string) {
 <style scoped>
 .cb-order-edit-page {
   min-height: 100vh;
-  padding-bottom: calc(var(--cb-tabbar-height) + 24px);
+  padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 24px);
   background: var(--md-sys-color-surface-dim);
   display: flex;
   flex-direction: column;
