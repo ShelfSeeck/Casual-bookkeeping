@@ -30,8 +30,8 @@ async function onSubmit() {
 <template>
   <div class="login-page">
     <div class="brand">
-      <h1>Casual-bookkeeping</h1>
-      <p>衣物处理厂移动端记账</p>
+      <h1 class="brand-title">软记</h1>
+      <p class="brand-sub">casual-bookkeeping</p>
     </div>
     <van-form @submit="onSubmit">
       <van-cell-group inset>
@@ -73,13 +73,20 @@ async function onSubmit() {
 .brand {
   text-align: center;
 }
-.brand h1 {
-  font-size: 28px;
+.brand-title {
+  font-family: var(--cb-font-serif);
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   margin: 0 0 8px;
+  color: var(--cb-text-main);
 }
-.brand p {
+.brand-sub {
   color: var(--cb-text-muted);
+  font-size: 14px;
+  letter-spacing: 0.05em;
   margin: 0;
+  text-transform: lowercase;
 }
 .submit-wrap {
   padding: 24px 16px 0;

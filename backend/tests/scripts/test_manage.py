@@ -252,7 +252,7 @@ def test_list_Tables_reports_every_table_with_row_counts(connection):
     expected = {
         "accounts", "account_devices", "service_categories", "customers",
         "customer_code_mappings", "work_orders", "database_operations",
-        "operation_changes", "chat_sessions", "chat_turns",
+        "operation_changes", "chat_sessions", "chat_turns", "chat_pending_approvals",
     }
     assert set(tables) == expected
     assert all(count == 0 for count in tables.values())
