@@ -115,10 +115,8 @@ watch(
     <header class="cb-chat-header">
       <div class="cb-chat-title-group">
         <div class="cb-header-left">
-          <div>
-            <h1 class="cb-chat-title cb-text-balance">AI 记账助手</h1>
-            <span class="cb-chat-sub">仅联网可用</span>
-          </div>
+          <h1 class="cb-chat-title cb-text-balance">AI 记账助手</h1>
+          <span class="cb-chat-sub">仅联网可用</span>
         </div>
 
         <div class="cb-header-right">
@@ -134,9 +132,11 @@ watch(
             @click="openHistoryPanel"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="9"></circle>
-              <polyline points="12 7 12 12 15 14"></polyline>
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+              <path d="M12 7v5l4 2"></path>
             </svg>
+            <span class="cb-history-btn-label">历史</span>
           </button>
         </div>
       </div>
@@ -156,20 +156,13 @@ watch(
         class="cb-message-row"
         :class="`cb-message-row--${msg.sender}`"
       >
-        <!-- AI 头像 -->
-        <div v-if="msg.sender === 'assistant'" class="cb-avatar cb-avatar--ai" aria-hidden="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 8V4H8"></path>
-            <rect x="4" y="8" width="16" height="12" rx="2"></rect>
-            <path d="M2 14h2"></path>
-            <path d="M20 14h2"></path>
-            <path d="M15 13v2"></path>
-            <path d="M9 13v2"></path>
-          </svg>
-        </div>
-
         <div class="cb-message-bubble">
-          <div class="cb-message-content">{{ msg.content }}</div>
+          <div v-if="msg.content" class="cb-message-content">{{ msg.content }}</div>
+          <div v-else-if="msg.sender === 'assistant' && appState.chatBusy.value" class="cb-typing-indicator" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
 
           <!-- 已处理工单草案历史结果卡片（纯前端沉淀） -->
           <div v-if="msg.draftResult" class="cb-processed-drafts" aria-label="已处理工单草案记录">
@@ -256,49 +249,52 @@ watch(
       </article>
     </main>
 
-    <!-- M3 Suggestion Chips Toolbar：放在消息区下方，靠近输入框 -->
-    <div class="cb-prompts-bar" role="toolbar" aria-label="常用快捷指令">
-      <div class="cb-prompts-scroll">
-        <button
-          v-for="p in quickPrompts"
-          :key="p"
-          type="button"
-          class="cb-prompt-chip cb-pressable"
-          :aria-label="`执行快捷指令：${p}`"
-          @click="send(p)"
-        >
-          <span>{{ p }}</span>
-        </button>
+    <!-- 悬浮胶囊底部输入区 -->
+    <div class="cb-floating-dock-wrapper">
+      <!-- Suggestion Chips Toolbar：贴近悬浮输入框 -->
+      <div class="cb-prompts-bar" role="toolbar" aria-label="常用快捷指令">
+        <div class="cb-prompts-scroll">
+          <button
+            v-for="p in quickPrompts"
+            :key="p"
+            type="button"
+            class="cb-prompt-chip cb-pressable"
+            :disabled="appState.chatBusy.value || appState.pendingApproval.value !== null"
+            :aria-label="`执行快捷指令：${p}`"
+            @click="send(p)"
+          >
+            <span>{{ p }}</span>
+          </button>
+        </div>
       </div>
-    </div>
 
-    <!-- M3 底部输入 Dock -->
-    <footer class="cb-chat-input-bar">
-      <input
-        v-model="inputVal"
-        type="text"
-        placeholder="输入记账或查询指令，例如：今天一共录了多少单？"
-        class="cb-chat-input"
-        autocomplete="off"
-        spellcheck="false"
-        aria-label="输入记账或查询指令"
-        :disabled="appState.chatBusy.value || appState.pendingApproval.value !== null"
-        @keyup.enter="send(inputVal)"
-      />
-      <button
-        type="button"
-        class="cb-chat-send-btn cb-pressable"
-        aria-label="发送消息"
-        :disabled="appState.chatBusy.value || appState.pendingApproval.value !== null || !inputVal.trim()"
-        @click="send(inputVal)"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <line x1="22" y1="2" x2="11" y2="13"></line>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-        </svg>
-        <span>发送</span>
-      </button>
-    </footer>
+      <!-- 悬浮圆角输入条 -->
+      <footer class="cb-chat-input-bar">
+        <input
+          v-model="inputVal"
+          type="text"
+          placeholder="输入记账或查询指令..."
+          class="cb-chat-input"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="输入记账或查询指令"
+          :disabled="appState.chatBusy.value || appState.pendingApproval.value !== null"
+          @keyup.enter="send(inputVal)"
+        />
+        <button
+          type="button"
+          class="cb-chat-send-btn cb-pressable"
+          aria-label="发送消息"
+          :disabled="appState.chatBusy.value || appState.pendingApproval.value !== null || !inputVal.trim()"
+          @click="send(inputVal)"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </footer>
+    </div>
 
     <!-- 历史会话底部弹出面板 -->
     <van-popup
@@ -308,6 +304,7 @@ watch(
       class="cb-history-popup"
     >
       <div class="cb-history-panel">
+        <div class="cb-history-drag-handle" aria-hidden="true"></div>
         <div class="cb-history-header">
           <span class="cb-history-title">历史会话</span>
           <button
@@ -316,7 +313,11 @@ watch(
             :disabled="isHistoryLocked()"
             @click="handleNewChat"
           >
-            新建对话
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>新建对话</span>
           </button>
         </div>
 
@@ -326,7 +327,12 @@ watch(
 
         <div v-if="historyLoading" class="cb-history-loading">加载中…</div>
         <div v-else-if="appState.chatSessions.length === 0" class="cb-history-empty">
-          <span>暂无历史会话</span>
+          <div class="cb-empty-icon" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </div>
+          <span>暂无历史会话记录</span>
           <button
             type="button"
             class="cb-empty-new-btn cb-pressable"
@@ -384,57 +390,63 @@ watch(
 }
 
 /* ==========================================================================
-   1. M3 Top App Bar
+   1. M3 Top App Bar (Compact & Expressive)
    ========================================================================== */
 .cb-chat-header {
-  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 12px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
   background: var(--md-sys-color-surface);
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  box-shadow: var(--md-sys-elevation-1);
+  z-index: 5;
 }
 
 .cb-chat-title-group {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-height: 40px;
 }
 
 .cb-header-left {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .cb-chat-title {
   margin: 0;
-  font-family: var(--cb-font-numeric);
-  font-size: 36px;
-  font-weight: 800;
+  font-family: var(--cb-font-serif);
+  font-size: 22px;
+  font-weight: 700;
   color: var(--md-sys-color-on-surface);
-  letter-spacing: -0.3px;
-  line-height: 1.2;
+  letter-spacing: -0.2px;
+  line-height: 1.25;
 }
 
 .cb-chat-sub {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--md-sys-color-on-surface-variant);
+  line-height: 1;
 }
 
 .cb-header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .cb-chat-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: 5px;
+  padding: 3px 8px;
   background: var(--cb-status-success-bg);
   color: var(--cb-status-success-text);
   border-radius: var(--md-sys-shape-corner-full);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
+  border: 1px solid rgba(22, 163, 74, 0.18);
 }
 
 .cb-status-live-dot {
@@ -442,73 +454,50 @@ watch(
   height: 6px;
   border-radius: 50%;
   background: var(--cb-status-success-text);
+  animation: pulse-live 2s infinite ease-in-out;
 }
 
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* 优化后的历史会话 Tonal 胶囊按钮 */
 .cb-history-btn {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--md-sys-color-surface-container);
-  border: none;
-  border-radius: var(--md-sys-shape-corner-small);
-  color: var(--md-sys-color-on-surface-variant);
-  cursor: pointer;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
-}
-.cb-history-btn:hover {
-  background: var(--md-sys-color-surface-container-high);
-  color: var(--md-sys-color-primary);
-}
-
-/* ==========================================================================
-   2. M3 Suggestion Chips Toolbar（消息区下方，贴近输入框）
-   ========================================================================== */
-.cb-prompts-bar {
-  background: var(--md-sys-color-surface);
-  padding: 8px 16px 10px;
-  border-top: 1px solid var(--md-sys-color-outline-variant);
-  display: flex;
-}
-
-.cb-prompts-scroll {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  gap: 8px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding: 2px 0;
-}
-.cb-prompts-scroll::-webkit-scrollbar {
-  display: none;
-}
-
-.cb-prompt-chip {
-  min-height: 38px;
-  padding: 0 14px;
-  background: var(--md-sys-color-surface-container);
-  border: none;
-  border-radius: var(--md-sys-shape-corner-medium);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--md-sys-color-on-surface);
-  white-space: nowrap;
-  cursor: pointer;
+  height: 36px;
+  padding: 0 12px 0 10px;
   display: inline-flex;
   align-items: center;
-  box-shadow: var(--md-sys-elevation-1);
+  justify-content: center;
+  gap: 6px;
+  background: var(--md-sys-color-secondary-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  color: var(--md-sys-color-on-secondary-container);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
   transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  box-shadow: var(--md-sys-elevation-0);
 }
-.cb-prompt-chip:hover {
+
+.cb-history-btn:hover {
   background: var(--md-sys-color-primary-container);
   color: var(--md-sys-color-on-primary-container);
-  box-shadow: var(--md-sys-elevation-2);
+  border-color: var(--md-sys-color-primary);
+  box-shadow: var(--md-sys-elevation-1);
+}
+
+.cb-history-btn:active {
+  transform: scale(0.96);
+}
+
+.cb-history-btn-label {
+  line-height: 1;
 }
 
 /* ==========================================================================
-   3. Message Stream
+   3. Message Stream & Thinking State
    ========================================================================== */
 .cb-chat-messages {
   flex: 1;
@@ -516,7 +505,7 @@ watch(
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 .cb-message-row {
@@ -529,28 +518,10 @@ watch(
   justify-content: flex-end;
 }
 
-.cb-message-row--assistant {
-  justify-content: flex-start;
-}
-
-.cb-avatar--ai {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-primary-container);
-  color: var(--md-sys-color-on-primary-container);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  box-shadow: var(--md-sys-elevation-1);
-  margin-top: 2px;
-}
-
 .cb-message-bubble {
-  max-width: 86%;
-  padding: 14px 18px;
-  border-radius: var(--md-sys-shape-corner-large);
+  max-width: 88%;
+  padding: 12px 18px;
+  border-radius: 20px;
   font-size: 15px;
   line-height: 1.55;
   position: relative;
@@ -560,15 +531,16 @@ watch(
 .cb-message-row--user .cb-message-bubble {
   background: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary);
-  border-bottom-right-radius: 4px;
-  box-shadow: var(--md-sys-elevation-1);
+  border-radius: 20px 20px 4px 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .cb-message-row--assistant .cb-message-bubble {
   background: var(--md-sys-color-surface);
-  box-shadow: var(--md-sys-elevation-1);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 20px 20px 20px 4px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
   color: var(--md-sys-color-on-surface);
-  border-bottom-left-radius: 4px;
 }
 
 .cb-message-content {
@@ -579,8 +551,32 @@ watch(
   display: block;
   font-size: 11px;
   margin-top: 6px;
-  opacity: 0.7;
+  opacity: 0.65;
   text-align: right;
+}
+
+.cb-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.cb-typing-indicator span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--md-sys-color-primary);
+  animation: typing-bounce 1.4s infinite ease-in-out both;
+}
+
+.cb-typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+.cb-typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+.cb-typing-indicator span:nth-child(3) { animation-delay: 0s; }
+
+@keyframes typing-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1.1); opacity: 1; }
 }
 
 /* ==========================================================================
@@ -781,64 +777,129 @@ watch(
 }
 
 /* ==========================================================================
-   5. M3 Bottom Input Dock
+   2. Floating Rounded Input Dock & Suggestion Chips (Doubao Style)
    ========================================================================== */
+.cb-floating-dock-wrapper {
+  position: relative;
+  z-index: 10;
+  padding: 6px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: linear-gradient(to top, var(--md-sys-color-surface-dim) 80%, rgba(245, 245, 245, 0) 100%);
+}
+
+.cb-prompts-bar {
+  display: flex;
+  padding: 0 4px;
+}
+
+.cb-prompts-scroll {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
+}
+.cb-prompts-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.cb-prompt-chip {
+  min-height: 32px;
+  padding: 0 14px;
+  background: var(--md-sys-color-surface);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.cb-prompt-chip:hover:not(:disabled) {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+}
+.cb-prompt-chip:active:not(:disabled) {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  transform: scale(0.96);
+}
+.cb-prompt-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 悬浮圆角输入框卡片 */
 .cb-chat-input-bar {
   background: var(--md-sys-color-surface);
-  border-top: 1px solid var(--md-sys-color-outline-variant);
-  padding: 12px 16px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 28px;
+  padding: 6px 8px 6px 18px;
   display: flex;
   align-items: center;
   gap: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06), 0 1px 4px rgba(0, 0, 0, 0.03);
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+
+.cb-chat-input-bar:focus-within {
+  border-color: var(--md-sys-color-primary);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1), 0 0 0 2px var(--md-sys-color-primary-container);
 }
 
 .cb-chat-input {
   flex: 1;
-  height: 48px;
-  background: var(--md-sys-color-surface-container-low);
-  border: 1.5px solid var(--md-sys-color-outline-variant);
-  border-radius: var(--md-sys-shape-corner-medium);
-  padding: 0 16px;
-  font-size: 16px;
+  height: 44px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 15px;
   color: var(--md-sys-color-on-surface);
   outline: none;
-  transition: border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
-              box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
-.cb-chat-input:focus {
-  border-color: var(--md-sys-color-primary);
-  box-shadow: 0 0 0 3px var(--md-sys-color-primary-container);
+.cb-chat-input::placeholder {
+  color: var(--md-sys-color-on-surface-variant);
+  opacity: 0.7;
 }
 
 .cb-chat-send-btn {
-  height: 48px;
-  min-width: 80px;
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
   background: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary);
   border: none;
-  border-radius: var(--md-sys-shape-corner-medium);
-  padding: 0 16px;
-  font-size: 15px;
-  font-weight: 800;
+  border-radius: 50%;
+  padding: 0;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  box-shadow: var(--md-sys-elevation-2);
   transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-chat-send-btn:hover:not(:disabled) {
-  background: var(--cb-accent-hover);
-  box-shadow: var(--md-sys-elevation-3);
+  transform: scale(1.06);
+  filter: brightness(1.08);
+}
+
+.cb-chat-send-btn:active:not(:disabled) {
+  transform: scale(0.92);
 }
 
 .cb-chat-send-btn:disabled {
-  opacity: 0.45;
+  opacity: 0.25;
   cursor: not-allowed;
-  box-shadow: none;
+  transform: none;
 }
 
 /* ==========================================================================
@@ -846,20 +907,30 @@ watch(
    ========================================================================== */
 .cb-history-popup {
   --van-popup-round-radius: var(--md-sys-shape-corner-extra-large);
-  height: 50%;
+  max-height: 75%;
   background: var(--md-sys-color-surface);
   border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: var(--md-sys-elevation-4);
 }
 
 .cb-history-panel {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  padding: 16px 16px 0;
+  max-height: 70vh;
+  padding: 8px 16px 0;
   box-sizing: border-box;
+}
+
+.cb-history-drag-handle {
+  width: 32px;
+  height: 4px;
+  background: var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  margin: 0 auto 10px;
+  opacity: 0.8;
 }
 
 .cb-history-header {
@@ -871,7 +942,7 @@ watch(
 }
 
 .cb-history-title {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
   color: var(--md-sys-color-on-surface);
   letter-spacing: -0.2px;
@@ -880,10 +951,11 @@ watch(
 .cb-new-chat-btn,
 .cb-empty-new-btn {
   height: 36px;
-  padding: 0 18px;
+  padding: 0 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   background: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary);
   border: none;
@@ -893,6 +965,12 @@ watch(
   cursor: pointer;
   box-shadow: var(--md-sys-elevation-1);
   transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+
+.cb-new-chat-btn:hover:not(:disabled),
+.cb-empty-new-btn:hover:not(:disabled) {
+  box-shadow: var(--md-sys-elevation-2);
+  filter: brightness(1.05);
 }
 
 .cb-new-chat-btn:disabled,
@@ -920,15 +998,26 @@ watch(
 }
 
 .cb-history-empty {
-  flex: 1;
+  padding: 36px 16px calc(24px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   color: var(--md-sys-color-on-surface-variant);
   font-size: 14px;
+}
+
+.cb-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--md-sys-color-surface-container);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--md-sys-color-on-surface-variant);
+  opacity: 0.7;
 }
 
 .cb-history-list {
@@ -937,19 +1026,20 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  scrollbar-width: thin;
 }
 
 .cb-history-item {
   width: 100%;
   min-height: 56px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   background: var(--md-sys-color-surface-container-low);
-  border: none;
+  border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-medium);
   color: var(--md-sys-color-on-surface);
   text-align: left;
@@ -959,11 +1049,17 @@ watch(
 
 .cb-history-item:hover:not(:disabled) {
   background: var(--md-sys-color-surface-container-high);
+  border-color: var(--md-sys-color-outline);
+}
+
+.cb-history-item:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .cb-history-item--active,
 .cb-history-item--active:hover {
   background: var(--md-sys-color-primary-container);
+  border-color: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary-container);
 }
 
@@ -976,7 +1072,7 @@ watch(
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .cb-history-item-title {
