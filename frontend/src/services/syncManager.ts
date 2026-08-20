@@ -516,10 +516,15 @@ export class SyncManager {
             hadConflict = true
           }
         } else if (result.status === 'rejected') {
-          await this.db.outbox.update(entry.queueId, {
-            status: 'rejected',
-            lastErrorJson: JSON.stringify(result.errors ?? []),
-          })
+          if (entityTypeFor(entry.operationType) === 'service_category') {
+            await this.db.outbox.delete(entry.queueId)
+            await this.db.operations.delete(entry.operationId)
+          } else {
+            await this.db.outbox.update(entry.queueId, {
+              status: 'rejected',
+              lastErrorJson: JSON.stringify(result.errors ?? []),
+            })
+          }
         }
       }
     })

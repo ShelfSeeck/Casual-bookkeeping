@@ -306,6 +306,62 @@ describe('SyncManager', () => {
     expect(statuses.some((s) => s.state === 'conflict')).toBe(false)
   })
 
+  it('service_category 被服务端 rejected 时自动丢弃本地操作，不卡在 outbox', async () => {
+    await db.serviceCategories.put({
+      syncId: 'cat-b',
+      accountPhone: PHONE,
+      categoryName: '重复大类',
+      subcategoriesJson: [],
+      isActive: true,
+      sortOrder: 1,
+      rowVersion: 1,
+      createdAt: '2026-08-08T00:00:00Z',
+      updatedAt: '2026-08-08T00:00:00Z',
+    })
+    await mutation.commit({
+      operationType: 'create_service_category',
+      entitySyncIds: ['cat-b'],
+      changes: [
+        {
+          entitySyncId: 'cat-b',
+          entityType: 'service_category',
+          baseVersion: 0,
+          patch: { category_name: '重复大类' },
+        },
+      ],
+      apply: (tx) => tx.serviceCategories.put({
+        syncId: 'cat-b',
+        accountPhone: PHONE,
+        categoryName: '重复大类',
+        subcategoriesJson: [],
+        isActive: true,
+        sortOrder: 1,
+        rowVersion: 1,
+        createdAt: '2026-08-08T00:00:00Z',
+        updatedAt: '2026-08-08T00:00:00Z',
+      }),
+      actorType: 'user',
+    })
+    const realOpId = (await db.outbox.toArray())[0].operationId
+    const api = makeApi({
+      push: vi.fn(async () => ({
+        results: [
+          {
+            operationId: realOpId,
+            status: 'rejected' as const,
+            errors: [{ entitySyncId: 'cat-b', errorCode: 'category_name_duplicate' }],
+          },
+        ],
+      })),
+      pull: vi.fn(async () => ({ operations: [], hasMore: false })),
+    })
+    await buildManager(api).sync()
+
+    // rejected 操作被自动从 outbox 和 operations 中丢弃
+    expect(await db.outbox.count()).toBe(0)
+    expect(await db.operations.get(realOpId)).toBeUndefined()
+  })
+
   it('discardConflict 丢弃整条冲突：移除 outbox 与 operations 镜像', async () => {
     await commitOrder('sync-a')
     const realOpId = (await db.outbox.toArray())[0].operationId

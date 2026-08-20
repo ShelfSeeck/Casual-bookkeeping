@@ -239,10 +239,12 @@ def test_service_categories_rejects_duplicate_category_name(connection):
         {"category_name": "洗水", "subcategories_json": "[]", "is_active": 1},
         0,
     )
-    assert result.status == "rejected"
-    # error_code 必须精确为 category_name_duplicate（docs/error-codes.md §4.2），
-    # 曾因 ApplyResult 不带错误码而被上层误报为 invalid_subcategories。
-    assert result.error_code == "category_name_duplicate"
+    # 服务品类采用 LWW：同名大类再次创建时视为就地更新，自动合并成功（status == applied）
+    assert result.status == "applied"
+    # 读取数据库，确认同名大类仅有 1 条
+    rows = repo.list_Categories("13800000000", include_inactive=True)
+    assert len(rows) == 1
+    assert rows[0]["category_name"] == "洗水"
 
 
 # 小类结构校验（重名 / 非法 JSON）统一在 test_business_validation.py 缝 15 覆盖，此处不重复。

@@ -9,9 +9,10 @@ is_active 为 bool）；小类 name 同数组内不重复；category_name 同账
 """
 
 import json
+import sqlite3
 from typing import Any
 
-from backend.repositories.business_base import BusinessRepository
+from backend.repositories.business_base import ApplyResult, BusinessRepository
 
 
 class ServiceCategoriesRepository(BusinessRepository):
@@ -61,6 +62,63 @@ class ServiceCategoriesRepository(BusinessRepository):
             (account_phone, category_name),
         ).fetchone()
         return dict(row) if row is not None else None
+
+    def apply_Write(
+        self,
+        account_phone: str,
+        sync_id: str,
+        fields: dict[str, Any],
+        base_version: int,
+    ) -> ApplyResult:
+        """针对服务品类：采用最新覆盖（LWW），弱化版本比对，消除品类冲突与重复创建阻断。"""
+        error = self._validate_fields(fields)
+        if error is not None:
+            return ApplyResult("rejected", error_code=error)
+
+        now = self._now_factory()
+        existing_by_sync_id = self.get_BySyncId(account_phone, sync_id)
+
+        # 1. 尝试按 sync_id 匹配
+        if existing_by_sync_id is not None:
+            set_values: dict[str, Any] = {"updated_at": now}
+            for key, value in fields.items():
+                if key in self._columns() and key not in ("account_phone", "sync_id", "row_version"):
+                    set_values[key] = value
+            new_version = existing_by_sync_id["row_version"] + 1
+            set_values["row_version"] = new_version
+            try:
+                self._update(self.table, set_values, "sync_id", sync_id)
+            except sqlite3.IntegrityError:
+                return ApplyResult("rejected", error_code=self._integrity_error_code())
+            return ApplyResult("applied", new_version)
+
+        # 2. sync_id 未匹配，但若 category_name 相同，视为同名覆盖/就地更新，采用已有记录的 sync_id
+        cat_name = fields.get("category_name")
+        if cat_name:
+            existing_by_name = self.get_ByCategoryName(account_phone, cat_name)
+            if existing_by_name is not None:
+                set_values: dict[str, Any] = {"updated_at": now}
+                for key, value in fields.items():
+                    if key in self._columns() and key not in ("account_phone", "sync_id", "row_version"):
+                        set_values[key] = value
+                new_version = existing_by_name["row_version"] + 1
+                set_values["row_version"] = new_version
+                self._update(self.table, set_values, "sync_id", existing_by_name["sync_id"])
+                return ApplyResult("applied", new_version)
+
+        # 3. 都不存在，全新插入
+        values: dict[str, Any] = {"account_phone": account_phone, "sync_id": sync_id}
+        for key, value in fields.items():
+            if key in self._columns() and key not in ("account_phone", "sync_id", "row_version"):
+                values[key] = value
+        values.setdefault("created_at", now)
+        values["updated_at"] = now
+        values["row_version"] = 1
+        try:
+            self._insert(self.table, values)
+        except sqlite3.IntegrityError:
+            return ApplyResult("rejected", error_code=self._integrity_error_code())
+        return ApplyResult("applied", 1)
 
     def list_Categories(
         self,
