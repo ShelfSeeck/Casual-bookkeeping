@@ -30,6 +30,36 @@ from backend.scripts.manage import (
 from backend.services.password import PasswordService
 
 
+# ---------- _resolve_Password：密码来源优先级（防 shell history / ps 泄露） ----------
+
+def test_resolve_Password_prefers_flag_over_env(monkeypatch):
+    # --password 参数最优先；即使环境变量存在也用参数值
+    from backend.scripts.manage import _resolve_Password
+
+    monkeypatch.setenv("CB_MANAGE_PASSWORD", "from-env")
+    args = type("Args", (), {"password": "from-flag", "command": "add-account"})()
+    assert _resolve_Password(args) == "from-flag"
+
+
+def test_resolve_Password_falls_back_to_env(monkeypatch):
+    # 无 --password 时读环境变量 CB_MANAGE_PASSWORD
+    from backend.scripts.manage import _resolve_Password
+
+    monkeypatch.setenv("CB_MANAGE_PASSWORD", "from-env")
+    args = type("Args", (), {"password": None, "command": "add-account"})()
+    assert _resolve_Password(args) == "from-env"
+
+
+def test_resolve_Password_prompts_interactively(monkeypatch):
+    # 环境变量也没有时走 getpass 交互输入（不回显）
+    from backend.scripts import manage
+
+    monkeypatch.delenv("CB_MANAGE_PASSWORD", raising=False)
+    monkeypatch.setattr(manage.getpass, "getpass", lambda _prompt: "typed-password")
+    args = type("Args", (), {"password": None, "command": "add-account"})()
+    assert manage._resolve_Password(args) == "typed-password"
+
+
 def test_add_Account_hashes_password(connection):
     # 创建账户后：入库的不是明文，且能通过 Argon2id 校验
     add_Account(connection, "13800000000", "secret-password")

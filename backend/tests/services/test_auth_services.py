@@ -262,6 +262,36 @@ def test_delay_seconds_is_bounded_and_expires(limiter, clock):
     clock.ts += LOCK_SECONDS
     assert limiter.delay_seconds("account:13800000000", base=0.1, maximum=0.5) == 0.0
 
+def test_prune_removes_stale_entries(limiter, clock):
+    # 长期运行的进程不能让 _failures 无限增长：窗口（lock_seconds）过后
+    # 未再失败的条目应可被 prune 清除；窗口内或仍锁定的条目保留。
+    limiter.record_failure("stale")
+    limiter.record_failure("fresh")
+    clock.ts += LOCK_SECONDS + 1
+    limiter.record_failure("fresh")
+
+    limiter.prune()
+
+    assert limiter.is_locked("stale") is False
+    # fresh 仍在窗口内（刚失败过），计数保留：再失败到上限仍会锁
+    for _ in range(MAX_FAILURES - 1):
+        limiter.record_failure("fresh")
+    assert limiter.is_locked("fresh") is True
+
+
+def test_prune_keeps_locked_entries(limiter):
+    # 锁定中的条目即使 prune 被调用也必须保留，否则锁可被 prune 绕过
+    for _ in range(MAX_FAILURES):
+        limiter.record_failure("locked")
+    limiter.prune()
+    assert limiter.is_locked("locked") is True
+
+
+def test_prune_empty_map_is_noop(limiter):
+    # 空表 prune 不报错
+    limiter.prune()
+
+
 # ---------- AuthService 登录持久化（登录响应与业务端点之间的竞态） ----------
 
 def test_login_persists_device_before_returning(database, clock):

@@ -143,6 +143,55 @@ def test_login_failures_from_one_source_do_not_lock_account_for_another_source(
     assert allowed.status_code == 200
 
 
+# ---------- B3b 来源 IP 解析（trusted_proxies） ----------
+
+def test_source_ip_ignores_xff_from_untrusted_peer():
+    # 直连 peer 不在可信代理列表时，X-Forwarded-For 一律不采信（防伪造）
+    from fastapi import Request
+    from backend.routers.auth import _source_ip
+
+    scope = {
+        "type": "http", "method": "GET", "path": "/",
+        "query_string": b"",
+        "headers": [(b"x-forwarded-for", b"9.9.9.9")],
+        "client": ("203.0.113.20", 50000),
+    }
+    request = Request(scope)
+    assert _source_ip(request, []) == "203.0.113.20"
+
+
+def test_source_ip_takes_rightmost_untrusted_hop_via_trusted_proxy():
+    # 直连 peer 是可信代理时，取 XFF 链中最后一个非可信跳；
+    # 客户端伪造的头部跳会被跳过，只有代理追加的尾部才可靠。
+    from fastapi import Request
+    from backend.routers.auth import _source_ip
+
+    def _request(peer, xff):
+        headers = [(b"x-forwarded-for", xff.encode())] if xff else []
+        scope = {
+            "type": "http", "method": "GET", "path": "/",
+            "headers": headers, "query_string": b"", "client": (peer, 50000),
+        }
+        return Request(scope)
+
+    trusted = ["127.0.0.1"]
+    # 代理追加真实客户端 198.51.100.7 → 取它
+    assert _source_ip(
+        _request("127.0.0.1", "198.51.100.7"), trusted
+    ) == "198.51.100.7"
+    # 多级代理：客户端伪造 "9.9.9.9" + 两级可信代理追加 → 取最后一个非可信跳
+    assert _source_ip(
+        _request("127.0.0.1", "9.9.9.9, 198.51.100.7, 10.0.0.2"),
+        trusted + ["10.0.0.2"],
+    ) == "198.51.100.7"
+    # 全链都是可信 IP（异常情况）→ 回退直连 peer
+    assert _source_ip(
+        _request("127.0.0.1", "10.0.0.2"), trusted + ["10.0.0.2"]
+    ) == "127.0.0.1"
+    # 可信代理但无 XFF 头 → 回退直连 peer
+    assert _source_ip(_request("127.0.0.1", None), trusted) == "127.0.0.1"
+
+
 # ---------- B4-B6 刷新 ----------
 
 def test_refresh_rolls_tokens(client, seed_account, clock):

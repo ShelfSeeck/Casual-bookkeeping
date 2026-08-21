@@ -34,6 +34,7 @@ _DEFAULTS: dict[str, dict[str, object]] = {
         "refresh_cookie_name": "refresh_token",
         "secure_cookie": False,
         "cookie_samesite": "lax",
+        "trusted_proxies": [],
     },
 }
 
@@ -114,3 +115,11 @@ class Settings:
     @property
     def cookie_samesite(self) -> str:
         return str(self._auth("cookie_samesite"))
+
+    @property
+    def trusted_proxies(self) -> list[str]:
+        """可信反向代理 IP 列表：只有直连 peer 在列表内时才采信 X-Forwarded-For。"""
+        raw = self._auth("trusted_proxies")
+        if isinstance(raw, str):
+            return [raw]
+        return [str(item) for item in raw]

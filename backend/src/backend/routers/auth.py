@@ -11,7 +11,9 @@ from backend.deps import (
     RefreshCookieConfig,
     get_AuthService,
     get_RefreshCookieConfig,
+    get_Settings,
 )
+from backend.config import Settings
 from backend.errors import ERROR_INVALID_TOKEN, AuthError
 from backend.services.auth import AuthService
 from backend.services.token import TokenPair
@@ -57,6 +59,26 @@ def _clear_refresh_cookie(
     )
 
 
+def _source_ip(request: Request, trusted_proxies: list[str]) -> str:
+    """解析请求来源 IP，用于登录防刷。
+
+    默认只取 ASGI 直连 peer；仅当直连 peer 在可信代理列表内时，
+    才从 X-Forwarded-For 取最后一个非可信跳（防伪造：XFF 可被客户端随意附加，
+    只有逐跳由可信代理追加的尾部链才可靠）。解析失败一律回退直连 peer。
+    """
+    peer = request.client.host if request.client else "unknown"
+    if peer not in trusted_proxies:
+        return peer
+    forwarded = request.headers.get("x-forwarded-for")
+    if not forwarded:
+        return peer
+    chain = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+    for hop in reversed(chain):
+        if hop not in trusted_proxies:
+            return hop
+    return peer
+
+
 @router.post("/login", response_model=TokenResponse)
 def login(
     body: LoginRequest,
@@ -64,10 +86,10 @@ def login(
     response: Response,
     auth: AuthService = Depends(get_AuthService),
     cookie: RefreshCookieConfig = Depends(get_RefreshCookieConfig),
+    settings: Settings = Depends(get_Settings),
 ) -> TokenResponse:
-    # 只采用 ASGI 服务器提供的直连 peer；不直接信任 X-Forwarded-For，
-    # 反向代理部署时应由服务器层先配置可信代理并改写 request.client。
-    source_ip = request.client.host if request.client else "unknown"
+    # 直连来源 IP + 可信代理时的 X-Forwarded-For（配置 trusted_proxies 启用）
+    source_ip = _source_ip(request, settings.trusted_proxies)
     pair: TokenPair = auth.login(
         body.phone, body.password, body.device_id, source_ip=source_ip
     )

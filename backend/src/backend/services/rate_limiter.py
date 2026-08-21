@@ -72,6 +72,21 @@ class RateLimiter:
             return maximum
         return base * (2 ** exponent)
 
+    def prune(self) -> None:
+        """清除窗口外且未锁定的条目，防止长期运行的内存无界增长。
+
+        保留两类条目：锁定中的（prune 不能成为绕锁通道）、
+        窗口内仍有失败计数的（退避与计数依赖它们）。
+        """
+        now = self._now().timestamp()
+        stale = [
+            key
+            for key, (_count, lock_until, updated_at) in self._failures.items()
+            if lock_until is None and now >= updated_at + self.lock_seconds
+        ]
+        for key in stale:
+            del self._failures[key]
+
     def reset(self, key: str) -> None:
         # 登录成功后清零，避免残留计数触发误锁/持续退避
         self._failures.pop(key, None)

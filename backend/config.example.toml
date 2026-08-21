@@ -20,6 +20,9 @@ login_lock_seconds = 900
 refresh_cookie_name = "refresh_token"
 secure_cookie = false
 cookie_samesite = "lax"
+# 可信反向代理 IP 列表：部署在 nginx 等反代后时填代理地址（如 ["127.0.0.1"]），
+# 只有直连 peer 在列表内才采信 X-Forwarded-For 取真实来源 IP；直连部署留空。
+trusted_proxies = []
 
 [model]
 # 记账助手模型（docs/spec/chat-agent.md §8）：每次运行热读，改后无需重启。

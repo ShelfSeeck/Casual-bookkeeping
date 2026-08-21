@@ -9,7 +9,9 @@ argparse 只负责参数解析，main() 负责开连接、提交、打印结果�
 """
 
 import argparse
+import getpass
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 from backend.config import Settings
@@ -169,6 +171,18 @@ def list_Rows(
     return [dict(row) for row in rows]
 
 
+def _resolve_Password(args) -> str:
+    """解析密码来源，避免明文留在 shell history / ps 输出：
+    优先 --password 参数；否则读环境变量 CB_MANAGE_PASSWORD；
+    再否则交互式输入（getpass，不回显）。"""
+    if getattr(args, "password", None):
+        return args.password
+    from_env = os.environ.get("CB_MANAGE_PASSWORD")
+    if from_env:
+        return from_env
+    return getpass.getpass("请输入密码: ")
+
+
 def _connection():
     """打开数据库连接并确保表就绪（应用 schema 幂等建表）。"""
     settings = Settings()
@@ -184,7 +198,7 @@ def main(argv: list[str] | None = None) -> None:
     # add-account：创建账户
     p_account = sub.add_parser("add-account", help="创建账户")
     p_account.add_argument("phone", help="11 位手机号")
-    p_account.add_argument("--password", required=True, help="明文密码，将用 Argon2id 哈希入库")
+    p_account.add_argument("--password", help="明文密码（缺省时读 CB_MANAGE_PASSWORD 或交互输入），将用 Argon2id 哈希入库")
     p_account.add_argument("--status", choices=["active", "disabled"], default="active")
     p_account.set_defaults(func=add_Account)
 
@@ -198,7 +212,7 @@ def main(argv: list[str] | None = None) -> None:
     # set-password：改密码
     p_password = sub.add_parser("set-password", help="修改账户密码")
     p_password.add_argument("phone", help="11 位手机号")
-    p_password.add_argument("--password", required=True, help="新密码，将用 Argon2id 哈希入库")
+    p_password.add_argument("--password", help="新密码（缺省时读 CB_MANAGE_PASSWORD 或交互输入），将用 Argon2id 哈希入库")
     p_password.set_defaults(func=set_AccountPassword)
 
     # set-account-status：停用/启用账户
@@ -246,13 +260,13 @@ def main(argv: list[str] | None = None) -> None:
     connection = _connection()
     try:
         if args.command == "add-account":
-            args.func(connection, args.phone, args.password, args.status)
+            args.func(connection, args.phone, _resolve_Password(args), args.status)
             print(f"账户已创建: {args.phone} (status={args.status})")
         elif args.command == "add-device":
             args.func(connection, args.phone, args.device_id, args.expires_at)
             print(f"设备已登记: {args.phone} / {args.device_id}")
         elif args.command == "set-password":
-            args.func(connection, args.phone, args.password)
+            args.func(connection, args.phone, _resolve_Password(args))
             print(f"密码已修改: {args.phone}")
         elif args.command == "set-account-status":
             args.func(connection, args.phone, args.status)

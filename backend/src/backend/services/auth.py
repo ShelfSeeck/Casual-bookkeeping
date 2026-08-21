@@ -74,6 +74,8 @@ class AuthService:
         # 以直连来源 IP + 目标账户限制该来源，同时不影响其他来源的正确登录。
         source_key = f"source:{source_ip}|account:{phone}"
         account_key = f"account:{phone}"
+        # 顺手淘汰过期条目，防止长期运行时防刷表无界增长（O(n) 但 n 小）
+        self._limiter.prune()
         if self._limiter.is_locked(source_key):
             raise AuthError(ERROR_LOGIN_BLOCKED, "该来源登录失败次数过多，请稍后再试", 401)
 
