@@ -3,6 +3,8 @@ import type { CbDatabase } from '../db/schema'
 import {
   type ServiceCategoryUi,
   type CustomerUi,
+  type CustomerEntityUi,
+  type CustomerMappingUi,
   type WorkOrderUi,
 } from '../types/ui'
 import { CustomersRepository } from '../repositories/customers'
@@ -10,13 +12,19 @@ import { CustomerCodeMappingsRepository } from '../repositories/customerCodeMapp
 import { ServiceCategoriesRepository } from '../repositories/serviceCategories'
 import { WorkOrdersRepository } from '../repositories/workOrders'
 import {
+  addCustomerCodeMapping as addCustomerCodeMappingCommand,
+  archiveCustomerWithMappings as archiveCustomerWithMappingsCommand,
   batchPriceWorkOrders,
   buildCustomerWithMapping,
+  createCustomer as createCustomerCommand,
   createWorkOrder as createWorkOrderCommand,
   createServiceCategory,
+  deleteCustomerCodeMapping as deleteCustomerCodeMappingCommand,
   deleteWorkOrder as deleteWorkOrderCommand,
   reorderServiceCategories,
   revertOperation,
+  updateCustomer as updateCustomerCommand,
+  updateCustomerCodeMapping as updateCustomerCodeMappingCommand,
   updateServiceCategory,
   updateWorkOrder as updateWorkOrderCommand,
 } from '../services/businessCommands'
@@ -163,6 +171,8 @@ class AppState {
 
   // 真实数据组装出的 UI 列表
   customers = reactive<CustomerUi[]>([])
+  customerEntities = reactive<CustomerEntityUi[]>([])
+  customerMappings = reactive<CustomerMappingUi[]>([])
   categories = reactive<ServiceCategoryUi[]>([])
   workOrders = reactive<WorkOrderUi[]>([])
 
@@ -216,14 +226,26 @@ class AppState {
     ])
 
     const uiCustomers: CustomerUi[] = []
+    const uiMappings: CustomerMappingUi[] = []
+
     for (const m of mappings) {
       const c = customers.find((x) => x.customerId === m.customerId)
+      const canonicalName = c?.canonicalName ?? m.customerName
       uiCustomers.push({
         customerId: m.customerId,
         syncId: m.syncId,
-        customerName: c?.canonicalName ?? m.customerName,
+        customerName: canonicalName,
         code: m.customerCode,
         displayName: m.customerName,
+        validFrom: m.validFrom,
+        validTo: m.validTo,
+      })
+      uiMappings.push({
+        syncId: m.syncId,
+        customerId: m.customerId,
+        customerCode: m.customerCode,
+        customerName: m.customerName,
+        canonicalName,
         validFrom: m.validFrom,
         validTo: m.validTo,
       })
@@ -241,6 +263,23 @@ class AppState {
       }
     }
     this.customers.splice(0, this.customers.length, ...uiCustomers)
+    this.customerMappings.splice(0, this.customerMappings.length, ...uiMappings)
+
+    const uiEntities: CustomerEntityUi[] = customers.map((c) => {
+      const relatedMappings = uiMappings.filter((m) => m.customerId === c.customerId)
+      const activeCodes = relatedMappings
+        .filter((m) => m.validTo === null)
+        .map((m) => m.customerCode)
+      return {
+        customerId: c.customerId,
+        syncId: c.syncId,
+        canonicalName: c.canonicalName,
+        archivedAt: c.archivedAt,
+        activeCodes,
+        mappings: relatedMappings,
+      }
+    })
+    this.customerEntities.splice(0, this.customerEntities.length, ...uiEntities)
 
     this.categories.splice(
       0,
@@ -815,6 +854,82 @@ class AppState {
       apply: built.apply,
       actorType: 'user',
     })
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+  }
+
+  async addCustomer(canonicalName: string): Promise<{ customerSyncId: string; customerId: number }> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    const res = await createCustomerCommand(db, { canonicalName })
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+    return res
+  }
+
+  async updateCustomerName(customerSyncId: string, canonicalName: string): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    await updateCustomerCommand(db, customerSyncId, { canonicalName })
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+  }
+
+  async archiveCustomer(customerSyncId: string): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    await archiveCustomerWithMappingsCommand(db, customerSyncId)
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+  }
+
+  async addMapping(fields: {
+    customerId: number
+    customerCode: string
+    customerName: string
+    validFrom: string
+    validTo?: string | null
+  }): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    await addCustomerCodeMappingCommand(db, fields)
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+  }
+
+  async updateMapping(
+    syncId: string,
+    patch: Partial<{
+      customerId: number
+      customerCode: string
+      customerName: string
+      validFrom: string
+      validTo: string | null
+    }>,
+  ): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    await updateCustomerCodeMappingCommand(db, syncId, patch)
+    await this.reload()
+    if (this.syncManager) {
+      void this.syncManager.sync().then(() => this.reload())
+    }
+  }
+
+  async deleteMapping(syncId: string): Promise<void> {
+    const db = this.db
+    if (!db) throw new Error('业务库未打开')
+    await deleteCustomerCodeMappingCommand(db, syncId)
     await this.reload()
     if (this.syncManager) {
       void this.syncManager.sync().then(() => this.reload())

@@ -11,6 +11,25 @@ export interface CustomerUi {
   validTo: string | null
 }
 
+export interface CustomerMappingUi {
+  syncId: string
+  customerId: number
+  customerCode: string
+  customerName: string
+  canonicalName: string
+  validFrom: string
+  validTo: string | null
+}
+
+export interface CustomerEntityUi {
+  customerId: number
+  syncId: string
+  canonicalName: string
+  archivedAt: string | null
+  activeCodes: string[]
+  mappings: CustomerMappingUi[]
+}
+
 export interface SubcategoryUi {
   name: string
   defaultUnit: string

@@ -8,7 +8,7 @@ import { getActiveAccount } from '../../services/apiClient'
 import { getOrCreateDeviceId } from '../../db/device'
 import { applyTheme, getThemePreference, type ThemePreference } from '../../utils/theme'
 import { mergeCategoryOrders } from '../../utils/categoryReorder'
-import type { ServiceCategoryUi } from '../../types/ui'
+import type { ServiceCategoryUi, CustomerEntityUi, CustomerMappingUi } from '../../types/ui'
 import type { AuthStore } from '../../services/authStore'
 import ConflictCenter from './ConflictCenter.vue'
 
@@ -18,8 +18,10 @@ const injectedStoreRef = inject<ShallowRef<AuthStore | null> | AuthStore | null>
 type SubPageKey =
   | 'main'
   | 'appearance'
-  | 'customers'
-  | 'customer_new'
+  | 'customers'          // 客户档案总览（主界面，仅展示客户及名下有效代号）
+  | 'customer_new'       // 新建/修改客户档案主体
+  | 'mappings'           // 编号与代称管理（TopBar 右上角进入的独立子界面）
+  | 'mapping_new'        // 新增/修改编号与代称映射
   | 'categories'
   | 'category_new'
   | 'sync'
@@ -44,59 +46,223 @@ function setTheme(preference: ThemePreference) {
   applyTheme(preference)
 }
 
-// ==================== 1. 客户档案管理 ====================
-const customerSearchKeyword = ref('')
+// ==================== 1. 客户档案（主）与编号代称管理（子） ====================
+const customerEntitySearchKeyword = ref('')
+const mappingSearchKeyword = ref('')
 
-const filteredCustomerList = computed(() => {
-  const kw = customerSearchKeyword.value.trim().toLowerCase()
-  if (!kw) return appState.customers
-  return appState.customers.filter(
+const _today = new Date()
+const _todayStr = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`
+
+// 1.1 客户档案主列表与搜索（主界面仅展示客户档案主体及其名下代号）
+const filteredCustomerEntityList = computed(() => {
+  const kw = customerEntitySearchKeyword.value.trim().toLowerCase()
+  if (!kw) return appState.customerEntities
+  return appState.customerEntities.filter(
     (c) =>
-      c.code.toLowerCase().includes(kw) ||
-      c.displayName.toLowerCase().includes(kw) ||
-      c.customerName.toLowerCase().includes(kw)
+      c.canonicalName.toLowerCase().includes(kw) ||
+      c.activeCodes.some((code) => code.toLowerCase().includes(kw)) ||
+      c.mappings.some((m) => m.customerName.toLowerCase().includes(kw)),
   )
 })
 
-const formCode = ref('')
-const formDisplayName = ref('')
-const formCustomerName = ref('')
-const _today = new Date()
-const _todayStr = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`
-const formValidFrom = ref(_todayStr)
+// 1.2 编号与代称列表与搜索（TopBar 右上角进入的编号管理子界面）
+const filteredMappingList = computed(() => {
+  const kw = mappingSearchKeyword.value.trim().toLowerCase()
+  if (!kw) return appState.customerMappings
+  return appState.customerMappings.filter(
+    (m) =>
+      m.customerCode.toLowerCase().includes(kw) ||
+      m.customerName.toLowerCase().includes(kw) ||
+      m.canonicalName.toLowerCase().includes(kw),
+  )
+})
 
-function resetCustomerForm() {
-  formCode.value = ''
-  formDisplayName.value = ''
-  formCustomerName.value = ''
-  formValidFrom.value = _todayStr
+// 1.3 编号与代称分配/修改
+const isEditingMapping = ref(false)
+const editingMappingSyncId = ref<string | null>(null)
+const formMappingCustomerId = ref<number | null>(null)
+const formMappingCode = ref('')
+const formMappingDisplayName = ref('')
+const formMappingValidFrom = ref(_todayStr)
+const formMappingValidTo = ref<string | null>(null)
+const isMappingSubmitting = ref(false)
+
+function openNewMappingPage(prefillCustomerId?: number) {
+  isEditingMapping.value = false
+  editingMappingSyncId.value = null
+  formMappingCustomerId.value = prefillCustomerId ?? (appState.customerEntities[0]?.customerId ?? null)
+  const cust = appState.customerEntities.find((c) => c.customerId === formMappingCustomerId.value)
+  formMappingCode.value = ''
+  formMappingDisplayName.value = cust?.canonicalName ?? ''
+  formMappingValidFrom.value = _todayStr
+  formMappingValidTo.value = null
+  currentSubPage.value = 'mapping_new'
 }
 
+function openEditMappingPage(m: CustomerMappingUi) {
+  isEditingMapping.value = true
+  editingMappingSyncId.value = m.syncId
+  formMappingCustomerId.value = m.customerId
+  formMappingCode.value = m.customerCode
+  formMappingDisplayName.value = m.customerName
+  formMappingValidFrom.value = m.validFrom
+  formMappingValidTo.value = m.validTo
+  currentSubPage.value = 'mapping_new'
+}
+
+async function handleDeleteMappingFromEdit() {
+  if (!editingMappingSyncId.value) return
+  const m = appState.customerMappings.find((x) => x.syncId === editingMappingSyncId.value)
+  if (!m) return
+  try {
+    await showConfirmDialog({
+      title: '删除编号映射',
+      message: `确定要结束并删除代号「${m.customerCode}」（${m.customerName}）吗？\n该操作将该编号有效截止期置为今日。`,
+      confirmButtonText: '删除',
+      confirmButtonColor: 'var(--md-sys-color-error, #ba1a1a)',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+
+  try {
+    await appState.deleteMapping(m.syncId)
+    showSuccessToast(`已移除编号 ${m.customerCode}`)
+    currentSubPage.value = 'mappings'
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  }
+}
+
+async function submitNewMapping() {
+  if (isMappingSubmitting.value) return
+  if (!formMappingCustomerId.value) {
+    showFailToast('请选择关联的客户主体')
+    return
+  }
+  if (!formMappingCode.value.trim() || !formMappingDisplayName.value.trim()) {
+    showFailToast('请完整填写编号与显示简称/代称')
+    return
+  }
+  isMappingSubmitting.value = true
+  try {
+    if (isEditingMapping.value && editingMappingSyncId.value) {
+      await appState.updateMapping(editingMappingSyncId.value, {
+        customerId: formMappingCustomerId.value,
+        customerCode: formMappingCode.value.trim(),
+        customerName: formMappingDisplayName.value.trim(),
+        validFrom: formMappingValidFrom.value || _todayStr,
+        validTo: formMappingValidTo.value || null,
+      })
+      showSuccessToast('编号代称修改成功')
+    } else {
+      await appState.addMapping({
+        customerId: formMappingCustomerId.value,
+        customerCode: formMappingCode.value.trim(),
+        customerName: formMappingDisplayName.value.trim(),
+        validFrom: formMappingValidFrom.value || _todayStr,
+        validTo: null,
+      })
+      showSuccessToast('编号代称新增成功')
+    }
+    currentSubPage.value = 'mappings'
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  } finally {
+    isMappingSubmitting.value = false
+  }
+}
+
+// 1.4 客户档案新建/修改名称/归档
+const isEditingCustomer = ref(false)
+const editingCustomerSyncId = ref<string | null>(null)
+const editingCustomerEntity = ref<CustomerEntityUi | null>(null)
+const formCanonicalName = ref('')
+const formInitialCode = ref('')
+const formInitialDisplayName = ref('')
+const isCustomerSubmitting = ref(false)
+
 function openNewCustomerPage() {
-  resetCustomerForm()
+  isEditingCustomer.value = false
+  editingCustomerSyncId.value = null
+  editingCustomerEntity.value = null
+  formCanonicalName.value = ''
+  formInitialCode.value = ''
+  formInitialDisplayName.value = ''
   currentSubPage.value = 'customer_new'
 }
 
-const isCustomerSubmitting = ref(false)
+function openEditCustomerPage(c: CustomerEntityUi) {
+  isEditingCustomer.value = true
+  editingCustomerSyncId.value = c.syncId
+  editingCustomerEntity.value = c
+  formCanonicalName.value = c.canonicalName
+  formInitialCode.value = ''
+  formInitialDisplayName.value = ''
+  currentSubPage.value = 'customer_new'
+}
+
+async function handleArchiveCustomer(c: CustomerEntityUi) {
+  try {
+    await showConfirmDialog({
+      title: '归档客户档案',
+      message: `确定要归档客户「${c.canonicalName}」吗？\n归档后该客户及其名下所有编号将不再出现在日常录单中。`,
+      confirmButtonText: '归档',
+      confirmButtonColor: 'var(--md-sys-color-error, #ba1a1a)',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+
+  try {
+    await appState.archiveCustomer(c.syncId)
+    showSuccessToast(`已归档客户「${c.canonicalName}」`)
+    currentSubPage.value = 'customers'
+  } catch (e) {
+    showFailToast(toErrorMessage(e))
+  }
+}
+
+async function handleArchiveCustomerFromEdit() {
+  if (!editingCustomerEntity.value) return
+  await handleArchiveCustomer(editingCustomerEntity.value)
+}
 
 async function submitNewCustomer() {
   if (isCustomerSubmitting.value) return
-  if (!formCode.value.trim() || !formDisplayName.value.trim() || !formCustomerName.value.trim()) {
-    showFailToast('请完整填写速记编号、客户简称与正式全称')
+  const canonical = formCanonicalName.value.trim()
+  if (!canonical) {
+    showFailToast('请填写客户正式全称')
     return
   }
+
   isCustomerSubmitting.value = true
   try {
-    await appState.addCustomerWithMapping({
-      canonicalName: formCustomerName.value.trim(),
-      customerCode: formCode.value.trim(),
-      customerName: formDisplayName.value.trim(),
-      validFrom: formValidFrom.value || _todayStr,
-      validTo: null,
-    })
-    resetCustomerForm()
-    currentSubPage.value = 'customers'
-    showSuccessToast('客户档案添加成功')
+    if (isEditingCustomer.value && editingCustomerSyncId.value) {
+      await appState.updateCustomerName(editingCustomerSyncId.value, canonical)
+      showSuccessToast('客户档案修改成功')
+      currentSubPage.value = 'customers'
+    } else {
+      const code = formInitialCode.value.trim()
+      const disp = formInitialDisplayName.value.trim() || canonical
+
+      if (code) {
+        await appState.addCustomerWithMapping({
+          canonicalName: canonical,
+          customerCode: code,
+          customerName: disp,
+          validFrom: _todayStr,
+          validTo: null,
+        })
+        showSuccessToast('客户档案与初始编号建立成功')
+      } else {
+        await appState.addCustomer(canonical)
+        showSuccessToast('客户档案建立成功')
+      }
+      currentSubPage.value = 'customers'
+    }
   } catch (e) {
     showFailToast(toErrorMessage(e))
   } finally {
@@ -112,6 +278,25 @@ const isCategorySubmitting = ref(false)
 
 const activeCategoriesList = computed(() => appState.categories.filter((c) => c.isActive))
 const inactiveCategoriesList = computed(() => appState.categories.filter((c) => !c.isActive))
+
+// 默认折叠：记录当前展开的大类 syncId 集合
+const expandedCatSyncIds = ref<Set<string>>(new Set())
+
+function isCategoryExpanded(syncId?: string): boolean {
+  if (!syncId) return false
+  return expandedCatSyncIds.value.has(syncId)
+}
+
+function toggleCategoryExpanded(syncId?: string) {
+  if (!syncId) return
+  const s = new Set(expandedCatSyncIds.value)
+  if (s.has(syncId)) {
+    s.delete(syncId)
+  } else {
+    s.add(syncId)
+  }
+  expandedCatSyncIds.value = s
+}
 
 function openNewCategoryPage() {
   formNewCatName.value = ''
@@ -465,11 +650,11 @@ onMounted(async () => {
                 </svg>
               </div>
               <div class="md3-list-item-content">
-                <span class="md3-list-item-headline">客户与编号</span>
-                <span class="md3-list-item-supporting">常用客户速记编号与全称</span>
+                <span class="md3-list-item-headline">客户档案</span>
+                <span class="md3-list-item-supporting">企业客户主体、速记代号与代称</span>
               </div>
               <div class="md3-list-item-trailing">
-                <span class="md3-list-item-meta cb-tabular-nums">{{ appState.customers.length }} 家客户</span>
+                <span class="md3-list-item-meta cb-tabular-nums">{{ appState.customerEntities.length }} 家客户</span>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M9 18l6-6-6-6"/>
                 </svg>
@@ -685,7 +870,7 @@ onMounted(async () => {
     </div>
 
     <!-- ====================================================================
-         页面 2：客户与编号列表独立页 (MD3 Card Collection & Search Bar)
+         页面 2：客户档案总览（主界面：纯展示与维护客户主体，右上角进编号管理）
          ==================================================================== -->
     <div v-else-if="currentSubPage === 'customers'" class="cb-page-container">
       <header class="md3-top-app-bar">
@@ -699,79 +884,324 @@ onMounted(async () => {
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
-        <h1 class="md3-top-app-bar-title">客户与编号</h1>
-        <div style="width: 48px;"></div>
+        <h1 class="md3-top-app-bar-title">客户档案</h1>
+        <button
+          type="button"
+          class="md3-text-button-tonal cb-pressable"
+          aria-label="进入编号与代称管理"
+          @click="currentSubPage = 'mappings'"
+        >
+          编号代称 🏷️
+        </button>
       </header>
 
       <main class="cb-subpage-body">
-        <!-- MD3 Outlined Search Bar (52px, Rounded Full) -->
+        <!-- MD3 Outlined Search Bar -->
         <div class="md3-search-bar">
           <svg class="md3-search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
           <input
-            v-model="customerSearchKeyword"
+            v-model="customerEntitySearchKeyword"
             type="text"
             name="customer_search"
-            placeholder="搜索编号或客户名称…"
+            placeholder="搜索客户正式全称或名下代号…"
             class="md3-search-input"
             autocomplete="off"
             spellcheck="false"
-            aria-label="搜索客户"
+            aria-label="搜索客户档案"
           />
           <button
-            v-if="customerSearchKeyword"
+            v-if="customerEntitySearchKeyword"
             type="button"
             class="md3-search-clear-btn"
             aria-label="清空搜索"
-            @click="customerSearchKeyword = ''"
+            @click="customerEntitySearchKeyword = ''"
           >
             ✕
           </button>
         </div>
 
-        <!-- 客户列表卡片流 (MD3 Outlined Cards) -->
+        <!-- 客户主体卡片列表（MD3 横向卡片：左侧大名称，右侧代号+代称/加号） -->
         <div class="cb-customer-card-list">
           <div
-            v-for="c in filteredCustomerList"
+            v-for="c in filteredCustomerEntityList"
             :key="c.customerId"
-            class="md3-card md3-card--outlined cb-cust-item-card"
+            class="md3-card md3-card--outlined cb-entity-card-row cb-pressable"
+            @click="openEditCustomerPage(c)"
           >
-            <div class="cb-cust-item-left">
-              <span class="md3-badge-tonal cb-tabular-nums">{{ c.code }}</span>
-              <div class="cb-cust-names-col">
-                <span class="cb-cust-disp-name">{{ c.displayName }}</span>
-                <span class="cb-cust-full-name">{{ c.customerName }}</span>
-              </div>
+            <div class="cb-entity-card-left">
+              <span class="cb-entity-card-title">{{ c.canonicalName }}</span>
             </div>
-            <div class="cb-cust-item-right">
-              <span class="cb-cust-valid-date cb-tabular-nums">自 {{ c.validFrom }} 生效</span>
+
+            <div class="cb-entity-card-right">
+              <div v-if="c.mappings.filter(m => m.validTo === null).length > 0" class="cb-entity-chips-right">
+                <span
+                  v-for="m in c.mappings.filter(m => m.validTo === null)"
+                  :key="m.syncId"
+                  class="cb-code-alias-pill"
+                >
+                  <span class="cb-code-alias-code cb-tabular-nums">{{ m.customerCode }}</span>
+                  <span class="cb-code-alias-name">{{ m.customerName }}</span>
+                </span>
+              </div>
+              <button
+                v-else
+                type="button"
+                class="cb-entity-add-btn cb-pressable"
+                aria-label="分配编号与代称"
+                @click.stop="openNewMappingPage(c.customerId)"
+              >
+                +
+              </button>
             </div>
           </div>
 
-          <div v-if="filteredCustomerList.length === 0" class="cb-empty-state">
+          <div v-if="filteredCustomerEntityList.length === 0" class="cb-empty-state">
             <span class="cb-empty-icon">🔍</span>
             <span class="cb-empty-text">未找到匹配的客户档案</span>
           </div>
         </div>
       </main>
 
-      <!-- 底部常驻 MD3 Filled Button -->
       <footer class="md3-bottom-app-bar-cta">
         <button
           type="button"
           class="md3-filled-button cb-pressable"
-          aria-label="新增客户档案"
+          aria-label="新建客户档案"
           @click="openNewCustomerPage"
         >
-          + 新增客户档案
+          + 新建客户档案主体
         </button>
       </footer>
     </div>
 
     <!-- ====================================================================
-         页面 3：新增客户表单独立页 (MD3 Outlined Text Fields)
+         页面 2.1：编号与代称管理（TopBar 右上角进入的子界面）
+         ==================================================================== -->
+    <div v-else-if="currentSubPage === 'mappings'" class="cb-page-container">
+      <header class="md3-top-app-bar">
+        <button
+          type="button"
+          class="md3-icon-button cb-pressable"
+          aria-label="返回客户档案"
+          @click="currentSubPage = 'customers'"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+        <h1 class="md3-top-app-bar-title">编号与代称管理</h1>
+        <div style="width: 48px;"></div>
+      </header>
+
+      <main class="cb-subpage-body">
+        <!-- MD3 Outlined Search Bar -->
+        <div class="md3-search-bar">
+          <svg class="md3-search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input
+            v-model="mappingSearchKeyword"
+            type="text"
+            name="mapping_search"
+            placeholder="搜索编号代号、显示简称或客户全称…"
+            class="md3-search-input"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="搜索编号映射"
+          />
+          <button
+            v-if="mappingSearchKeyword"
+            type="button"
+            class="md3-search-clear-btn"
+            aria-label="清空搜索"
+            @click="mappingSearchKeyword = ''"
+          >
+            ✕
+          </button>
+        </div>
+
+        <!-- 编号与代称卡片流（点击卡片直接修改/删除） -->
+        <div class="cb-customer-card-list">
+          <div
+            v-for="m in filteredMappingList"
+            :key="m.syncId"
+            class="md3-card md3-card--outlined cb-mapping-item-card cb-pressable"
+            @click="openEditMappingPage(m)"
+          >
+            <div class="cb-mapping-main-row">
+              <div class="cb-cust-item-left">
+                <span class="md3-badge-tonal cb-tabular-nums">{{ m.customerCode }}</span>
+                <div class="cb-cust-names-col">
+                  <span class="cb-cust-disp-name">{{ m.customerName }}</span>
+                  <span class="cb-cust-full-name">{{ m.canonicalName }}</span>
+                </div>
+              </div>
+              <div class="cb-cust-item-right">
+                <span class="cb-cust-valid-date cb-tabular-nums">
+                  {{ m.validTo ? `${m.validFrom} 至 ${m.validTo}` : `自 ${m.validFrom} 生效` }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="filteredMappingList.length === 0" class="cb-empty-state">
+            <span class="cb-empty-icon">🔍</span>
+            <span class="cb-empty-text">暂无对应编号映射</span>
+          </div>
+        </div>
+      </main>
+
+      <footer class="md3-bottom-app-bar-cta">
+        <button
+          type="button"
+          class="md3-filled-button cb-pressable"
+          aria-label="新增编号与代称"
+          @click="openNewMappingPage()"
+        >
+          + 新增编号与代称
+        </button>
+      </footer>
+    </div>
+
+    <!-- ====================================================================
+         页面 2.2：分配/修改编号与代称表单独立页
+         ==================================================================== -->
+    <div v-else-if="currentSubPage === 'mapping_new'" class="cb-page-container">
+      <header class="md3-top-app-bar">
+        <button
+          type="button"
+          class="md3-icon-button cb-pressable"
+          aria-label="返回编号列表"
+          @click="currentSubPage = 'mappings'"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+        <h1 class="md3-top-app-bar-title">{{ isEditingMapping ? '修改编号与代称' : '分配编号与代称' }}</h1>
+        <div style="width: 48px;"></div>
+      </header>
+
+      <main class="cb-subpage-body">
+        <form id="new-mapping-form" class="cb-form-sections" @submit.prevent="submitNewMapping">
+          <!-- 分组 1：所属客户主体 -->
+          <section class="md3-card md3-card--outlined" aria-label="所属客户主体">
+            <div class="md3-card-title">关联客户档案主体</div>
+
+            <div class="md3-text-field-container">
+              <label class="md3-text-field-label">
+                选择客户主体 <span class="cb-required-star">*</span>
+              </label>
+              <div class="md3-outlined-select-field">
+                <select
+                  v-model="formMappingCustomerId"
+                  class="md3-select-input"
+                  required
+                  aria-label="选择客户主体"
+                >
+                  <option
+                    v-for="c in appState.customerEntities"
+                    :key="c.customerId"
+                    :value="c.customerId"
+                  >
+                    {{ c.canonicalName }}
+                  </option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <!-- 分组 2：编号与日常代称 -->
+          <section class="md3-card md3-card--outlined" aria-label="编号与显示简称">
+            <div class="md3-card-title">速记编号与显示代称</div>
+
+            <div class="md3-text-field-container">
+              <label class="md3-text-field-label">
+                速记代号 / 编号 <span class="cb-required-star">*</span>
+              </label>
+              <div class="md3-outlined-text-field">
+                <input
+                  v-model="formMappingCode"
+                  type="text"
+                  placeholder="例如 009（3位数字）"
+                  class="md3-text-field-input cb-tabular-nums"
+                  autocomplete="off"
+                  spellcheck="false"
+                  required
+                  aria-label="速记代号"
+                />
+              </div>
+              <span class="md3-supporting-text">工单录入时键入该代号可快速唤出客户</span>
+            </div>
+
+            <div class="md3-divider"></div>
+
+            <div class="md3-text-field-container">
+              <label class="md3-text-field-label">
+                日常显示简称 / 对接称呼 <span class="cb-required-star">*</span>
+              </label>
+              <div class="md3-outlined-text-field">
+                <input
+                  v-model="formMappingDisplayName"
+                  type="text"
+                  placeholder="例如 宏兴 / 老李"
+                  class="md3-text-field-input"
+                  autocomplete="off"
+                  spellcheck="false"
+                  required
+                  aria-label="显示简称"
+                />
+              </div>
+              <span class="md3-supporting-text">用于手机端流水、即时卡片快捷显示</span>
+            </div>
+
+            <div class="md3-divider"></div>
+
+            <div class="md3-text-field-container">
+              <label class="md3-text-field-label">生效起始日期</label>
+              <div class="md3-outlined-text-field">
+                <input
+                  v-model="formMappingValidFrom"
+                  type="date"
+                  class="md3-text-field-input cb-tabular-nums"
+                  aria-label="生效起始日期"
+                />
+              </div>
+            </div>
+          </section>
+        </form>
+      </main>
+
+      <footer class="md3-bottom-app-bar-cta">
+        <div class="cb-form-cta-row">
+          <button
+            v-if="isEditingMapping && editingMappingSyncId"
+            type="button"
+            class="md3-outlined-danger-button cb-pressable"
+            aria-label="删除此编号映射"
+            @click="handleDeleteMappingFromEdit"
+          >
+            删除编号
+          </button>
+          <button
+            form="new-mapping-form"
+            type="submit"
+            class="md3-filled-button cb-pressable"
+            :disabled="isMappingSubmitting"
+            aria-label="保存编号设置"
+          >
+            {{ isMappingSubmitting ? '保存中…' : '保存编号设置' }}
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <!-- ====================================================================
+         页面 3：新建/修改客户档案主体表单独立页
          ==================================================================== -->
     <div v-else-if="currentSubPage === 'customer_new'" class="cb-page-container">
       <header class="md3-top-app-bar">
@@ -785,60 +1215,15 @@ onMounted(async () => {
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
-        <h1 class="md3-top-app-bar-title">新增客户</h1>
+        <h1 class="md3-top-app-bar-title">{{ isEditingCustomer ? '修改客户主体' : '新建客户档案' }}</h1>
         <div style="width: 48px;"></div>
       </header>
 
       <main class="cb-subpage-body">
         <form id="new-customer-form" class="cb-form-sections" @submit.prevent="submitNewCustomer">
-          <!-- 分组 1：日常速记信息 (MD3 Outlined Card) -->
-          <section class="md3-card md3-card--outlined" aria-label="速记与日常显示">
-            <div class="md3-card-title">速记与日常显示</div>
-
-            <div class="md3-text-field-container">
-              <label class="md3-text-field-label">
-                速记编号 <span class="cb-required-star">*</span>
-              </label>
-              <div class="md3-outlined-text-field">
-                <input
-                  v-model="formCode"
-                  type="text"
-                  placeholder="例如 009（3位数字）"
-                  class="md3-text-field-input cb-tabular-nums"
-                  autocomplete="off"
-                  spellcheck="false"
-                  required
-                  aria-label="速记编号"
-                />
-              </div>
-              <span class="md3-supporting-text">工单录入时直接键入该编号快速关联客户</span>
-            </div>
-
-            <div class="md3-divider"></div>
-
-            <div class="md3-text-field-container">
-              <label class="md3-text-field-label">
-                客户简称 <span class="cb-required-star">*</span>
-              </label>
-              <div class="md3-outlined-text-field">
-                <input
-                  v-model="formDisplayName"
-                  type="text"
-                  placeholder="例如 宏兴"
-                  class="md3-text-field-input"
-                  autocomplete="off"
-                  spellcheck="false"
-                  required
-                  aria-label="客户简称"
-                />
-              </div>
-              <span class="md3-supporting-text">用于手机端工单列表与流水快捷显示</span>
-            </div>
-          </section>
-
-          <!-- 分组 2：正式全称与生效期 (MD3 Outlined Card) -->
-          <section class="md3-card md3-card--outlined" aria-label="正式档案与有效期">
-            <div class="md3-card-title">正式档案与有效期</div>
+          <!-- 分组 1：正式全称 -->
+          <section class="md3-card md3-card--outlined" aria-label="正式档案">
+            <div class="md3-card-title">企业/客户主体全称</div>
 
             <div class="md3-text-field-container">
               <label class="md3-text-field-label">
@@ -846,7 +1231,7 @@ onMounted(async () => {
               </label>
               <div class="md3-outlined-text-field">
                 <input
-                  v-model="formCustomerName"
+                  v-model="formCanonicalName"
                   type="text"
                   placeholder="例如 广州宏兴制衣厂"
                   class="md3-text-field-input"
@@ -856,19 +1241,42 @@ onMounted(async () => {
                   aria-label="客户正式全称"
                 />
               </div>
-              <span class="md3-supporting-text">用于对账单与流水汇总导出时的完整抬头</span>
+              <span class="md3-supporting-text">代表企业长期稳定主体，用于对账结算与抬头归属</span>
             </div>
+          </section>
 
-            <div class="md3-divider"></div>
+          <!-- 分组 2：初始编号与代称（选填，仅在新建时可用） -->
+          <section v-if="!isEditingCustomer" class="md3-card md3-card--outlined" aria-label="初始编号（选填）">
+            <div class="md3-card-title">初始速记代号（选填）</div>
 
             <div class="md3-text-field-container">
-              <label class="md3-text-field-label">生效起始日期</label>
+              <label class="md3-text-field-label">速记代号 / 编号</label>
               <div class="md3-outlined-text-field">
                 <input
-                  v-model="formValidFrom"
-                  type="date"
+                  v-model="formInitialCode"
+                  type="text"
+                  placeholder="例如 009（可选，也可稍后在编号设置中分配）"
                   class="md3-text-field-input cb-tabular-nums"
-                  aria-label="生效起始日期"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-label="速记编号"
+                />
+              </div>
+            </div>
+
+            <div v-if="formInitialCode" class="md3-divider"></div>
+
+            <div v-if="formInitialCode" class="md3-text-field-container">
+              <label class="md3-text-field-label">日常显示简称 / 对接称呼</label>
+              <div class="md3-outlined-text-field">
+                <input
+                  v-model="formInitialDisplayName"
+                  type="text"
+                  placeholder="例如 宏兴（默认同全称）"
+                  class="md3-text-field-input"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-label="显示简称"
                 />
               </div>
             </div>
@@ -876,16 +1284,27 @@ onMounted(async () => {
         </form>
       </main>
 
-      <!-- 底部常驻 MD3 Filled Button -->
       <footer class="md3-bottom-app-bar-cta">
-        <button
-          form="new-customer-form"
-          type="submit"
-          class="md3-filled-button cb-pressable"
-          aria-label="保存客户档案"
-        >
-          保存客户档案
-        </button>
+        <div class="cb-form-cta-row">
+          <button
+            v-if="isEditingCustomer && editingCustomerEntity"
+            type="button"
+            class="md3-outlined-danger-button cb-pressable"
+            aria-label="归档此客户档案"
+            @click="handleArchiveCustomerFromEdit"
+          >
+            归档客户
+          </button>
+          <button
+            form="new-customer-form"
+            type="submit"
+            class="md3-filled-button cb-pressable"
+            :disabled="isCustomerSubmitting"
+            aria-label="保存客户档案"
+          >
+            {{ isCustomerSubmitting ? '保存中…' : '保存客户档案' }}
+          </button>
+        </div>
       </footer>
     </div>
 
@@ -961,27 +1380,26 @@ onMounted(async () => {
             @end="onDragEnd"
           >
             <template #item="{ element: cat }">
-              <div class="md3-card md3-card--outlined cb-cat-section-card">
-                <div class="cb-cat-header-row">
+              <div
+                class="md3-card md3-card--outlined cb-cat-section-card"
+                :class="{ 'cb-cat-section-card--expanded': isCategoryExpanded(cat.syncId) || sortMode }"
+              >
+                <!-- 大类头部：点击折叠/展开，右侧提供排序手柄或展开指示器 -->
+                <div
+                  class="cb-cat-header-row cb-pressable"
+                  @click="!sortMode && toggleCategoryExpanded(cat.syncId)"
+                >
                   <div class="cb-cat-header-left">
                     <span class="cb-cat-main-title">{{ cat.name }}</span>
                     <span class="md3-badge-tonal-small cb-tabular-nums">{{ cat.subcategories.length }} 个项目</span>
                   </div>
                   <div class="cb-cat-header-right">
-                    <button
-                      v-if="!sortMode"
-                      type="button"
-                      class="md3-text-button-error cb-pressable"
-                      :aria-label="'停用大类 ' + cat.name"
-                      @click="toggleCategoryActive(cat)"
-                    >
-                      停用大类
-                    </button>
                     <span
-                      v-else
+                      v-if="sortMode"
                       class="cb-drag-handle"
                       aria-label="拖拽调整大类顺序"
                       title="按住拖拽排序"
+                      @click.stop
                     >
                       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="4" y1="7" x2="20" y2="7"></line>
@@ -989,141 +1407,163 @@ onMounted(async () => {
                         <line x1="4" y1="17" x2="20" y2="17"></line>
                       </svg>
                     </span>
+                    <div v-else class="cb-cat-expand-indicator" :class="{ 'cb-cat-expand-indicator--open': isCategoryExpanded(cat.syncId) }">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 9l6 6 6-6"/>
+                      </svg>
+                    </div>
                   </div>
                 </div>
 
-                <!-- 小类项目列表（支持拖拽排序与常规删除） -->
-                <draggable
-                  v-if="cat.subcategories.length > 0"
-                  :list="cat.subcategories"
-                  item-key="name"
-                  :disabled="!sortMode"
-                  handle=".cb-sub-drag-handle, .cb-input-chip--sortable"
-                  :animation="250"
-                  :easing="'cubic-bezier(0.2, 0, 0, 1)'"
-                  :force-fallback="true"
-                  :fallback-tolerance="3"
-                  :touch-start-threshold="5"
-                  :delay="60"
-                  :delay-on-touch-only="true"
-                  ghost-class="cb-drag-ghost"
-                  chosen-class="cb-drag-chosen"
-                  drag-class="cb-drag-item"
-                  class="md3-chip-set"
-                  @start="onDragStart"
-                  @end="onDragEnd"
+                <!-- 折叠主体：小类项目列表 + 内联添加 + 停用大类选项（默认折叠，通过 CSS Grid 平滑展开） -->
+                <div
+                  class="cb-cat-dropdown-anim-wrap"
+                  :class="{ 'cb-cat-dropdown-anim-wrap--open': isCategoryExpanded(cat.syncId) || sortMode }"
                 >
-                  <template #item="{ element: sub }">
-                    <div class="md3-input-chip" :class="{ 'cb-input-chip--sortable': sortMode }">
-                      <div class="cb-sub-drag-wrap" :class="{ 'cb-sub-drag-wrap--visible': sortMode }">
-                        <span class="cb-sub-drag-handle" aria-label="拖拽调整项目顺序">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="4" y1="7" x2="20" y2="7"></line>
-                            <line x1="4" y1="12" x2="20" y2="12"></line>
-                            <line x1="4" y1="17" x2="20" y2="17"></line>
-                          </svg>
-                        </span>
+                  <div class="cb-cat-dropdown-inner">
+                    <!-- 小类项目列表（支持拖拽排序与常规删除） -->
+                    <draggable
+                    v-if="cat.subcategories.length > 0"
+                    :list="cat.subcategories"
+                    item-key="name"
+                    :disabled="!sortMode"
+                    handle=".cb-sub-drag-handle, .cb-input-chip--sortable"
+                    :animation="250"
+                    :easing="'cubic-bezier(0.2, 0, 0, 1)'"
+                    :force-fallback="true"
+                    :fallback-tolerance="3"
+                    :touch-start-threshold="5"
+                    :delay="60"
+                    :delay-on-touch-only="true"
+                    ghost-class="cb-drag-ghost"
+                    chosen-class="cb-drag-chosen"
+                    drag-class="cb-drag-item"
+                    class="md3-chip-set"
+                    @start="onDragStart"
+                    @end="onDragEnd"
+                  >
+                    <template #item="{ element: sub }">
+                      <div class="md3-input-chip" :class="{ 'cb-input-chip--sortable': sortMode }">
+                        <div class="cb-sub-drag-wrap" :class="{ 'cb-sub-drag-wrap--visible': sortMode }">
+                          <span class="cb-sub-drag-handle" aria-label="拖拽调整项目顺序">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                              <line x1="4" y1="7" x2="20" y2="7"></line>
+                              <line x1="4" y1="12" x2="20" y2="12"></line>
+                              <line x1="4" y1="17" x2="20" y2="17"></line>
+                            </svg>
+                          </span>
+                        </div>
+                        <span class="md3-input-chip-label">{{ sub.name }}</span>
+                        <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
+                        <div class="cb-chip-del-wrap" :class="{ 'cb-chip-del-wrap--hidden': sortMode }">
+                          <button
+                            type="button"
+                            class="md3-input-chip-del"
+                            :aria-label="'删除项目 ' + sub.name"
+                            :tabindex="sortMode ? -1 : 0"
+                            @click.stop="deleteSubcategory(cat, sub.name)"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
-                      <span class="md3-input-chip-label">{{ sub.name }}</span>
-                      <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
-                      <div class="cb-chip-del-wrap" :class="{ 'cb-chip-del-wrap--hidden': sortMode }">
+                    </template>
+                  </draggable>
+                  <div v-else-if="sortMode" class="cb-subcat-empty-tip">暂无具体项目</div>
+
+                  <!-- 内联添加小类项目表单与展开按键（在排序模式下平滑淡出收起） -->
+                  <div class="cb-cat-bottom-action-wrap" :class="{ 'cb-cat-bottom-action-wrap--hidden': sortMode }">
+                    <div v-if="activeAddingCatId === cat.syncId" class="md3-inline-add-container">
+                      <div class="md3-card-title">为「{{ cat.name }}」添加服务项目</div>
+                      <div class="cb-form-2col-grid">
+                        <div class="md3-text-field-container">
+                          <label class="md3-text-field-label">项目名称</label>
+                          <div class="md3-outlined-text-field">
+                            <input
+                              v-model="inlineSubName"
+                              type="text"
+                              placeholder="例如 西服上衣"
+                              class="md3-text-field-input"
+                              autocomplete="off"
+                              spellcheck="false"
+                              aria-label="项目名称"
+                            />
+                          </div>
+                        </div>
+                        <div class="md3-text-field-container">
+                          <label class="md3-text-field-label">默认单位</label>
+                          <div class="md3-outlined-text-field">
+                            <input
+                              v-model="inlineSubUnit"
+                              type="text"
+                              placeholder="例如 件"
+                              class="md3-text-field-input"
+                              autocomplete="off"
+                              spellcheck="false"
+                              aria-label="默认单位"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="md3-text-field-container" style="margin-top: 10px;">
+                        <label class="md3-text-field-label">快捷选取单位</label>
+                        <div class="md3-chip-set">
+                          <button
+                            v-for="u in QUICK_UNITS"
+                            :key="u"
+                            type="button"
+                            class="md3-filter-chip cb-pressable"
+                            :class="{ 'md3-filter-chip--selected': inlineSubUnit === u }"
+                            @click="inlineSubUnit = u"
+                          >
+                            {{ u }}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div class="md3-inline-actions">
                         <button
                           type="button"
-                          class="md3-input-chip-del"
-                          :aria-label="'删除项目 ' + sub.name"
-                          :tabindex="sortMode ? -1 : 0"
-                          @click.stop="deleteSubcategory(cat, sub.name)"
+                          class="md3-outlined-button-small cb-pressable"
+                          @click="cancelAddSubcategory"
                         >
-                          ✕
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          class="md3-filled-button-small cb-pressable"
+                          @click="saveInlineSubcategory(cat)"
+                        >
+                          确认添加
                         </button>
                       </div>
                     </div>
-                  </template>
-                </draggable>
-                <div v-else-if="sortMode" class="cb-subcat-empty-tip">暂无具体项目</div>
 
-                <!-- 内联添加小类项目表单与展开按键（在排序模式下平滑淡出收起） -->
-                <div class="cb-cat-bottom-action-wrap" :class="{ 'cb-cat-bottom-action-wrap--hidden': sortMode }">
-                  <div v-if="activeAddingCatId === cat.syncId" class="md3-inline-add-container">
-                    <div class="md3-card-title">为「{{ cat.name }}」添加服务项目</div>
-                    <div class="cb-form-2col-grid">
-                      <div class="md3-text-field-container">
-                        <label class="md3-text-field-label">项目名称</label>
-                        <div class="md3-outlined-text-field">
-                          <input
-                            v-model="inlineSubName"
-                            type="text"
-                            placeholder="例如 西服上衣"
-                            class="md3-text-field-input"
-                            autocomplete="off"
-                            spellcheck="false"
-                            aria-label="项目名称"
-                          />
-                        </div>
-                      </div>
-                      <div class="md3-text-field-container">
-                        <label class="md3-text-field-label">默认单位</label>
-                        <div class="md3-outlined-text-field">
-                          <input
-                            v-model="inlineSubUnit"
-                            type="text"
-                            placeholder="例如 件"
-                            class="md3-text-field-input"
-                            autocomplete="off"
-                            spellcheck="false"
-                            aria-label="默认单位"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="md3-text-field-container" style="margin-top: 10px;">
-                      <label class="md3-text-field-label">快捷选取单位</label>
-                      <div class="md3-chip-set">
-                        <button
-                          v-for="u in QUICK_UNITS"
-                          :key="u"
-                          type="button"
-                          class="md3-filter-chip cb-pressable"
-                          :class="{ 'md3-filter-chip--selected': inlineSubUnit === u }"
-                          @click="inlineSubUnit = u"
-                        >
-                          {{ u }}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div class="md3-inline-actions">
+                    <!-- 未添加时显示的展开按键与停用选项 -->
+                    <div v-else class="cb-cat-actions-row">
                       <button
                         type="button"
-                        class="md3-outlined-button-small cb-pressable"
-                        @click="cancelAddSubcategory"
+                        class="md3-dashed-action-btn cb-pressable"
+                        :tabindex="sortMode ? -1 : 0"
+                        @click="startAddSubcategory(cat)"
                       >
-                        取消
+                        + 添加服务项目与默认单位
                       </button>
                       <button
                         type="button"
-                        class="md3-filled-button-small cb-pressable"
-                        @click="saveInlineSubcategory(cat)"
+                        class="md3-text-button-error-sm cb-pressable"
+                        :aria-label="'停用大类 ' + cat.name"
+                        @click="toggleCategoryActive(cat)"
                       >
-                        确认添加
+                        停用大类
                       </button>
                     </div>
                   </div>
-
-                  <!-- 未添加时显示的展开按键 -->
-                  <button
-                    v-else
-                    type="button"
-                    class="md3-dashed-action-btn cb-pressable"
-                    :tabindex="sortMode ? -1 : 0"
-                    @click="startAddSubcategory(cat)"
-                  >
-                    + 添加服务项目与默认单位
-                  </button>
                 </div>
               </div>
-            </template>
+            </div>
+          </template>
           </draggable>
 
           <!-- 2. 已停用的大类 -->
@@ -1155,26 +1595,21 @@ onMounted(async () => {
             >
               <template #item="{ element: cat }">
                 <div class="md3-card md3-card--outlined cb-cat-section-card cb-cat-section-card--inactive">
-                  <div class="cb-cat-header-row">
+                  <div
+                    class="cb-cat-header-row cb-pressable"
+                    @click="!sortMode && toggleCategoryExpanded(cat.syncId)"
+                  >
                     <div class="cb-cat-header-left">
                       <span class="cb-cat-main-title">{{ cat.name }}</span>
                       <span class="md3-badge-tonal-small cb-tabular-nums">已停用 · {{ cat.subcategories.length }} 个项目</span>
                     </div>
                     <div class="cb-cat-header-right">
-                      <button
-                        v-if="!sortMode"
-                        type="button"
-                        class="md3-text-button-primary cb-pressable"
-                        :aria-label="'恢复启用大类 ' + cat.name"
-                        @click="toggleCategoryActive(cat)"
-                      >
-                        恢复启用
-                      </button>
                       <span
-                        v-else
+                        v-if="sortMode"
                         class="cb-drag-handle"
                         aria-label="拖拽调整已停用大类顺序"
                         title="按住拖拽排序"
+                        @click.stop
                       >
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                           <line x1="4" y1="7" x2="20" y2="7"></line>
@@ -1182,39 +1617,44 @@ onMounted(async () => {
                           <line x1="4" y1="17" x2="20" y2="17"></line>
                         </svg>
                       </span>
+                      <div v-else class="cb-cat-expand-indicator" :class="{ 'cb-cat-expand-indicator--open': isCategoryExpanded(cat.syncId) }">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M6 9l6 6 6-6"/>
+                        </svg>
+                      </div>
                     </div>
                   </div>
 
-                  <draggable
-                    v-if="cat.subcategories.length > 0"
-                    :list="cat.subcategories"
-                    item-key="name"
-                    :disabled="!sortMode"
-                    handle=".cb-sub-drag-handle"
-                    :animation="200"
-                    :easing="'cubic-bezier(0.2, 0, 0, 1)'"
-                    :force-fallback="true"
-                    ghost-class="cb-drag-ghost"
-                    chosen-class="cb-drag-chosen"
-                    drag-class="cb-drag-item"
-                    class="md3-chip-set"
+                  <!-- 展开后平滑显示恢复启用与小类概览 -->
+                  <div
+                    class="cb-cat-dropdown-anim-wrap"
+                    :class="{ 'cb-cat-dropdown-anim-wrap--open': isCategoryExpanded(cat.syncId) || sortMode }"
                   >
-                    <template #item="{ element: sub }">
-                      <div class="md3-input-chip" :class="{ 'cb-input-chip--sortable': sortMode }">
-                        <div class="cb-sub-drag-wrap" :class="{ 'cb-sub-drag-wrap--visible': sortMode }">
-                          <span class="cb-sub-drag-handle" aria-label="拖拽调整项目顺序">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                              <line x1="4" y1="7" x2="20" y2="7"></line>
-                              <line x1="4" y1="12" x2="20" y2="12"></line>
-                              <line x1="4" y1="17" x2="20" y2="17"></line>
-                            </svg>
-                          </span>
+                    <div class="cb-cat-dropdown-inner">
+                      <div v-if="cat.subcategories.length > 0" class="md3-chip-set">
+                        <div
+                          v-for="sub in cat.subcategories"
+                          :key="sub.name"
+                          class="md3-input-chip"
+                          style="opacity: 0.75;"
+                        >
+                          <span class="md3-input-chip-label">{{ sub.name }}</span>
+                          <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
                         </div>
-                        <span class="md3-input-chip-label">{{ sub.name }}</span>
-                        <span class="md3-input-chip-unit">/ {{ sub.defaultUnit }}</span>
                       </div>
-                    </template>
-                  </draggable>
+
+                      <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+                        <button
+                          type="button"
+                          class="md3-filled-button-small cb-pressable"
+                          :aria-label="'恢复启用大类 ' + cat.name"
+                          @click="toggleCategoryActive(cat)"
+                        >
+                          恢复启用该大类
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </template>
             </draggable>
@@ -1354,28 +1794,28 @@ onMounted(async () => {
           </div>
         </div>
 
-        <button
-          type="button"
-          class="md3-filled-button cb-pressable"
-          style="margin-top: 24px;"
-          aria-label="立即同步数据"
-          :disabled="syncLoading"
-          @click="runSyncNow"
-        >
-          {{ syncLoading ? '同步中…' : '立即同步数据' }}
-        </button>
+        <div class="cb-sync-actions-group">
+          <button
+            type="button"
+            class="md3-filled-button cb-pressable"
+            aria-label="立即同步数据"
+            :disabled="syncLoading"
+            @click="runSyncNow"
+          >
+            {{ syncLoading ? '同步中…' : '立即同步数据' }}
+          </button>
 
-        <button
-          v-if="syncCounts.rejected > 0"
-          type="button"
-          class="md3-outlined-button-small cb-pressable"
-          style="margin-top: 12px;"
-          aria-label="重试被拒操作"
-          :disabled="syncLoading"
-          @click="runRetryRejected"
-        >
-          重试被拒操作
-        </button>
+          <button
+            v-if="syncCounts.rejected > 0"
+            type="button"
+            class="md3-tonal-action-btn cb-pressable"
+            aria-label="重试被拒操作"
+            :disabled="syncLoading"
+            @click="runRetryRejected"
+          >
+            重试被拒操作
+          </button>
+        </div>
       </main>
     </div>
 
@@ -1645,7 +2085,7 @@ onMounted(async () => {
    ========================================================================== */
 .md3-card {
   border-radius: var(--md-sys-shape-corner-large);
-  padding: 16px;
+  padding: 18px 20px;
   box-sizing: border-box;
 }
 
@@ -1810,6 +2250,66 @@ onMounted(async () => {
   align-items: center;
 }
 
+.cb-mapping-item-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cb-mapping-main-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cb-card-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.md3-text-button-sm {
+  background: transparent;
+  color: var(--md-sys-color-primary);
+  border: none;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: var(--md-sys-shape-corner-full);
+  cursor: pointer;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-text-button-sm:hover {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.md3-text-button-error-sm {
+  height: 44px;
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0 16px;
+  border-radius: var(--md-sys-shape-corner-full);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-text-button-error-sm:hover {
+  filter: brightness(0.96);
+}
+.md3-text-button-error-sm:active {
+  transform: scale(0.98);
+}
+
 .cb-cust-item-left {
   display: flex;
   align-items: center;
@@ -1818,21 +2318,21 @@ onMounted(async () => {
 }
 
 .md3-badge-tonal {
-  background: var(--md-sys-color-on-surface);
-  color: var(--md-sys-color-surface);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
   font-family: var(--cb-font-numeric);
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 13px;
+  font-weight: 700;
   padding: 3px 8px;
-  border-radius: var(--md-sys-shape-corner-extra-small);
+  border-radius: var(--md-sys-shape-corner-full);
   flex-shrink: 0;
 }
 
 .md3-badge-tonal-small {
-  background: var(--md-sys-color-surface-container);
+  background: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface-variant);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   padding: 2px 8px;
   border-radius: var(--md-sys-shape-corner-full);
 }
@@ -1845,13 +2345,14 @@ onMounted(async () => {
 }
 
 .cb-cust-disp-name {
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 600;
   color: var(--md-sys-color-on-surface);
 }
 
 .cb-cust-full-name {
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 400;
   color: var(--md-sys-color-outline);
   white-space: nowrap;
   overflow: hidden;
@@ -1859,9 +2360,238 @@ onMounted(async () => {
 }
 
 .cb-cust-valid-date {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--md-sys-color-outline);
   flex-shrink: 0;
+}
+
+/* 客户主界面卡片 */
+.cb-customer-master-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  cursor: pointer;
+  transition: transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.cb-customer-master-card:active {
+  transform: scale(0.99);
+}
+
+.cb-customer-master-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.cb-customer-master-name {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--md-sys-color-on-surface);
+}
+
+/* 客户详情子界面卡片与分组 */
+.cb-detail-main-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.cb-detail-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.cb-detail-title-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cb-detail-title-name {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--md-sys-color-on-surface);
+  line-height: 1.3;
+  margin: 0;
+}
+
+.cb-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cb-mapping-group-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cb-section-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.cb-mapping-item-card--history {
+  opacity: 0.7;
+  background: var(--md-sys-color-surface-container-lowest);
+  border-style: dashed;
+}
+
+/* 客户档案实体横向卡片（MD3 规范：主信息在左，次级元数据/代称在右） */
+.cb-entity-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  min-height: 68px;
+  padding: 18px 20px;
+  border-radius: var(--md-sys-shape-corner-large);
+  cursor: pointer;
+  transition: transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.cb-entity-card-row:active {
+  transform: scale(0.99);
+}
+
+.cb-entity-card-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.cb-entity-card-title {
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--md-sys-color-on-surface);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-entity-card-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.cb-entity-chips-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* 编号 + 代称组合胶囊 */
+.cb-code-alias-pill {
+  display: inline-flex;
+  align-items: center;
+  background: var(--md-sys-color-surface-container-high);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  overflow: hidden;
+  font-size: 15px;
+}
+
+.cb-code-alias-code {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-weight: 700;
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+.cb-code-alias-name {
+  color: var(--md-sys-color-on-surface);
+  font-weight: 600;
+  padding: 6px 14px;
+  font-size: 15px;
+}
+
+.cb-entity-add-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface-container-high);
+  border: 1px dashed var(--md-sys-color-outline);
+  color: var(--md-sys-color-primary);
+  font-size: 22px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  line-height: 1;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.cb-entity-add-btn:hover {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  border-style: solid;
+}
+
+.md3-text-button-tonal {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-primary);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.md3-tonal-button-sm {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-tonal-button-sm:hover {
+  background: var(--md-sys-color-surface-container-highest);
+}
+
+.md3-outlined-select-field {
+  position: relative;
+  height: 52px;
+  border: 1.5px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-sys-color-surface);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  box-sizing: border-box;
+}
+
+.md3-select-input {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 16px;
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
 }
 
 /* ==========================================================================
@@ -1883,7 +2613,8 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   box-sizing: border-box;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .md3-input-chip-label {
@@ -1909,7 +2640,8 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .md3-input-chip-del:hover {
   color: var(--md-sys-color-error);
@@ -1946,14 +2678,18 @@ onMounted(async () => {
 .cb-category-card-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   padding-bottom: calc(var(--cb-tabbar-height) + env(safe-area-inset-bottom, 0px) + 84px);
 }
 
 .cb-cat-section-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
+  padding: 18px 20px;
+  min-height: 68px;
+  border-radius: var(--md-sys-shape-corner-large);
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-cat-section-card--inactive {
@@ -1963,8 +2699,8 @@ onMounted(async () => {
 }
 
 .cb-section-divider-title {
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--md-sys-color-outline);
   margin: 16px 4px 4px 4px;
 }
@@ -1973,10 +2709,10 @@ onMounted(async () => {
   background: var(--md-sys-color-primary-container);
   border: none;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
   color: var(--md-sys-color-on-primary-container);
   cursor: pointer;
-  padding: 6px 12px;
+  padding: 6px 14px;
   border-radius: var(--md-sys-shape-corner-full);
 }
 .md3-text-button-primary:hover {
@@ -1988,93 +2724,148 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  cursor: pointer;
 }
 
 .cb-cat-header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .cb-cat-main-title {
-  font-size: 17px;
-  font-weight: 800;
+  font-size: 19px;
+  font-weight: 600;
   color: var(--md-sys-color-on-surface);
+}
+
+.cb-cat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-cat-expand-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--md-sys-color-outline);
+  transition: transform 0.24s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.cb-cat-expand-indicator--open {
+  transform: rotate(180deg);
+}
+
+/* 基于 CSS Grid 的零 JS 损耗平滑折叠/展开动画 */
+.cb-cat-dropdown-anim-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.28s cubic-bezier(0.2, 0, 0, 1),
+    opacity 0.22s cubic-bezier(0.2, 0, 0, 1),
+    margin 0.24s cubic-bezier(0.2, 0, 0, 1);
+  margin-top: 0;
+}
+
+.cb-cat-dropdown-anim-wrap--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 14px;
+}
+
+.cb-cat-dropdown-inner {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.cb-cat-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
 }
 
 .md3-text-button-error {
   background: none;
   border: none;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--md-sys-color-error);
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: var(--md-sys-shape-corner-small);
+  padding: 6px 10px;
+  border-radius: var(--md-sys-shape-corner-full);
 }
 .md3-text-button-error:hover {
   background: var(--md-sys-color-error-container);
 }
 
 .md3-inline-add-container {
-  padding: 14px;
+  padding: 16px;
   background: var(--md-sys-color-surface-container-low);
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-medium);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .md3-inline-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 10px;
+  margin-top: 6px;
 }
 
 .md3-outlined-button-small {
-  height: 36px;
-  padding: 0 14px;
+  height: 38px;
+  padding: 0 16px;
   background: transparent;
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-full);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--md-sys-color-on-surface-variant);
   cursor: pointer;
 }
 
 .md3-filled-button-small {
-  height: 36px;
-  padding: 0 16px;
+  height: 38px;
+  padding: 0 18px;
   background: var(--md-sys-color-primary);
   border: none;
   border-radius: var(--md-sys-shape-corner-full);
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--md-sys-color-on-primary);
   cursor: pointer;
 }
 
 .md3-dashed-action-btn {
-  width: 100%;
+  flex: 1;
   height: 44px;
-  background: transparent;
-  border: 1.5px dashed var(--md-sys-color-outline-variant);
-  border-radius: var(--md-sys-shape-corner-medium);
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-surface-container-high);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface-variant);
   cursor: pointer;
   transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
     color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
-    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
-    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+    transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .md3-dashed-action-btn:hover {
-  background: var(--md-sys-color-surface-container-low);
-  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+}
+.md3-dashed-action-btn:active {
+  transform: scale(0.98);
 }
 
 /* ==========================================================================
@@ -2106,6 +2897,40 @@ onMounted(async () => {
   color: var(--md-sys-color-on-surface-variant);
 }
 
+.cb-sync-actions-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 24px;
+  width: 100%;
+}
+
+.md3-tonal-action-btn {
+  width: 100%;
+  height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+  box-sizing: border-box;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-tonal-action-btn:hover {
+  background: var(--md-sys-color-surface-container-highest);
+}
+.md3-tonal-action-btn:active {
+  transform: scale(0.99);
+}
+
 /* ==========================================================================
    9. 底部固定 MD3 Filled Button
    ========================================================================== */
@@ -2127,24 +2952,59 @@ onMounted(async () => {
   pointer-events: none;
 }
 
+.cb-form-cta-row {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.md3-outlined-danger-button {
+  height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+  box-sizing: border-box;
+  padding: 0 20px;
+  background: transparent;
+  color: var(--md-sys-color-error);
+  border: 1.5px solid var(--md-sys-color-error);
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-outlined-danger-button:hover {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
 .md3-filled-button {
   width: 100%;
   height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+  box-sizing: border-box;
   background: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary);
   border: none;
   border-radius: var(--md-sys-shape-corner-full);
   font-size: 15px;
-  font-weight: 800;
+  font-weight: 700;
   box-shadow: var(--md-sys-elevation-2);
   cursor: pointer;
-  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
-    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
-    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
-    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    transform var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-filled-button:active {
+  transform: scale(0.99);
 }
 .md3-filled-button:hover {
   box-shadow: var(--md-sys-elevation-3);
@@ -2214,7 +3074,9 @@ onMounted(async () => {
   cursor: pointer;
   box-sizing: border-box;
   outline: none;
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-sort-btn--idle {

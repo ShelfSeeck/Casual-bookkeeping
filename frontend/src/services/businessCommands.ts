@@ -463,6 +463,87 @@ export async function buildCustomerWithMapping(
   }
 }
 
+/** 单独创建客户档案（不绑定初始编号映射）。 */
+export async function createCustomer(
+  db: CbDatabase,
+  input: { canonicalName: string },
+): Promise<{ customerSyncId: string; customerId: number }> {
+  await validateCustomerInput(input)
+
+  const customerSyncId = newId('sync')
+  const customerId = -Number.parseInt(customerSyncId.slice(5), 16)
+  const phone = accountPhoneFromDb(db)
+  const now = new Date().toISOString()
+
+  const customerRecord: Customer = {
+    syncId: customerSyncId,
+    accountPhone: phone,
+    customerId,
+    canonicalName: input.canonicalName.trim(),
+    archivedAt: null,
+    rowVersion: 1,
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  const change: MutationChange = {
+    entitySyncId: customerSyncId,
+    entityType: 'customer',
+    baseVersion: 0,
+    baseSnapshot: {},
+    patch: {
+      customer_id: customerId,
+      canonical_name: customerRecord.canonicalName,
+    },
+  }
+
+  await new MutationService(db).commit({
+    operationType: 'create_customer',
+    entitySyncIds: [customerSyncId],
+    changes: [change],
+    apply: (tx) => tx.customers.put(customerRecord),
+    actorType: 'user',
+  })
+
+  return { customerSyncId, customerId }
+}
+
+/** 修改客户正式全称。 */
+export async function updateCustomer(
+  db: CbDatabase,
+  customerSyncId: string,
+  input: { canonicalName: string },
+): Promise<void> {
+  await validateCustomerInput(input)
+  const customer = await db.customers.get(customerSyncId)
+  if (!customer || customer.archivedAt !== null) {
+    throw new BusinessRuleError('customer_not_found')
+  }
+
+  const change: MutationChange = {
+    entitySyncId: customerSyncId,
+    entityType: 'customer',
+    baseVersion: customer.rowVersion,
+    baseSnapshot: toWireRecord(customer as unknown as Record<string, unknown>),
+    patch: {
+      canonical_name: input.canonicalName.trim(),
+    },
+  }
+
+  await new MutationService(db).commit({
+    operationType: 'update_customer',
+    entitySyncIds: [customerSyncId],
+    changes: [change],
+    apply: (tx) =>
+      tx.customers.put({
+        ...customer,
+        canonicalName: input.canonicalName.trim(),
+        updatedAt: new Date().toISOString(),
+      }),
+    actorType: 'user',
+  })
+}
+
 /** 归档客户并收尾其所有开放映射（valid_to = 归档日），跨实体原子操作。 */
 export async function archiveCustomerWithMappings(
   db: CbDatabase,
@@ -604,6 +685,42 @@ export async function updateCustomerCodeMapping(
       await tx.customerCodeMappings.put({
         ...local,
         ...patch,
+        updatedAt: new Date().toISOString(),
+      })
+    },
+    actorType: 'user',
+  })
+}
+
+/**
+ * 结束/删除编号映射：将 valid_to 置为今天（收尾映射，不再生效）。
+ */
+export async function deleteCustomerCodeMapping(
+  db: CbDatabase,
+  syncId: string,
+): Promise<void> {
+  const existing = await db.customerCodeMappings.get(syncId)
+  if (!existing) throw new BusinessRuleError('entity_not_found')
+  const today = localDateToday()
+
+  const change: MutationChange = {
+    entitySyncId: syncId,
+    entityType: 'customer_code_mapping',
+    baseVersion: existing.rowVersion,
+    baseSnapshot: toWireRecord(existing as unknown as Record<string, unknown>),
+    patch: { valid_to: today },
+  }
+
+  await new MutationService(db).commit({
+    operationType: 'update_customer_code_mapping',
+    entitySyncIds: [syncId],
+    changes: [change],
+    apply: async (tx) => {
+      const local = await tx.customerCodeMappings.get(syncId)
+      if (!local) throw new BusinessRuleError('entity_not_found')
+      await tx.customerCodeMappings.put({
+        ...local,
+        validTo: today,
         updatedAt: new Date().toISOString(),
       })
     },

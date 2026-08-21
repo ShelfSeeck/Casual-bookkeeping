@@ -519,28 +519,31 @@ watch(
 }
 
 .cb-message-bubble {
-  max-width: 88%;
-  padding: 12px 18px;
-  border-radius: 20px;
-  font-size: 15px;
-  line-height: 1.55;
+  max-width: 90%;
+  padding: 14px 20px;
+  border-radius: 22px;
+  font-size: 16px;
+  line-height: 1.6;
   position: relative;
   word-break: break-word;
+  border: none;
+  box-shadow: none;
 }
 
 .cb-message-row--user .cb-message-bubble {
-  background: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary);
-  border-radius: 20px 20px 4px 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  border-radius: 22px 22px 4px 22px;
+  border: none;
+  box-shadow: none;
 }
 
 .cb-message-row--assistant .cb-message-bubble {
-  background: var(--md-sys-color-surface);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 20px 20px 20px 4px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  background: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface);
+  border-radius: 22px 22px 22px 4px;
+  border: none;
+  box-shadow: none;
 }
 
 .cb-message-content {
@@ -549,7 +552,7 @@ watch(
 
 .cb-message-time {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   margin-top: 6px;
   opacity: 0.65;
   text-align: right;
@@ -837,44 +840,45 @@ watch(
   cursor: not-allowed;
 }
 
-/* 悬浮圆角输入框卡片 */
+/* 悬浮圆角输入框卡片（MD3 胶囊 Dock） */
 .cb-chat-input-bar {
-  background: var(--md-sys-color-surface);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 28px;
-  padding: 6px 8px 6px 18px;
+  background: var(--md-sys-color-surface-container-high);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 32px;
+  padding: 8px 10px 8px 22px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06), 0 1px 4px rgba(0, 0, 0, 0.03);
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
   transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-chat-input-bar:focus-within {
+  background: var(--md-sys-color-surface);
   border-color: var(--md-sys-color-primary);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1), 0 0 0 2px var(--md-sys-color-primary-container);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08), 0 0 0 2px var(--md-sys-color-primary-container);
 }
 
 .cb-chat-input {
   flex: 1;
-  height: 44px;
+  height: 48px;
   background: transparent;
   border: none;
   padding: 0;
-  font-size: 15px;
+  font-size: 16px;
   color: var(--md-sys-color-on-surface);
   outline: none;
 }
 
 .cb-chat-input::placeholder {
   color: var(--md-sys-color-on-surface-variant);
-  opacity: 0.7;
+  opacity: 0.75;
 }
 
 .cb-chat-send-btn {
-  width: 42px;
-  height: 42px;
-  min-width: 42px;
+  width: 46px;
+  height: 46px;
+  min-width: 46px;
   background: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary);
   border: none;
@@ -888,12 +892,12 @@ watch(
 }
 
 .cb-chat-send-btn:hover:not(:disabled) {
-  transform: scale(1.06);
+  transform: scale(1.05);
   filter: brightness(1.08);
 }
 
 .cb-chat-send-btn:active:not(:disabled) {
-  transform: scale(0.92);
+  transform: scale(0.94);
 }
 
 .cb-chat-send-btn:disabled {
