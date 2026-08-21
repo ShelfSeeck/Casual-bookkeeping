@@ -1068,7 +1068,7 @@ onMounted(async () => {
     </div>
 
     <!-- ====================================================================
-         页面 2.2：分配/修改编号与代称表单独立页
+         页面 2：新建/修改客户编号与代称映射独立页
          ==================================================================== -->
     <div v-else-if="currentSubPage === 'mapping_new'" class="cb-page-container">
       <header class="md3-top-app-bar">
@@ -1088,46 +1088,40 @@ onMounted(async () => {
 
       <main class="cb-subpage-body">
         <form id="new-mapping-form" class="cb-form-sections" @submit.prevent="submitNewMapping">
-          <!-- 分组 1：所属客户主体 -->
-          <section class="md3-card md3-card--outlined" aria-label="所属客户主体">
-            <div class="md3-card-title">关联客户档案主体</div>
-
-            <div class="md3-text-field-container">
-              <label class="md3-text-field-label">
-                选择客户主体 <span class="cb-required-star">*</span>
-              </label>
-              <div class="md3-outlined-select-field">
-                <select
-                  v-model="formMappingCustomerId"
-                  class="md3-select-input"
-                  required
-                  aria-label="选择客户主体"
+          <!-- 1. 所属客户主体 -->
+          <div class="md3-text-field-container">
+            <label class="md3-text-field-label">
+              关联客户主体 <span class="cb-required-star">*</span>
+            </label>
+            <div class="md3-filled-select-field">
+              <select
+                v-model="formMappingCustomerId"
+                class="md3-select-input"
+                required
+                aria-label="选择客户主体"
+              >
+                <option
+                  v-for="c in appState.customerEntities"
+                  :key="c.customerId"
+                  :value="c.customerId"
                 >
-                  <option
-                    v-for="c in appState.customerEntities"
-                    :key="c.customerId"
-                    :value="c.customerId"
-                  >
-                    {{ c.canonicalName }}
-                  </option>
-                </select>
-              </div>
+                  {{ c.canonicalName }}
+                </option>
+              </select>
             </div>
-          </section>
+          </div>
 
-          <!-- 分组 2：编号与日常代称 -->
-          <section class="md3-card md3-card--outlined" aria-label="编号与显示简称">
-            <div class="md3-card-title">速记编号与显示代称</div>
-
+          <!-- 2. 编号与代称网格 -->
+          <div class="cb-form-2col-grid">
             <div class="md3-text-field-container">
               <label class="md3-text-field-label">
-                速记代号 / 编号 <span class="cb-required-star">*</span>
+                速记编号 <span class="cb-required-star">*</span>
               </label>
-              <div class="md3-outlined-text-field">
+              <div class="md3-filled-text-field">
                 <input
                   v-model="formMappingCode"
                   type="text"
-                  placeholder="例如 009（3位数字）"
+                  placeholder="例如 009"
                   class="md3-text-field-input cb-tabular-nums"
                   autocomplete="off"
                   spellcheck="false"
@@ -1135,20 +1129,17 @@ onMounted(async () => {
                   aria-label="速记代号"
                 />
               </div>
-              <span class="md3-supporting-text">工单录入时键入该代号可快速唤出客户</span>
             </div>
-
-            <div class="md3-divider"></div>
 
             <div class="md3-text-field-container">
               <label class="md3-text-field-label">
-                日常显示简称 / 对接称呼 <span class="cb-required-star">*</span>
+                显示简称 <span class="cb-required-star">*</span>
               </label>
-              <div class="md3-outlined-text-field">
+              <div class="md3-filled-text-field">
                 <input
                   v-model="formMappingDisplayName"
                   type="text"
-                  placeholder="例如 宏兴 / 老李"
+                  placeholder="例如 宏兴"
                   class="md3-text-field-input"
                   autocomplete="off"
                   spellcheck="false"
@@ -1156,23 +1147,22 @@ onMounted(async () => {
                   aria-label="显示简称"
                 />
               </div>
-              <span class="md3-supporting-text">用于手机端流水、即时卡片快捷显示</span>
             </div>
+          </div>
 
-            <div class="md3-divider"></div>
-
-            <div class="md3-text-field-container">
-              <label class="md3-text-field-label">生效起始日期</label>
-              <div class="md3-outlined-text-field">
-                <input
-                  v-model="formMappingValidFrom"
-                  type="date"
-                  class="md3-text-field-input cb-tabular-nums"
-                  aria-label="生效起始日期"
-                />
-              </div>
+          <!-- 3. 生效起始日期 -->
+          <div class="md3-text-field-container">
+            <label class="md3-text-field-label">生效起始日期</label>
+            <div class="md3-filled-text-field">
+              <input
+                v-model="formMappingValidFrom"
+                type="date"
+                class="md3-text-field-input cb-tabular-nums"
+                aria-label="生效起始日期"
+              />
             </div>
-          </section>
+            <span class="md3-supporting-text">留空或填写当天即时生效；用于追溯历史工单的归属变迁。</span>
+          </div>
         </form>
       </main>
 
@@ -1221,66 +1211,60 @@ onMounted(async () => {
 
       <main class="cb-subpage-body">
         <form id="new-customer-form" class="cb-form-sections" @submit.prevent="submitNewCustomer">
-          <!-- 分组 1：正式全称 -->
-          <section class="md3-card md3-card--outlined" aria-label="正式档案">
-            <div class="md3-card-title">企业/客户主体全称</div>
-
-            <div class="md3-text-field-container">
-              <label class="md3-text-field-label">
-                客户正式全称 <span class="cb-required-star">*</span>
-              </label>
-              <div class="md3-outlined-text-field">
-                <input
-                  v-model="formCanonicalName"
-                  type="text"
-                  placeholder="例如 广州宏兴制衣厂"
-                  class="md3-text-field-input"
-                  autocomplete="off"
-                  spellcheck="false"
-                  required
-                  aria-label="客户正式全称"
-                />
-              </div>
-              <span class="md3-supporting-text">代表企业长期稳定主体，用于对账结算与抬头归属</span>
+          <!-- 客户全称 -->
+          <div class="md3-text-field-container">
+            <label class="md3-text-field-label">
+              客户正式全称 <span class="cb-required-star">*</span>
+            </label>
+            <div class="md3-filled-text-field">
+              <input
+                v-model="formCanonicalName"
+                type="text"
+                placeholder="例如 广州宏兴制衣厂"
+                class="md3-text-field-input"
+                autocomplete="off"
+                spellcheck="false"
+                required
+                aria-label="客户正式全称"
+              />
             </div>
-          </section>
+            <span class="md3-supporting-text">代表企业长期稳定主体，用于对账结算与抬头归属</span>
+          </div>
 
-          <!-- 分组 2：初始编号与代称（选填，仅在新建时可用） -->
-          <section v-if="!isEditingCustomer" class="md3-card md3-card--outlined" aria-label="初始编号（选填）">
-            <div class="md3-card-title">初始速记代号（选填）</div>
-
-            <div class="md3-text-field-container">
-              <label class="md3-text-field-label">速记代号 / 编号</label>
-              <div class="md3-outlined-text-field">
-                <input
-                  v-model="formInitialCode"
-                  type="text"
-                  placeholder="例如 009（可选，也可稍后在编号设置中分配）"
-                  class="md3-text-field-input cb-tabular-nums"
-                  autocomplete="off"
-                  spellcheck="false"
-                  aria-label="速记编号"
-                />
+          <!-- 初始编号与代称（选填，仅在新建时可用） -->
+          <template v-if="!isEditingCustomer">
+            <div class="cb-form-2col-grid">
+              <div class="md3-text-field-container">
+                <label class="md3-text-field-label">初始速记编号 (选填)</label>
+                <div class="md3-filled-text-field">
+                  <input
+                    v-model="formInitialCode"
+                    type="text"
+                    placeholder="例如 009"
+                    class="md3-text-field-input cb-tabular-nums"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="速记编号"
+                  />
+                </div>
               </div>
-            </div>
 
-            <div v-if="formInitialCode" class="md3-divider"></div>
-
-            <div v-if="formInitialCode" class="md3-text-field-container">
-              <label class="md3-text-field-label">日常显示简称 / 对接称呼</label>
-              <div class="md3-outlined-text-field">
-                <input
-                  v-model="formInitialDisplayName"
-                  type="text"
-                  placeholder="例如 宏兴（默认同全称）"
-                  class="md3-text-field-input"
-                  autocomplete="off"
-                  spellcheck="false"
-                  aria-label="显示简称"
-                />
+              <div class="md3-text-field-container">
+                <label class="md3-text-field-label">日常显示简称 (选填)</label>
+                <div class="md3-filled-text-field">
+                  <input
+                    v-model="formInitialDisplayName"
+                    type="text"
+                    placeholder="例如 宏兴"
+                    class="md3-text-field-input"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="显示简称"
+                  />
+                </div>
               </div>
             </div>
-          </section>
+          </template>
         </form>
       </main>
 
@@ -1704,28 +1688,24 @@ onMounted(async () => {
 
       <main class="cb-subpage-body">
         <form id="new-category-form" class="cb-form-sections" @submit.prevent="submitNewCategory">
-          <section class="md3-card md3-card--outlined" aria-label="大类名称配置">
-            <div class="md3-card-title">大类基础信息</div>
-
-            <div class="md3-text-field-container">
-              <label class="md3-text-field-label">
-                大类名称 <span class="cb-required-star">*</span>
-              </label>
-              <div class="md3-outlined-text-field">
-                <input
-                  v-model="formNewCatName"
-                  type="text"
-                  placeholder="例如 清洁 / 养护 / 定制"
-                  class="md3-text-field-input"
-                  autocomplete="off"
-                  spellcheck="false"
-                  required
-                  aria-label="大类名称"
-                />
-              </div>
-              <span class="md3-supporting-text">大类仅作为分组容器。创建完成后可在该大类卡片下添加具体项目与默认单位。</span>
+          <div class="md3-text-field-container">
+            <label class="md3-text-field-label">
+              大类名称 <span class="cb-required-star">*</span>
+            </label>
+            <div class="md3-filled-text-field">
+              <input
+                v-model="formNewCatName"
+                type="text"
+                placeholder="例如 清洁 / 养护 / 定制"
+                class="md3-text-field-input"
+                autocomplete="off"
+                spellcheck="false"
+                required
+                aria-label="大类名称"
+              />
             </div>
-          </section>
+            <span class="md3-supporting-text">大类作为服务品类的分组容器。创建完成后可在大类下添加具体项目与默认单位。</span>
+          </div>
         </form>
       </main>
 
@@ -2141,20 +2121,54 @@ onMounted(async () => {
 .md3-outlined-text-field {
   height: 52px;
   border: 1.5px solid var(--md-sys-color-outline);
-  border-radius: var(--md-sys-shape-corner-small);
+  border-radius: var(--md-sys-shape-corner-medium);
   background: var(--md-sys-color-surface);
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  padding: 0 16px;
   box-sizing: border-box;
   transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
-    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
     border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
     box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 .md3-outlined-text-field:focus-within {
   border-color: var(--md-sys-color-primary);
   box-shadow: 0 0 0 1px var(--md-sys-color-primary);
+}
+
+/* MD3 Filled Tonal Text Field（无生硬外框，采用淡雅表面容器色） */
+.md3-filled-text-field {
+  height: 52px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-high);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  box-sizing: border-box;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-filled-text-field:focus-within {
+  background: var(--md-sys-color-surface);
+  box-shadow: 0 0 0 2px var(--md-sys-color-primary);
+}
+
+.md3-filled-select-field {
+  height: 52px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-high);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  box-sizing: border-box;
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+.md3-filled-select-field:focus-within {
+  background: var(--md-sys-color-surface);
+  box-shadow: 0 0 0 2px var(--md-sys-color-primary);
 }
 
 .md3-text-field-input {
