@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, nextTick, watch } from 'vue'
+import { computed, ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { appState } from '../../state/appState'
 import { formatChatTime } from '../../utils/chatTime'
 import AiDraftReview from './AiDraftReview.vue'
@@ -10,6 +10,21 @@ const historyPanelOpen = ref(false)
 const historyLoading = ref(false)
 const openingSessionId = ref<string | null>(null)
 const reviewOpen = ref(false)
+const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
+
+function updateOnlineStatus() {
+  isOnline.value = typeof navigator !== 'undefined' ? navigator.onLine : true
+}
+
+onMounted(() => {
+  window.addEventListener('online', updateOnlineStatus)
+  window.addEventListener('offline', updateOnlineStatus)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('online', updateOnlineStatus)
+  window.removeEventListener('offline', updateOnlineStatus)
+})
 
 const approvalCounts = computed(() => {
   const drafts = appState.pendingApproval.value?.drafts ?? []
@@ -116,13 +131,12 @@ watch(
       <div class="cb-chat-title-group">
         <div class="cb-header-left">
           <h1 class="cb-chat-title cb-text-balance">AI 记账助手</h1>
-          <span class="cb-chat-sub">仅联网可用</span>
         </div>
 
         <div class="cb-header-right">
-          <span class="cb-chat-status" aria-live="polite">
-            <span class="cb-status-live-dot"></span>
-            已就绪
+          <span v-if="!isOnline" class="cb-chat-status cb-chat-status--offline" aria-live="polite">
+            <span class="cb-status-offline-dot"></span>
+            已断网不可用
           </span>
           <button
             type="button"
@@ -396,7 +410,6 @@ watch(
   padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
   background: var(--md-sys-color-surface);
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
-  box-shadow: var(--md-sys-elevation-1);
   z-index: 5;
 }
 
@@ -423,13 +436,6 @@ watch(
   line-height: 1.25;
 }
 
-.cb-chat-sub {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--md-sys-color-on-surface-variant);
-  line-height: 1;
-}
-
 .cb-header-right {
   display: flex;
   align-items: center;
@@ -441,25 +447,22 @@ watch(
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
-  background: var(--cb-status-success-bg);
-  color: var(--cb-status-success-text);
   border-radius: var(--md-sys-shape-corner-full);
   font-size: 11px;
   font-weight: 700;
-  border: 1px solid rgba(22, 163, 74, 0.18);
 }
 
-.cb-status-live-dot {
+.cb-chat-status--offline {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.cb-status-offline-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  background: var(--cb-status-success-text);
-  animation: pulse-live 2s infinite ease-in-out;
-}
-
-@keyframes pulse-live {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.85); }
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-error);
 }
 
 /* 优化后的历史会话 Tonal 胶囊按钮 */
