@@ -11,6 +11,11 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.CB_API_TARGET || 'http://127.0.0.1:8000'
 
   return {
+    // 构建时间戳注入：设置页“关于”显示最近构建时间，用于确认 PWA 是否更新到新版。
+    // dev 模式下为启动时间，build 时为构建时刻。
+    define: {
+      __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    },
     plugins: [
       vue(),
       VitePWA({

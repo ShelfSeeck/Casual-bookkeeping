@@ -8,6 +8,7 @@ import { getActiveAccount } from '../../services/apiClient'
 import { getOrCreateDeviceId } from '../../db/device'
 import { applyTheme, getThemePreference, type ThemePreference } from '../../utils/theme'
 import { mergeCategoryOrders } from '../../utils/categoryReorder'
+import { buildTime } from '../../services/buildInfo'
 import type { ServiceCategoryUi, CustomerEntityUi, CustomerMappingUi } from '../../types/ui'
 import type { AuthStore } from '../../services/authStore'
 import ConflictCenter from './ConflictCenter.vue'
@@ -40,6 +41,14 @@ const themeOptions: Array<{ value: ThemePreference; label: string }> = [
 const themeOptionLabel = computed(
   () => themeOptions.find((option) => option.value === themePreference.value)?.label ?? '跟随系统',
 )
+
+// 最近构建时间：本地时区 "YYYY-MM-DD HH:mm"
+const buildTimeLabel = computed(() => {
+  const d = new Date(buildTime())
+  if (Number.isNaN(d.getTime())) return buildTime()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+})
 
 function setTheme(preference: ThemePreference) {
   themePreference.value = preference
@@ -450,8 +459,9 @@ function initDndForContainer(
     },
     config: {
       dragHandle: handleSelector,
-      handleDragstart: () => { vibrate(20) },
-      handleEnd: () => { vibrate(12) },
+      onDragstart: () => { vibrate(20) },
+      // 注意：不能用 handleEnd（会覆盖库内部收尾逻辑，导致拖拽克隆不清理、排序失效）
+      onDragend: () => { vibrate(12) },
       plugins: [animations()],
     },
   })
@@ -475,8 +485,8 @@ function initSubcatDnd() {
       },
       config: {
         dragHandle: '.cb-sub-drag-handle, .cb-input-chip--sortable',
-        handleDragstart: () => { vibrate(15) },
-        handleEnd: () => { vibrate(10) },
+        onDragstart: () => { vibrate(15) },
+        onDragend: () => { vibrate(10) },
         plugins: [animations()],
       },
     })
@@ -845,7 +855,28 @@ onMounted(async () => {
           </div>
         </section>
 
-        <!-- 组 4：外观（低频设置放在最后） -->
+        <!-- 组 4：关于（显示最近构建时间，用于确认 PWA 是否已更新） -->
+        <section class="md3-list-group" aria-label="关于">
+          <div class="md3-list-group-header">关于</div>
+          <div class="md3-list-container">
+            <div class="md3-list-item">
+              <div class="md3-list-item-leading" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+              </div>
+              <div class="md3-list-item-content">
+                <span class="md3-list-item-headline">最近构建时间</span>
+              </div>
+              <div class="md3-list-item-trailing">
+                <span class="md3-mono-text cb-tabular-nums">{{ buildTimeLabel }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 组 5：外观（低频设置放在最后） -->
         <section class="md3-list-group" aria-label="外观">
           <div class="md3-list-group-header">外观</div>
           <div class="md3-list-container">
@@ -878,7 +909,7 @@ onMounted(async () => {
           </div>
         </section>
 
-        <!-- 组 5：退出登录 -->
+        <!-- 组 6：退出登录 -->
         <section class="cb-logout-section" aria-label="退出登录">
           <button
             type="button"
