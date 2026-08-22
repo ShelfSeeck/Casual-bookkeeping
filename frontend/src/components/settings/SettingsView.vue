@@ -2720,7 +2720,9 @@ onMounted(async () => {
   padding: 18px 20px;
   min-height: 68px;
   border-radius: var(--md-sys-shape-corner-large);
-  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+  transition: background-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
 }
 
 .cb-cat-section-card--inactive {
@@ -3262,9 +3264,10 @@ onMounted(async () => {
   padding: 4px 2px;
 }
 
-/* FormKit DnD: 被拖拽元素抬起效果 */
+/* FormKit DnD: 被拖拽元素抬起效果与跟手动效保障 */
 .cb-drag-list [data-dragging],
 .md3-chip-set [data-dragging] {
+  transition: none !important;
   background: var(--md-sys-color-surface) !important;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08) !important;
   transform: scale(1.02) !important;
@@ -3272,6 +3275,10 @@ onMounted(async () => {
   z-index: 9999 !important;
   cursor: grabbing !important;
   opacity: 1 !important;
+  touch-action: none !important;
+  -webkit-touch-callout: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 /* ==========================================================================
