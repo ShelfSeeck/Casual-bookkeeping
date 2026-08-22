@@ -310,84 +310,96 @@ watch(
       </footer>
     </div>
 
-    <!-- 历史会话底部弹出面板 -->
-    <van-popup
-      v-model:show="historyPanelOpen"
-      position="bottom"
-      round
-      class="cb-history-popup"
-    >
-      <div class="cb-history-panel">
-        <div class="cb-history-drag-handle" aria-hidden="true"></div>
-        <div class="cb-history-header">
-          <span class="cb-history-title">历史会话</span>
-          <button
-            type="button"
-            class="cb-new-chat-btn cb-pressable"
-            :disabled="isHistoryLocked()"
-            @click="handleNewChat"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            <span>新建对话</span>
-          </button>
-        </div>
-
-        <div v-if="isHistoryLocked()" class="cb-history-busy-hint">
-          AI 回复中/有待确认草案，先处理完再切换
-        </div>
-
-        <div v-if="historyLoading" class="cb-history-loading">加载中…</div>
-        <div v-else-if="appState.chatSessions.length === 0" class="cb-history-empty">
-          <div class="cb-empty-icon" aria-hidden="true">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
+    <!-- 历史会话底部弹出面板（与工单抽屉保持一致） -->
+    <Transition name="cb-sheet">
+      <div
+        v-if="historyPanelOpen"
+        class="cb-sheet-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label="历史会话"
+        @click.self="historyPanelOpen = false"
+      >
+        <div class="cb-sheet-drawer">
+          <div class="m3-sheet-handle-pill" aria-hidden="true"></div>
+          <div class="cb-sheet-drawer-header">
+            <div class="cb-history-header-left">
+              <h2 class="cb-sheet-drawer-title">历史会话</h2>
+              <button
+                type="button"
+                class="cb-new-chat-btn cb-pressable"
+                :disabled="isHistoryLocked()"
+                @click="handleNewChat"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>新建对话</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              class="cb-sheet-drawer-close"
+              aria-label="关闭"
+              @click="historyPanelOpen = false"
+            >✕</button>
           </div>
-          <span>暂无历史会话记录</span>
-          <button
-            type="button"
-            class="cb-empty-new-btn cb-pressable"
-            :disabled="isHistoryLocked()"
-            @click="handleNewChat"
-          >
-            开始新对话
-          </button>
-        </div>
-        <div v-else class="cb-history-list">
-          <button
-            v-for="s in appState.chatSessions"
-            :key="s.sessionId"
-            type="button"
-            class="cb-history-item cb-pressable"
-            :class="{ 'cb-history-item--active': s.sessionId === appState.currentChatSessionId }"
-            :disabled="isHistoryLocked() || openingSessionId !== null"
-            @click="selectSession(s.sessionId)"
-          >
-            <span class="cb-history-item-main">
-              <span class="cb-history-item-title">{{ s.title }}</span>
-              <span class="cb-history-item-meta">{{ formatChatTime(s.updatedAt) }} · {{ s.turnCount }} 条对话</span>
-            </span>
-            <svg
-              v-if="s.sessionId === appState.currentChatSessionId"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+
+          <div v-if="isHistoryLocked()" class="cb-history-busy-hint">
+            AI 回复中/有待确认草案，先处理完再切换
+          </div>
+
+          <div v-if="historyLoading" class="cb-history-loading">加载中…</div>
+          <div v-else-if="appState.chatSessions.length === 0" class="cb-history-empty">
+            <div class="cb-empty-icon" aria-hidden="true">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+            </div>
+            <span>暂无历史会话记录</span>
+            <button
+              type="button"
+              class="cb-empty-new-btn cb-pressable"
+              :disabled="isHistoryLocked()"
+              @click="handleNewChat"
             >
-              <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-          </button>
+              开始新对话
+            </button>
+          </div>
+          <div v-else class="cb-history-list">
+            <button
+              v-for="s in appState.chatSessions"
+              :key="s.sessionId"
+              type="button"
+              class="cb-history-item cb-pressable"
+              :class="{ 'cb-history-item--active': s.sessionId === appState.currentChatSessionId }"
+              :disabled="isHistoryLocked() || openingSessionId !== null"
+              @click="selectSession(s.sessionId)"
+            >
+              <span class="cb-history-item-main">
+                <span class="cb-history-item-title">{{ s.title }}</span>
+                <span class="cb-history-item-meta">{{ formatChatTime(s.updatedAt) }} · {{ s.turnCount }} 条对话</span>
+              </span>
+              <svg
+                v-if="s.sessionId === appState.currentChatSessionId"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
-    </van-popup>
+    </Transition>
   </div>
 </template>
 
@@ -409,7 +421,7 @@ watch(
 .cb-chat-header {
   padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
   background: var(--md-sys-color-surface);
-  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  border-bottom: none;
   z-index: 5;
 }
 
@@ -542,10 +554,10 @@ watch(
 }
 
 .cb-message-row--assistant .cb-message-bubble {
-  background: var(--md-sys-color-surface-container-high);
+  background: rgba(37, 99, 235, 0.06);
   color: var(--md-sys-color-on-surface);
-  border-radius: 22px 22px 22px 4px;
-  border: none;
+  border-radius: 20px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
   box-shadow: none;
 }
 
@@ -910,49 +922,80 @@ watch(
 }
 
 /* ==========================================================================
-   6. History Session Bottom Sheet
+   6. History Session Bottom Sheet (M3 Bottom Sheet, matching Work Order Desk)
    ========================================================================== */
-.cb-history-popup {
-  --van-popup-round-radius: var(--md-sys-shape-corner-extra-large);
-  max-height: 75%;
-  background: var(--md-sys-color-surface);
-  border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
+.cb-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--cb-overlay);
+  backdrop-filter: blur(2px);
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-shadow: var(--md-sys-elevation-4);
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 1000;
 }
 
-.cb-history-panel {
+.cb-sheet-drawer {
+  width: 100%;
+  max-width: 500px;
+  max-height: 75vh;
+  max-height: 75dvh;
+  background: var(--md-sys-color-surface);
+  border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
+  padding: 12px 18px calc(24px + env(safe-area-inset-bottom, 0));
   display: flex;
   flex-direction: column;
-  max-height: 70vh;
-  padding: 8px 16px 0;
+  box-shadow: var(--md-sys-elevation-4);
   box-sizing: border-box;
 }
 
-.cb-history-drag-handle {
-  width: 32px;
+.m3-sheet-handle-pill {
+  width: 36px;
   height: 4px;
-  background: var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-full);
-  margin: 0 auto 10px;
-  opacity: 0.8;
+  background: var(--md-sys-color-outline-variant);
+  margin: 0 auto 12px;
 }
 
-.cb-history-header {
+.cb-sheet-drawer-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  align-items: center;
   margin-bottom: 12px;
 }
 
-.cb-history-title {
-  font-size: 17px;
+.cb-history-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cb-sheet-drawer-title {
+  margin: 0;
+  font-size: 18px;
   font-weight: 800;
   color: var(--md-sys-color-on-surface);
-  letter-spacing: -0.2px;
+}
+
+.cb-sheet-drawer-close {
+  background: var(--md-sys-color-surface-container);
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-standard);
+}
+
+.cb-sheet-drawer-close:hover {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
 }
 
 .cb-new-chat-btn,
@@ -1029,7 +1072,9 @@ watch(
 
 .cb-history-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 8px;
