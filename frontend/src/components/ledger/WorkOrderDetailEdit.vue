@@ -2,6 +2,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import type { WorkOrderUi } from '../../types/ui'
+import StatusBadge from '../common/StatusBadge.vue'
 import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
 import {
@@ -437,7 +438,10 @@ async function handleRevert(operationId: string) {
       </button>
       <div class="md3-top-app-bar-title-group">
         <h1 class="md3-top-app-bar-title">工单详情与编辑</h1>
-        <span class="md3-top-app-bar-sub cb-tabular-nums">单号: {{ order.orderId }}</span>
+        <div class="md3-top-app-bar-sub cb-tabular-nums">
+          <span>单号: {{ order.orderId }}</span>
+          <StatusBadge type="sync" :value="order.syncStatus" />
+        </div>
       </div>
       <button
         type="button"
@@ -994,6 +998,9 @@ async function handleRevert(operationId: string) {
 .md3-top-app-bar-sub {
   font-size: 11px;
   color: var(--md-sys-color-on-surface-variant);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* 主监控控制面板 */
