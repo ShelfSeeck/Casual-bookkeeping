@@ -496,7 +496,7 @@ function scrollToTodayFlow() {
             class="cb-sheet-search-field"
             autocomplete="off"
             spellcheck="false"
-            autofocus
+
           />
         </div>
         <div class="cb-sheet-options-list" role="listbox">
@@ -1256,6 +1256,7 @@ function scrollToTodayFlow() {
   width: 100%;
   max-width: 500px;
   max-height: 75vh;
+  max-height: 75dvh;
   background: var(--md-sys-color-surface);
   border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
   padding: 12px 18px calc(24px + env(safe-area-inset-bottom, 0));
@@ -1316,7 +1317,10 @@ function scrollToTodayFlow() {
 }
 
 .cb-sheet-options-list {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 8px;
