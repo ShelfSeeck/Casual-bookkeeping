@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, inject, type ShallowRef } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
-import { dragAndDrop, animations } from '@formkit/drag-and-drop'
+import { dragAndDrop, animations, tearDown } from '@formkit/drag-and-drop'
 import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
 import { getActiveAccount } from '../../services/apiClient'
@@ -441,7 +441,7 @@ function initDndForContainer(
   handleSelector: string,
 ) {
   const state = { values: [...values] }
-  const instance = dragAndDrop({
+  dragAndDrop({
     parent: container,
     getValues: () => state.values,
     setValues: (newValues: ServiceCategoryUi[]) => {
@@ -455,9 +455,7 @@ function initDndForContainer(
       plugins: [animations()],
     },
   })
-  if (instance && typeof (instance as any).destroy === 'function') {
-    dndCleanups.push(() => (instance as any).destroy())
-  }
+  dndCleanups.push(() => tearDown(container))
 }
 
 function initSubcatDnd() {
@@ -468,7 +466,7 @@ function initSubcatDnd() {
     const cat = sortableActiveCategories.value.find((c) => c.syncId === syncId)
     if (!cat || cat.subcategories.length < 2) continue
     const state = { values: [...cat.subcategories] }
-    const instance = dragAndDrop({
+    dragAndDrop({
       parent: el,
       getValues: () => state.values,
       setValues: (newValues: typeof cat.subcategories) => {
@@ -482,9 +480,7 @@ function initSubcatDnd() {
         plugins: [animations()],
       },
     })
-    if (instance && typeof (instance as any).destroy === 'function') {
-      dndCleanups.push(() => (instance as any).destroy())
-    }
+    dndCleanups.push(() => tearDown(el))
   }
 }
 
