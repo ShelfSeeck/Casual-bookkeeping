@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, inject, type ShallowRef } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, inject, type ShallowRef } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
-import draggable from 'vuedraggable'
+import { dragAndDrop, animations } from '@formkit/drag-and-drop'
 import { appState } from '../../state/appState'
 import { toErrorMessage } from '../../services/errorMessages'
 import { getActiveAccount } from '../../services/apiClient'
@@ -416,7 +416,79 @@ const sortableActiveCategories = ref<ServiceCategoryUi[]>([])
 const sortableInactiveCategories = ref<ServiceCategoryUi[]>([])
 const sortInitialSubNames = new Map<string, string[]>()
 
-function enterSortMode() {
+// FormKit DnD 容器引用和清理函数
+const activeCatsContainer = ref<HTMLElement | null>(null)
+const inactiveCatsContainer = ref<HTMLElement | null>(null)
+const dndCleanups: Array<() => void> = []
+
+function destroyAllDnd() {
+  for (const cleanup of dndCleanups) {
+    try { cleanup() } catch { /* ignore */ }
+  }
+  dndCleanups.length = 0
+}
+
+function vibrate(ms: number) {
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    try { navigator.vibrate(ms) } catch { /* ignore */ }
+  }
+}
+
+function initDndForContainer(
+  container: HTMLElement,
+  values: ServiceCategoryUi[],
+  onUpdate: (newValues: ServiceCategoryUi[]) => void,
+  handleSelector: string,
+) {
+  const state = { values: [...values] }
+  const instance = dragAndDrop({
+    parent: container,
+    getValues: () => state.values,
+    setValues: (newValues: ServiceCategoryUi[]) => {
+      state.values = newValues
+      onUpdate(newValues)
+    },
+    config: {
+      dragHandle: handleSelector,
+      handleDragstart: () => { vibrate(20) },
+      handleEnd: () => { vibrate(12) },
+      plugins: [animations()],
+    },
+  })
+  if (instance && typeof (instance as any).destroy === 'function') {
+    dndCleanups.push(() => (instance as any).destroy())
+  }
+}
+
+function initSubcatDnd() {
+  const containers = document.querySelectorAll<HTMLElement>('[data-subcat-dnd]')
+  for (const el of containers) {
+    const syncId = el.getAttribute('data-subcat-dnd')
+    if (!syncId) continue
+    const cat = sortableActiveCategories.value.find((c) => c.syncId === syncId)
+    if (!cat || cat.subcategories.length < 2) continue
+    const state = { values: [...cat.subcategories] }
+    const instance = dragAndDrop({
+      parent: el,
+      getValues: () => state.values,
+      setValues: (newValues: typeof cat.subcategories) => {
+        state.values = newValues
+        cat.subcategories = newValues
+      },
+      config: {
+        dragHandle: '.cb-sub-drag-handle, .cb-input-chip--sortable',
+        handleDragstart: () => { vibrate(15) },
+        handleEnd: () => { vibrate(10) },
+        plugins: [animations()],
+      },
+    })
+    if (instance && typeof (instance as any).destroy === 'function') {
+      dndCleanups.push(() => (instance as any).destroy())
+    }
+  }
+}
+
+async function enterSortMode() {
   activeAddingCatId.value = null
   sortableActiveCategories.value = activeCategoriesList.value.map((c) => ({
     ...c,
@@ -431,10 +503,30 @@ function enterSortMode() {
     sortInitialSubNames.set(cat.syncId!, cat.subcategories.map((s) => s.name))
   }
   sortMode.value = true
+
+  await nextTick()
+  if (activeCatsContainer.value) {
+    initDndForContainer(
+      activeCatsContainer.value,
+      sortableActiveCategories.value,
+      (v) => { sortableActiveCategories.value = v },
+      '.cb-drag-handle',
+    )
+  }
+  if (inactiveCatsContainer.value && sortableInactiveCategories.value.length > 0) {
+    initDndForContainer(
+      inactiveCatsContainer.value,
+      sortableInactiveCategories.value,
+      (v) => { sortableInactiveCategories.value = v },
+      '.cb-drag-handle',
+    )
+  }
+  initSubcatDnd()
 }
 
 async function finishSortMode() {
   if (!sortMode.value) return
+  destroyAllDnd()
   const allIds = appState.categories.map((c) => c.syncId!)
   const activeIds = sortableActiveCategories.value.map((c) => c.syncId!)
   const inactiveIds = sortableInactiveCategories.value.map((c) => c.syncId!)
@@ -482,26 +574,9 @@ async function finishSortMode() {
   }
 }
 
-// 拖拽手势触觉反馈与状态
-function onDragStart() {
-  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-    try {
-      navigator.vibrate(20)
-    } catch {
-      // 忽略不支持设备
-    }
-  }
-}
-
-function onDragEnd() {
-  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-    try {
-      navigator.vibrate(12)
-    } catch {
-      // 忽略不支持设备
-    }
-  }
-}
+onBeforeUnmount(() => {
+  destroyAllDnd()
+})
 
 // ==================== 3. 同步面板 ====================
 const syncCounts = ref({ pending: 0, conflict: 0, rejected: 0 })
@@ -1340,31 +1415,10 @@ onMounted(async () => {
         </div>
 
         <div class="cb-category-card-list">
-          <!-- 1. 使用中的大类（支持拖拽排序与常规展示平滑过渡） -->
-          <draggable
-            :list="sortMode ? sortableActiveCategories : activeCategoriesList"
-            item-key="syncId"
-            :disabled="!sortMode"
-            handle=".cb-drag-handle"
-            :animation="250"
-            :easing="'cubic-bezier(0.2, 0, 0, 1)'"
-            :force-fallback="true"
-            :fallback-tolerance="3"
-            :touch-start-threshold="5"
-            :delay="80"
-            :delay-on-touch-only="true"
-            :scroll="true"
-            :scroll-sensitivity="80"
-            :scroll-speed="15"
-            ghost-class="cb-drag-ghost"
-            chosen-class="cb-drag-chosen"
-            drag-class="cb-drag-item"
-            class="cb-drag-list"
-            @start="onDragStart"
-            @end="onDragEnd"
-          >
-            <template #item="{ element: cat }">
+          <div ref="activeCatsContainer" class="cb-drag-list">
               <div
+                v-for="cat in (sortMode ? sortableActiveCategories : activeCategoriesList)"
+                :key="cat.syncId"
                 class="md3-card md3-card--outlined cb-cat-section-card"
                 :class="{ 'cb-cat-section-card--expanded': isCategoryExpanded(cat.syncId) || sortMode }"
               >
@@ -1406,28 +1460,12 @@ onMounted(async () => {
                 >
                   <div class="cb-cat-dropdown-inner">
                     <!-- 小类项目列表（支持拖拽排序与常规删除） -->
-                    <draggable
-                    v-if="cat.subcategories.length > 0"
-                    :list="cat.subcategories"
-                    item-key="name"
-                    :disabled="!sortMode"
-                    handle=".cb-sub-drag-handle, .cb-input-chip--sortable"
-                    :animation="250"
-                    :easing="'cubic-bezier(0.2, 0, 0, 1)'"
-                    :force-fallback="true"
-                    :fallback-tolerance="3"
-                    :touch-start-threshold="5"
-                    :delay="60"
-                    :delay-on-touch-only="true"
-                    ghost-class="cb-drag-ghost"
-                    chosen-class="cb-drag-chosen"
-                    drag-class="cb-drag-item"
-                    class="md3-chip-set"
-                    @start="onDragStart"
-                    @end="onDragEnd"
-                  >
-                    <template #item="{ element: sub }">
-                      <div class="md3-input-chip" :class="{ 'cb-input-chip--sortable': sortMode }">
+                    <div
+                      v-if="cat.subcategories.length > 0"
+                      :data-subcat-dnd="sortMode ? cat.syncId : undefined"
+                      class="md3-chip-set"
+                    >
+                      <div v-for="sub in cat.subcategories" :key="sub.name" class="md3-input-chip" :class="{ 'cb-input-chip--sortable': sortMode }">
                         <div class="cb-sub-drag-wrap" :class="{ 'cb-sub-drag-wrap--visible': sortMode }">
                           <span class="cb-sub-drag-handle" aria-label="拖拽调整项目顺序">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -1451,8 +1489,7 @@ onMounted(async () => {
                           </button>
                         </div>
                       </div>
-                    </template>
-                  </draggable>
+                    </div>
                   <div v-else-if="sortMode" class="cb-subcat-empty-tip">暂无具体项目</div>
 
                   <!-- 内联添加小类项目表单与展开按键（在排序模式下平滑淡出收起） -->
@@ -1547,38 +1584,19 @@ onMounted(async () => {
                 </div>
               </div>
             </div>
-          </template>
-          </draggable>
+          </div>
 
           <!-- 2. 已停用的大类 -->
           <template v-if="(sortMode ? sortableInactiveCategories : inactiveCategoriesList).length > 0">
             <div class="cb-section-divider-title">
               已停用大类 ({{ (sortMode ? sortableInactiveCategories : inactiveCategoriesList).length }})
             </div>
-            <draggable
-              :list="sortMode ? sortableInactiveCategories : inactiveCategoriesList"
-              item-key="syncId"
-              :disabled="!sortMode"
-              handle=".cb-drag-handle"
-              :animation="250"
-              :easing="'cubic-bezier(0.2, 0, 0, 1)'"
-              :force-fallback="true"
-              :fallback-tolerance="3"
-              :touch-start-threshold="5"
-              :delay="80"
-              :delay-on-touch-only="true"
-              :scroll="true"
-              :scroll-sensitivity="80"
-              :scroll-speed="15"
-              ghost-class="cb-drag-ghost"
-              chosen-class="cb-drag-chosen"
-              drag-class="cb-drag-item"
-              class="cb-drag-list"
-              @start="onDragStart"
-              @end="onDragEnd"
-            >
-              <template #item="{ element: cat }">
-                <div class="md3-card md3-card--outlined cb-cat-section-card cb-cat-section-card--inactive">
+            <div ref="inactiveCatsContainer" class="cb-drag-list">
+                <div
+                  v-for="cat in (sortMode ? sortableInactiveCategories : inactiveCategoriesList)"
+                  :key="cat.syncId"
+                  class="md3-card md3-card--outlined cb-cat-section-card cb-cat-section-card--inactive"
+                >
                   <div
                     class="cb-cat-header-row cb-pressable"
                     @click="!sortMode && toggleCategoryExpanded(cat.syncId)"
@@ -1640,8 +1658,7 @@ onMounted(async () => {
                     </div>
                   </div>
                 </div>
-              </template>
-            </draggable>
+              </div>
           </template>
 
           <div v-if="appState.categories.length === 0" class="cb-empty-state">
@@ -3245,25 +3262,16 @@ onMounted(async () => {
   padding: 4px 2px;
 }
 
-/* Sortable 让位动画与拖拽高亮 (M3 Elevation & Lift Animation) */
-.cb-drag-ghost {
-  opacity: 0.3 !important;
-  border: 2px dashed var(--md-sys-color-primary) !important;
-  border-radius: var(--md-sys-shape-corner-medium) !important;
-  background: var(--md-sys-color-primary-container) !important;
-}
-
-.cb-drag-chosen {
+/* FormKit DnD: 被拖拽元素抬起效果 */
+.cb-drag-list [data-dragging],
+.md3-chip-set [data-dragging] {
   background: var(--md-sys-color-surface) !important;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08) !important;
-  transform: scale(1.025) translateY(-2px) !important;
+  transform: scale(1.02) !important;
   border-color: var(--md-sys-color-primary) !important;
   z-index: 9999 !important;
   cursor: grabbing !important;
-}
-
-.cb-drag-item {
-  transition: transform 250ms cubic-bezier(0.2, 0, 0, 1);
+  opacity: 1 !important;
 }
 
 /* ==========================================================================
