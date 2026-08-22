@@ -10,6 +10,7 @@ import {
   sanitizeIntegerInput,
 } from '../../utils/numericInput'
 import { localDateToday, shiftLocalDate } from '../../utils/localDate'
+import { resolveDefaultOrderDate } from '../../services/defaultDateRule'
 
 // 表单状态
 const selectedCustomerId = ref<number | null>(null)
@@ -23,7 +24,7 @@ const unitPriceError = ref('')
 const today = computed(() => localDateToday())
 const yesterday = computed(() => shiftLocalDate(today.value, -1))
 const dayBefore = computed(() => shiftLocalDate(today.value, -2))
-const orderDate = ref(today.value)
+const orderDate = ref(resolveDefaultOrderDate())
 
 // 底部滑出弹窗控制
 const showCustomerSheet = ref(false)

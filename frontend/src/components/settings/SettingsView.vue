@@ -9,6 +9,13 @@ import { getOrCreateDeviceId } from '../../db/device'
 import { applyTheme, getThemePreference, type ThemePreference } from '../../utils/theme'
 import { mergeCategoryOrders } from '../../utils/categoryReorder'
 import { buildTime } from '../../services/buildInfo'
+import {
+  getDateRule,
+  setDateRule,
+  parseDateRule,
+  type DateRule,
+  type DateRuleMode,
+} from '../../services/defaultDateRule'
 import type { ServiceCategoryUi, CustomerEntityUi, CustomerMappingUi } from '../../types/ui'
 import type { AuthStore } from '../../services/authStore'
 import ConflictCenter from './ConflictCenter.vue'
@@ -30,7 +37,7 @@ type SubPageKey =
 
 const currentSubPage = ref<SubPageKey>('main')
 
-// ==================== 0. 外观主题（浅色 / 深色 / 跟随系统） ====================
+// ==================== 0. 个性化（主题深浅 + 默认录入日期） ====================
 const themePreference = ref<ThemePreference>(getThemePreference())
 const themeOptions: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: '跟随系统' },
@@ -53,6 +60,33 @@ const buildTimeLabel = computed(() => {
 function setTheme(preference: ThemePreference) {
   themePreference.value = preference
   applyTheme(preference)
+}
+
+// ==================== 0.5 默认录入日期规则（凌晨补录场景） ====================
+const dateRule = ref<DateRule>(getDateRule())
+const dateRuleOptions: Array<{ value: DateRuleMode; label: string }> = [
+  { value: 'always_today', label: '今天' },
+  { value: 'always_yesterday', label: '昨天' },
+  { value: 'split', label: '分时段' },
+]
+const cutoffInput = ref(dateRule.value.mode === 'split' ? dateRule.value.cutoff ?? '04:00' : '04:00')
+
+function setDateRuleMode(mode: DateRuleMode) {
+  const next: DateRule =
+    mode === 'split' ? { mode, cutoff: cutoffInput.value } : { mode }
+  dateRule.value = parseDateRule(next)
+  setDateRule(dateRule.value)
+}
+
+function applyCutoffInput() {
+  const parsed = parseDateRule({ mode: 'split', cutoff: cutoffInput.value })
+  if (parsed.mode !== 'split') {
+    // 非法时刻：回显上一个合法值
+    cutoffInput.value = dateRule.value.cutoff ?? '04:00'
+    return
+  }
+  dateRule.value = parsed
+  setDateRule(parsed)
 }
 
 // ==================== 1. 客户档案（主）与编号代称管理（子） ====================
@@ -876,14 +910,14 @@ onMounted(async () => {
           </div>
         </section>
 
-        <!-- 组 5：外观（低频设置放在最后） -->
-        <section class="md3-list-group" aria-label="外观">
-          <div class="md3-list-group-header">外观</div>
+        <!-- 组 5：个性化（低频设置放在最后） -->
+        <section class="md3-list-group" aria-label="个性化">
+          <div class="md3-list-group-header">个性化</div>
           <div class="md3-list-container">
             <button
               type="button"
               class="md3-list-item cb-pressable"
-              aria-label="进入外观设置"
+              aria-label="进入个性化设置"
               @click="currentSubPage = 'appearance'"
             >
               <div class="md3-list-item-leading" aria-hidden="true">
@@ -896,8 +930,8 @@ onMounted(async () => {
                 </svg>
               </div>
               <div class="md3-list-item-content">
-                <span class="md3-list-item-headline">外观设置</span>
-                <span class="md3-list-item-supporting">深浅模式与跟随系统</span>
+                <span class="md3-list-item-headline">个性化设置</span>
+                <span class="md3-list-item-supporting">深浅模式与默认录入日期</span>
               </div>
               <div class="md3-list-item-trailing">
                 <span class="md3-list-item-meta">{{ themeOptionLabel }}</span>
@@ -930,7 +964,7 @@ onMounted(async () => {
     </div>
 
     <!-- ====================================================================
-         页面 1.5：外观设置（深浅模式）
+         页面 1.5：个性化设置（深浅模式 + 默认录入日期）
          ==================================================================== -->
     <div v-else-if="currentSubPage === 'appearance'" class="cb-page-container">
       <header class="md3-top-app-bar">
@@ -944,7 +978,7 @@ onMounted(async () => {
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
-        <h1 class="md3-top-app-bar-title">外观设置</h1>
+        <h1 class="md3-top-app-bar-title">个性化设置</h1>
         <div style="width: 48px;"></div>
       </header>
 
@@ -966,6 +1000,44 @@ onMounted(async () => {
                 {{ option.label }}
               </button>
             </div>
+          </div>
+        </section>
+
+        <!-- 默认录入日期：凌晨补录前一天的工单时，可让工单台默认选中昨天 -->
+        <section class="md3-list-group" aria-label="默认录入日期">
+          <div class="md3-list-group-header">默认录入日期</div>
+          <div class="md3-theme-option-card">
+            <p class="md3-theme-option-desc">新工单的默认日期。凌晨整理补录时可选「分时段」，每天指定时刻前自动记昨天、之后记今天。</p>
+            <div class="md3-segmented-set" role="group" aria-label="选择默认录入日期规则">
+              <button
+                v-for="option in dateRuleOptions"
+                :key="option.value"
+                type="button"
+                class="md3-segment cb-pressable"
+                :class="{ 'md3-segment--selected': dateRule.mode === option.value }"
+                :aria-pressed="dateRule.mode === option.value"
+                @click="setDateRuleMode(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <div v-if="dateRule.mode === 'split'" class="cb-date-rule-cutoff-row">
+              <label class="cb-date-rule-cutoff-label" for="cb-date-rule-cutoff-input">每天切换时刻</label>
+              <div class="cb-date-rule-cutoff-field">
+                <input
+                  id="cb-date-rule-cutoff-input"
+                  v-model="cutoffInput"
+                  type="time"
+                  class="cb-date-rule-cutoff-input cb-tabular-nums"
+                  aria-label="每天默认记昨天的截止时刻"
+                  @change="applyCutoffInput"
+                />
+                <span class="cb-date-rule-cutoff-unit" aria-hidden="true">前记昨天</span>
+              </div>
+            </div>
+            <p v-if="dateRule.mode === 'split'" class="md3-theme-option-desc">
+              每天 {{ dateRule.cutoff }} 前进入工单台，默认记昨天；之后默认记今天。录入时可随时手动切换。
+            </p>
           </div>
         </section>
       </main>
@@ -2023,7 +2095,7 @@ onMounted(async () => {
   margin-left: 56px;
 }
 
-/* MD3 Segmented Button：外观三态选择 */
+/* MD3 Segmented Button：个性化三态选择 */
 .md3-theme-option-card {
   padding: 4px 16px;
 }
@@ -2032,6 +2104,52 @@ onMounted(async () => {
   margin: 0 0 12px;
   font-size: 13px;
   line-height: 1.5;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* 默认录入日期：split 模式的每日切换时刻输入行（MD3 outlined field 风格） */
+.cb-date-rule-cutoff-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  margin-top: 4px;
+}
+
+.cb-date-rule-cutoff-label {
+  font-size: 14px;
+  color: var(--md-sys-color-on-surface);
+}
+
+.cb-date-rule-cutoff-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-date-rule-cutoff-input {
+  height: 40px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  color: var(--md-sys-color-on-surface);
+  font-size: 15px;
+  font-family: inherit;
+  text-align: center;
+  color-scheme: inherit;
+}
+
+.cb-date-rule-cutoff-input:focus {
+  outline: none;
+  border-color: var(--md-sys-color-primary);
+  box-shadow: inset 0 0 0 1px var(--md-sys-color-primary);
+}
+
+.cb-date-rule-cutoff-unit {
+  font-size: 12px;
   color: var(--md-sys-color-on-surface-variant);
 }
 
